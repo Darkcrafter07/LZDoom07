@@ -1,4 +1,4 @@
-# Welcome to LZDoom!
+# Welcome to LZDoom07!
 
 ## LZDoom07 is a fork of drfrag's LZDoom v3.88b for WinXP and old sys
 LZDoom07 just as LZDoom is based on GZDoom 3.3 which keeps the old DDRAW and D3D backends
@@ -6,8 +6,10 @@ and still supports GL2 for compatibility. Also runs on older non SSE2 cpus.
 LZDoom07 aims to provide even more optimization and new features to LZDoom
 while keeping compatibility with Windows XP and old systems.
 
-Copyright (c) 1998-2025 ZDoom + GZDoom teams, and contributors
+Copyright (c) 2020-2023 drfrag (original LZDoom v3.88b)
+(https://github.com/drfrag666/lzdoom/)
 
+Copyright (c) 1998-2021 ZDoom + GZDoom teams, and contributors
 Doom Source (c) 1997 id Software, Raven Software, and contributors
 
 Please see license files for individual contributor licenses
