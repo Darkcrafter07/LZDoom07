@@ -823,9 +823,9 @@ static DVector3 GetSpriteOcclusionPoint(AActor* thing, const DVector3& pos)
 			// Expand horizontally by 1600%
 			occlusionPos += DVector3(thing->radius * 16.0, thing->radius * 16.0, 0);
 		}
-
-		return occlusionPos;
 	}
+
+	return occlusionPos;
 }
 
 // Shared filter to determine relevant 3D floors
@@ -1646,7 +1646,7 @@ bool IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(AActor* viewer, A
 //							I'd recommed to call the function like this:
 //		float behindFacingMidTxtProximity = CheckFacingMidTextureProximity(thing, r_viewpoint.camera, thingpos);
 //		bool visbible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
-static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera, TVector3<double>& thingpos)
+static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer, TVector3<double>& thingpos)
 {
 	//Printf("===== TEXTURE PROXIMITY CHECK START =====\n");
 	//Printf("Thing: %s at (%.1f, %.1f, %.1f)\n", thing->GetClass()->TypeName.GetChars(), thingpos.X, thingpos.Y, thingpos.Z);
@@ -1669,7 +1669,30 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 	// 3. Actor classification flags and thresholds
 	const bool isLegacyVersionProjectile = thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY) || thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS);
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
-	const bool isLargeSprite = (spriteSize > 44.0f);
+	const bool isLargeSprite = (spriteSize > 40.0f);
+
+	// Get vertical positioning info
+	float EyeHeight = 41.0f;
+	if (viewer->player && viewer->player->mo)
+	{
+		EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+		//Printf("EyeHeight1: %.2f (ViewHeight: %.2f + crouchdelta: %.2f)\n", EyeHeight1, viewer->player->mo->FloatVar(NAME_ViewHeight), viewer->player->crouchviewdelta);
+	}
+	else
+	{
+		//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
+	}
+	float viewerBottom = viewer->Z();
+	float viewerTop = viewerBottom + EyeHeight;
+	float viewerBottomAdj = viewerBottom + Ztolerance2sided;
+	float viewerTopAdj = viewerTop + Ztolerance2sided;
+	float spriteBottom = thing->Z();
+	float spriteTop = (thing->Z()) + (thing->Height);
+	float sprBottomAdj = spriteBottom + Ztolerance2sided;
+	float sprTopAdj = spriteTop + Ztolerance2sided;
+
+	bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) <= EyeHeight;
+	bool viewerFeetHigherThanSpriteHeadAndStillSeen = viewerBottomAdj <= sprTopAdj >= EyeHeight;
 
 	//Printf("  Actor type: %s%s (size: %.1f)\n", isLegacyProjectile ? "Projectile " : "", isLargeSprite ? "Large" : "Standard", spriteSize);
 
@@ -1678,11 +1701,14 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 	const float CLOSE_DIST_LARGE = 96.0f;        // Extended for large entities
 
 	// 5. Measured distance from camera to thing
-	float distToCamSq = (thingpos - TVector3<double>(camera->X(), camera->Y(), camera->Z())).LengthSquared();
-	const float minDist = isLegacyVersionProjectile || isLargeSprite ? CLOSE_DIST_LARGE : CLOSE_DIST_SMALL;
+	float distToCamSq = (thingpos - TVector3<double>(viewer->X(), viewer->Y(), viewer->Z())).LengthSquared();
 
-	// 6. If very close - immediately full visibility (disable occlusion)
-	if (distToCamSq <= minDist * minDist)
+	bool isViewerVerticallyAligned = (viewerBottomAdj <= spriteBottom) || (viewerBottom >= spriteTop);
+	float minDist = (isLegacyVersionProjectile || isLargeSprite) ? CLOSE_DIST_LARGE : CLOSE_DIST_SMALL;
+
+	// 6. If very close and vertically aligned - full visibility (disable occlusion)
+	// because sprites don't override walls depth that hard when close and viewer is not under or above the sprite
+	if (isViewerVerticallyAligned && distToCamSq <= minDist * minDist)
 	{
 		//Printf("Close proximity (%.1f units): Full visibility (factor=1.0)\n", sqrt(distToCamSq));
 		return 1.0f;
@@ -1715,7 +1741,7 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 	float proximity_factor = 1.0f;
 
 	// 8. Calculate view direction vector
-	float yawRadians = camera->Angles.Yaw.Radians();
+	float yawRadians = viewer->Angles.Yaw.Radians();
 	TVector2<float> viewDir(cos(yawRadians), sin(yawRadians));
 	//Printf("  View direction: (%.3f, %.3f)\n", viewDir.X, viewDir.Y);
 
@@ -1752,11 +1778,11 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 		}
 
 		// 11. PRECISION OCCLUSION DETECTION
-		TVector2<float> cameraPos(camera->X(), camera->Y());
+		TVector2<float> viewerPos(viewer->X(), viewer->Y());
 		TVector2<float> thingPos2D(thingpos.X, thingpos.Y);
 
 		// Create camera->thing visibility ray
-		TVector2<float> rayVec = thingPos2D - cameraPos;
+		TVector2<float> rayVec = thingPos2D - viewerPos;
 		float rayLen = rayVec.Length();
 		TVector2<float> rayDir = rayVec.Unit();
 
@@ -1777,7 +1803,7 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 			continue;
 		}
 
-		TVector2<float> delta = lineA - cameraPos;
+		TVector2<float> delta = lineA - viewerPos;
 		float t = (delta.X * lineV.Y - delta.Y * lineV.X) / denom;
 		float u = (delta.X * rayDir.Y - delta.Y * rayDir.X) / denom;
 
@@ -1799,7 +1825,7 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 			continue;
 		}
 
-		TVector2<float> hitPoint = cameraPos + rayDir * t;
+		TVector2<float> hitPoint = viewerPos + rayDir * t;
 		float distToIntersect = (thingPos2D - hitPoint).Length();
 		//Printf("Valid intersection at (%.1f,%.1f), %.1f units from thing\n", hitPoint.X, hitPoint.Y, distToIntersect);
 
@@ -1811,10 +1837,9 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 			const float textop = static_cast<float>(textop_d);
 			const float texbot = static_cast<float>(texbot_d);
 
-			const float thingTopZ = thingpos.Z + thing->Height;
 			//Printf("Vertical check: thingZ=%.1f-%.1f, tex=%.1f-%.1f\n", thingpos.Z, thingTopZ, texbot, textop);
 
-			if (thingTopZ < texbot || thingpos.Z > textop)
+			if (viewerBottomAdj <= texbot || sprTopAdj >= textop)
 			{
 				//Printf("Skipped: Sprite outside midtexture vertical range\n");
 				continue;
@@ -1879,10 +1904,18 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 	}
 
 	//Printf("===== FINAL PROXIMITY FACTOR: %.2f =====\n", proximity_factor);
+
 	return proximity_factor;
+	// if our feet are lower than sprite feet behind a mid-tex mirror for elevated case - cull it
+	if (viewerFeetLowerThanSpriteFeetAndStillSeen || viewerFeetHigherThanSpriteHeadAndStillSeen)
+	{
+		return proximity_factor = 1.0f; // cull sprite
+	}
 }
+
 //         ---===      ***************************************        ===---
 // ******* 2-sided-linedef-based mid-texture in front of a sprite facing camera - finish *******
+
 
 
 //         ---===      ***************************************        ===---
@@ -1890,6 +1923,8 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* camera,
 //                      NOT IMPLEMENTED YET BUT EVEN NEEDED?
 // ******* closed doors in front of sprites detection - start *******
 //         ---===      ***************************************        ===---
+
+
 
 //         ---===      ***************************************        ===---
 // ******* 3DFloor-sides culling block start *******
@@ -2313,7 +2348,7 @@ if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESP
 	bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLines(thing, r_viewpoint.camera, thingpos, &mDrawer->clipper);
 	bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
 	float behindFacingMidTxtProximity = CheckFacingMidTextureProximity(thing, r_viewpoint.camera, thingpos);
-	bool visbible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
+	bool visible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
 	bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSides(r_viewpoint.camera, thing);
     bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlane(r_viewpoint.Pos, thingpos, thing->Sector, thing);
 
@@ -2467,12 +2502,23 @@ if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESP
 
 
 		// =============================     PRODUCTION EDITION (NORMAL VISIBILITY EVEN WHEN CULLED AT LEAST 1.0f - ***START***  ================================
-		float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visbible2sideMidTex || !visible3dfloorSides) ? 1.0f : 3.25f;
-		float projectiles_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visbible2sideMidTex || !visible3dfloorSides) ? 8.0f : 16.0f;
-		float regularsizmonster_factor1 = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visbible2sideMidTex || !visible3dfloorSides) ? 1.0f : 3.25f;
+
+		//  ------------------ idea #2 --------------------------------
+
+
+		float midTexCull1 = !visible2sideMidTex ? 0.25f : 1.0f;
+		float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? midTexCull1 : 3.25f;
+		float midTexCull2 = !visible2sideMidTex ? 4.0f : 8.0f;
+		float projectiles_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? midTexCull2 : 16.0f;
+		float midTexCull3 = !visible2sideMidTex ? 0.25f : 1.0f;
+		float regularsizmonster_factor1 = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? midTexCull3 : 3.25f;
+
+		//float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides) ? 1.0f : 3.25f;
+		//float projectiles_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides) ? 8.0f : 16.0f;
+		//float regularsizmonster_factor1 = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides) ? 1.0f : 3.25f;
 		float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 			regularsizmonster_factor1 :
-			regularsizmonster_factor1 * 1.0f;
+			regularsizmonster_factor1 * 0.25f;       // shoudn't be bigger than 0.25f even in production edition cause that would enlarge radii by 4x and cause leaks!
 
         float extended_radius1 = (isactorsmallbutnotcorpse) ?
             base_dimen * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 0.25 when occluded
@@ -2512,7 +2558,7 @@ if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESP
         float vpbias = 1.0 - spbias;
 
 		// Apply projection distortion using original vp method
-		if (!a3DfloorPlaneObstructed)
+		if (!a3DfloorPlaneObstructed || !visible2sideMidTex)
 		{
 			x1 = x1 * spbias + vpx * vpbias;
 			y1 = y1 * spbias + vpy * vpbias;
