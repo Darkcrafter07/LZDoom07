@@ -1473,16 +1473,6 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	const float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 8.5f : 1.75f) : 6.0f;
 	const float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 12.0f : 4.0f) : 1.64f;
 
-	//	//     WIP     ==== Dynamic expansion factors based on walls proximities   WIP   ====
-	//	// again, because we want to prevent excessive culling if large sprite is in a thin corridor
-	//const float RadiusExpansionFactor = isProjectileLargeSprite
-	//	? (isNearWall ? 2.0f : 1.25f)  // Only large projectiles get wall-affected values
-	//	: 6.0f;                        // Default for others
-	//
-	//const float HeightExpansionFactor = isProjectileLargeSprite
-	//	? 2.0f    // Large projectiles: fixed height expansion
-	//	: 1.64f;  // Others
-
 	// Core sprite positions (using expansion factors)
 	const DVector2 viewerPos = { viewer->X(), viewer->Y() };
 	const DVector2 thingCenterPos = { thing->X(), thing->Y() };
@@ -1497,32 +1487,32 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	int numDirectionChecks = CountBits2sidedObstr(directionMask);
 	bool potentialObstructionFound = false;
 
-	// Main occlusion check loop
+	// Loop through which end of the viewer's eye line to test
 	for (int EyeLevel = 0; EyeLevel < 2; EyeLevel++)
 	{
 		const float camHeight = (EyeLevel == 0) ? viewerBottomAdj : viewerTopAdj;
+
+		// Initialize the test point to the sprite's center. We only deviate for large sprites.
 		DVector2 testPoint = thingCenterPos;
 
+		// We only do the detailed check if we have directions to test.
 		for (int testIdx = 0; testIdx <= numDirectionChecks; ++testIdx)
 		{
 			if (testIdx > 0)
 			{
+				// if this isn't the initial center test
 				int shift = testIdx - 1;
-				float angle = 90.0f * shift * M_PI / 180.0f;
+				float angle = 90.0f * shift * M_PI / 180.0f; // 0=E, 1=S, 2=W, 3=N
+				// Get the actual direction from the mask
 				unsigned int currentDir = (1 << shift);
 				if (!(directionMask & currentDir)) continue;
 
 				float cosA = cos(angle);
 				float sinA = sin(angle);
-
-				// Calculate offset for this test point
-				float offsetRadius = thing->radius * RadiusExpansionFactor;
-				float offsetX = cosA * offsetRadius;
-				float offsetY = sinA * offsetRadius;
-
-				testPoint = thingCenterPos + DVector2{ offsetX, offsetY };
+				testPoint = thingCenterPos + DVector2{ cosA * thing->radius * RadiusExpansionFactor, sinA * thing->radius * RadiusExpansionFactor };
 			}
 
+			// Check both sectors (viewer & sprite)
 			for (int SectorCheck = 0; SectorCheck < 2; SectorCheck++)
 			{
 				const sector_t* sector = (SectorCheck == 0) ? viewer->Sector : thing->Sector;
@@ -1538,75 +1528,80 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 						continue;
 					}
 
-					// Track potential obstructions
-					potentialObstructionFound = true;
-
-					// ===============================================================
-					// *** FACE CHECK SKIPPING LOGIC - START ***
-					// Vertical separation check with tolerance buffer
-					const float verticalTolerance = 24.0f;
-					bool spriteIsBelow = (sprTopAdj + verticalTolerance) < viewerBottom;
-					bool spriteIsAbove = (sprBottomAdj - verticalTolerance) > viewerTop;
-
-					if (spriteIsBelow || spriteIsAbove)
-					{
-						//Printf("Z-SKIP: Sprite (%.1f-%.1f) vertical separation from viewer (%.1f-%.1f)", sprBottomAdj, sprTopAdj, viewerBottom, viewerTop);
-						continue; // Skip facing check for vertically separated sprites
-					}
-
-					// Perform facing direction check
-					const DVector2 lineDelta = line->Delta();
-					DVector2 lineNormal(-lineDelta.Y, lineDelta.X);
+					// Enhanced back-face culling (checks if line faces towards the sprite's center)
+					const DVector2 lineVec = lineEnd - lineStart;
+					DVector2 lineNormal(-lineVec.Y, lineVec.X);
 					lineNormal = lineNormal.Unit();
-
 					const DVector2 viewToIntersect = intersectionPoint - viewerPos;
+					DVector2 thingToIntersect = intersectionPoint - thingCenterPos;
 
-					if (viewToIntersect.Length() > EPSILON2SIDED)
-					{
-						const DVector2 viewDir = viewToIntersect.Unit();
-						double dot = (viewDir | lineNormal);
 
-						if (dot > 0.25) // More lenient facing threshold
-						{
-							//Printf("OCCLUDED: Line %d faces viewer (dot=%.2f). Sprite (%.1f-%.1f) blocked.", line->Index(), dot, spriteBottom, spriteTop);
-							return false; // Immediate occlusion
-						}
-						else
-						{
-							//Printf("Line %d faces away (dot=%.2f) - no occlusion", line->Index(), dot);
-						}
-					}
-					// *** FACE CHECK SKIPPING LOGIC - FINISH ***
-					// ===============================================================
+					//	// ===============================================================
+					//	// *** FACE CHECK SKIPPING LOGIC - START ***    WIP
+					//
+					//	// Track potential obstructions
+					//potentialObstructionFound = true;
+					//
+					//	// Vertical separation check with tolerance buffer
+					//const float verticalTolerance = 24.0f;
+					//bool spriteIsBelow = (sprTopAdj + verticalTolerance) < viewerBottom;
+					//bool spriteIsAbove = (sprBottomAdj - verticalTolerance) > viewerTop;
+					//
+					//if (spriteIsBelow || spriteIsAbove)
+					//{
+					//	//Printf("Z-SKIP: Sprite (%.1f-%.1f) vertical separation from viewer (%.1f-%.1f)", sprBottomAdj, sprTopAdj, viewerBottom, viewerTop);
+					//	continue; // Skip facing check for vertically separated sprites
+					//}
+					//
+					//	// Perform facing direction check
+					//const DVector2 lineDelta = line->Delta();
+					//DVector2 lineNormal(-lineDelta.Y, lineDelta.X);
+					//lineNormal = lineNormal.Unit();
+					//
+					//const DVector2 viewToIntersect = intersectionPoint - viewerPos;
+					//
+					//if (viewToIntersect.Length() > EPSILON2SIDED)
+					//{
+					//	const DVector2 viewDir = viewToIntersect.Unit();
+					//	double dot = (viewDir | lineNormal);
+					//
+					//	if (dot > 0.25) // More lenient facing threshold
+					//	{
+					//		//Printf("OCCLUDED: Line %d faces viewer (dot=%.2f). Sprite (%.1f-%.1f) blocked.", line->Index(), dot, spriteBottom, spriteTop);
+					//		return false; // Immediate occlusion
+					//	}
+					//	else
+					//	{
+					//		//Printf("Line %d faces away (dot=%.2f) - no occlusion", line->Index(), dot);
+					//	}
+					//}
+					//	// *** FACE CHECK SKIPPING LOGIC - FINISH ***WIP
+					//	// ===============================================================
 
-					// Clamp intersection point for sector checks
+					// Clamp intersection point
 					const DVector2 clamped =
 					{
 						clamp<float>(intersectionPoint.X, MINCOORD2SIDED, MAXCOORD2SIDED),
 						clamp<float>(intersectionPoint.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
 					};
 
-					// Optional sector-based obstruction checks (retained from original logic)
 					ObstructionData2Sided obsData;
 
 					if (line->flags & ML_TWOSIDED)
 					{
-						if (line->frontsector)
-							obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
-						if (line->backsector)
-							obsData.Update2sidedTallObstructions(thing, viewer, line->backsector, clamped);
+						if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+						if (line->backsector)  obsData.Update2sidedTallObstructions(thing, viewer, line->backsector, clamped);
 					}
 					else
 					{
-						if (line->frontsector)
-							obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+						if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
 					}
 
-					// Additional visibility check for tall obstructions in sector
-					if (!obsData.IsSpriteVisible2sided(viewer, thing, DVector3{ testPoint.X, testPoint.Y, spriteMidHeight }, spriteTop))
+					// Final visibility check with expanded height
+					if (!obsData.IsSpriteVisible2sided(viewer, thing,
+						DVector3{ testPoint.X, testPoint.Y, spriteMidHeight }, spriteTop))
 					{
-						//Printf("OCCLUDED: Sector-based tall obstruction blocks sprite (%.1f-%.1f)", spriteBottom, spriteTop);
-						return false;
+						return false; // Sprite is occluded
 					}
 				}
 
@@ -1615,9 +1610,7 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 		}
 	}
 
-	// Final visibility decision
-	//Printf("VISIBLE: %s intersecting lines | Sprite (%.1f-%.1f)", potentialObstructionFound ? "No facing obstructions among" : "No", spriteBottom, spriteTop);
-	return true;
+	return true; // No obstructions found
 }
 
 // this function determines visibility of sprites behind tall enough 2-sided-linedef based obstructions, call it like that:
