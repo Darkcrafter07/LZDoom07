@@ -1691,8 +1691,13 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	float sprBottomAdj = spriteBottom + Ztolerance2sided;
 	float sprTopAdj = spriteTop + Ztolerance2sided;
 
-	bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) <= EyeHeight;
-	bool viewerFeetHigherThanSpriteHeadAndStillSeen = viewerBottomAdj <= sprTopAdj >= EyeHeight;
+	// pretty useless
+	//bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) <= EyeHeight;
+	//bool viewerFeetHigherThanSpriteHeadAndStillSeen = viewerBottomAdj <= sprTopAdj >= EyeHeight;
+	// pretty useless and safer for compilation - how to remove leaking through mid tex when we're below it? I don't know yet
+	bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) && ((sprBottomAdj - viewerBottomAdj) <= EyeHeight);
+	bool viewerFeetHigherThanSpriteHeadAndStillSeen = (viewerBottomAdj >= sprTopAdj) && ((viewerBottomAdj - sprTopAdj) <= EyeHeight);
+
 
 	//Printf("  Actor type: %s%s (size: %.1f)\n", isLegacyProjectile ? "Projectile " : "", isLargeSprite ? "Large" : "Standard", spriteSize);
 
@@ -2502,10 +2507,6 @@ if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESP
 
 
 		// =============================     PRODUCTION EDITION (NORMAL VISIBILITY EVEN WHEN CULLED AT LEAST 1.0f - ***START***  ================================
-
-		//  ------------------ idea #2 --------------------------------
-
-
 		float midTexCull1 = !visible2sideMidTex ? 0.25f : 1.0f;
 		float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? midTexCull1 : 3.25f;
 		float midTexCull2 = !visible2sideMidTex ? 4.0f : 8.0f;
@@ -2558,7 +2559,7 @@ if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESP
         float vpbias = 1.0 - spbias;
 
 		// Apply projection distortion using original vp method
-		if (!a3DfloorPlaneObstructed || !visible2sideMidTex)
+		if (!a3DfloorPlaneObstructed)
 		{
 			x1 = x1 * spbias + vpx * vpbias;
 			y1 = y1 * spbias + vpy * vpbias;
