@@ -1034,6 +1034,7 @@ bool IsSpriteBehind3DFloorPlane(const DVector3& cameraPos, const DVector3& sprit
 
 //         ---===      ***************************************        ===---
 // ******* 1-sided-linedef culling block start *******
+float Ztolerance1sided = 4.0f;
 struct LineSegment1sided
 {
 	float x1, y1, x2, y2;
@@ -1118,13 +1119,32 @@ static bool CheckLineOfSight1sided(AActor* viewer, const DVector3& thingpos, flo
 static bool IsSpriteVisibleBehind1sidedLines(AActor* thing, AActor* viewer, const DVector3& thingpos, Clipper* clipper)
 {
 	// 1. Fast escape checks
-	if (!thing || !viewer) return true;
+	if (!thing || !viewer) return false;
 
 	// 2. Frustum culling
-	if (CheckFrustumCulling(thing)) return false;
+	if (CheckFrustumCulling(thing)) return true;
 
 	// 3. Distance culling
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+
+	float EyeHeight = 41.0f;
+	if (viewer->player && viewer->player->mo)
+	{
+		EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+		//Printf("EyeHeight1: %.2f (ViewHeight: %.2f + crouchdelta: %.2f)\n", EyeHeight1, viewer->player->mo->FloatVar(NAME_ViewHeight), viewer->player->crouchviewdelta);
+	}
+	else
+	{
+		//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
+	}
+	float viewerBottom = viewer->Z();
+	float viewerTop = viewerBottom + EyeHeight;
+	float viewerBottomAdj = viewerBottom + Ztolerance1sided;
+	float viewerTopAdj = viewerTop + Ztolerance1sided;
+	float spriteBottom = thing->Z();
+	float spriteTop = (thing->Z()) + (thing->Height);
+	float sprBottomAdj = spriteBottom + Ztolerance1sided;
+	float sprTopAdj = spriteTop + Ztolerance1sided;
 
 	float spriteScale = 0.15;
 
@@ -2431,29 +2451,82 @@ if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESP
         float tpy = thingpos.Y;
         float tpz = z; // Use 'z' from sprite setup
 
-        float bintersect, tintersect;
-        if (z2 < vpz && vbtm < vpz)
-        {
-            bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
-        }
-        else
-        {
-            bintersect = 1.0;
-        }
+		// =================== additional culling - START ======================
 
-        if (z1 > vpz && vtop > vpz)
-        {
-            tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
-        }
-        else
-        {
-            tintersect = 1.0;
-        }
+		// this algorithm allows to prevent leaks under vertical obstructions
+		const float EyeHeight = 41.0f;    // Default eye height
+		float spr2viewDiff = btm - vbtm;  // Sprite bottom to viewer bottom
 
-        if (thing->waterlevel >= 1 && thing->waterlevel <= 2)
-        {
-            bintersect = tintersect = 1.0f;
-        }
+		// Dynamic epsilon: larger epsilon when close, none when far
+		float heightEps = 0.0f;
+
+		// Only apply strict culling near eye level or if very close vertically
+		if (fabs(spr2viewDiff) <= EyeHeight * 1.5f)  // 1.5x gives some height buffer not to chop the sprites still seen
+		{
+			// Scale epsilon by proximity - smaller diff = bigger epsilon
+								// 1 when diff=0, 0 when diff >= EyeHeight
+			float proximityFactor = (1.0f - (fabs(spr2viewDiff) / EyeHeight));
+			heightEps = proximityFactor * 16.0f;  // Max 16 units when very close
+		}
+
+		float bintersect, tintersect;
+
+		// Bottom intersection - add epsilon when needed
+		if ((z2 + heightEps) < vpz && (vbtm + heightEps) < vpz)
+		{
+			float denom = (z2 - vpz);
+			// Improve divide safety while keeping performance
+			if (fabs(denom) > FLT_EPSILON)
+			{
+				bintersect = MIN((btm - vpz) / denom, (vbtm - vpz) / denom);
+			}
+			else
+			{
+				bintersect = 1.0f;  // Safe default
+			}
+		}
+		else
+		{
+			bintersect = 1.0f;
+		}
+
+		// Top intersection - subtract epsilon when needed
+		if ((z1 - heightEps) > vpz && (vtop - heightEps) > vpz)
+		{
+			float denom = (z1 - vpz);
+			if (fabs(denom) > FLT_EPSILON)
+			{
+				tintersect = MIN((top - vpz) / denom, (vtop - vpz) / denom);
+			}
+			else
+			{
+				tintersect = 1.0f;  // Safe default
+			}
+		}
+		else
+		{
+			tintersect = 1.0f;
+		}
+
+		// Water level handling (unchanged)
+		if (thing->waterlevel >= 1 && thing->waterlevel <= 2)
+		{
+			bintersect = tintersect = 1.0f;
+		}
+
+		// Min bias with buffer to prevent "borderline" culling
+		const float BIAS_EPSILON = 0.1f;  // 10% buffer
+		float final_intersect = MIN(bintersect, tintersect);
+		if (final_intersect < (minbias - BIAS_EPSILON))
+		{
+			final_intersect = 0.0f;  // Only cull when clearly below threshold
+		}
+		else if (final_intersect < minbias)
+		{
+			final_intersect = minbias;  // Prevent flickering at threshold edge
+		}
+
+		// =================== additional culling - FINISH ======================
 
         // Compute steep factor
         bool isatsteepangle;
@@ -2505,7 +2578,7 @@ if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESP
 		//
 		// =============================     CULLING DEVELOPMENT EDITION (SUPER-CHOPPED APPEARANCE WHEN CULLED) - ***FINISH***  ================================
 
-
+		// here we go again
 		// =============================     PRODUCTION EDITION (NORMAL VISIBILITY EVEN WHEN CULLED AT LEAST 1.0f - ***START***  ================================
 		float midTexCull1 = !visible2sideMidTex ? 0.25f : 1.0f;
 		float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? midTexCull1 : 3.25f;
