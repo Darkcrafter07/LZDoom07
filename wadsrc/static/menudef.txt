@@ -2361,6 +2361,7 @@ OptionValue "SpriteclipModes"
 	2, "$OPTVAL_ALWAYS"
 	3, "$OPTVAL_SMARTER"
 	-1, "$OPTVAL_ANAMORPHIC"
+	-2, "$OPTVAL_ANAMORPHIC2"
 }
 
 OptionValue "EnhancedStealth"

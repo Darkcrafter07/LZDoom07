@@ -2760,7 +2760,8 @@ GLPREFMNU_SWLMBANDED			= "Lumière bandées en Software";
 // Option Values
 OPTVAL_SMART 				= "Intelligent";
 OPTVAL_SMARTER 				= "+ Intelligent";
-OPTVAL_ANAMORPHIC 			= "Forced-Perspective-Smart";
+OPTVAL_ANAMORPHIC 		= "Forced-Perspective+";
+OPTVAL_ANAMORPHIC2 		= "Hybrid-Forced-Perspective";
 OPTVAL_INFRAREDONLY 		= "Vis. Noct. Seulement";
 OPTVAL_INFRAREDANDTORCH 	= "Iis Noct. & Torche";
 OPTVAL_ANYFIXEDCOLORMAP 	= "N'importe quelle colormap";

@@ -2830,7 +2830,8 @@ GLPREFMNU_VRSCREENDIST			= "Distance From Your Screen";
 // Option Values
 OPTVAL_SMART 				= "Smart";
 OPTVAL_SMARTER 				= "Smarter";
-OPTVAL_ANAMORPHIC 			= "Forced-Perspective-Smart";
+OPTVAL_ANAMORPHIC 		= "Forced-Perspective+";
+OPTVAL_ANAMORPHIC2 		= "Hybrid-Forced-Perspective";
 OPTVAL_INFRAREDONLY 		= "Infrared only";
 OPTVAL_INFRAREDANDTORCH 	= "Infrared and torch";
 OPTVAL_ANYFIXEDCOLORMAP 	= "Any fixed colormap";
