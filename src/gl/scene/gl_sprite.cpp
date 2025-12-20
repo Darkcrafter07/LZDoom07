@@ -74,7 +74,7 @@ CVAR(Int, gl_billboard_mode, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_billboard_faces_camera, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_billboard_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Int, gl_enhanced_nv_stealth, 3, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-CVAR(Float, r_spriteclipanamorphicminbias, 0.3, CVAR_ARCHIVE)
+CVAR(Float, r_spriteclipanamorphicminbias, 0.6, CVAR_ARCHIVE)
 CVAR(Bool, r_debug_nolimitanamorphoses, false, 0)
 CUSTOM_CVAR(Int, gl_fuzztype, 6, CVAR_ARCHIVE)
 {
@@ -713,26 +713,16 @@ inline bool IsDistanceCulled(AActor* thing)
 //         ---===      ***************************************        ===---
 // ******* Anamorphic "Forced-Pespective" common early exit checks - start *******
 // Distance cull checks on big maps with lots of 3D-floors to speed up
-inline bool IsAnamorphicSpriteDistanceCulled(AActor* thing, float gl_anamorphic_sprite_distance_cull)
+bool IsAnamorphicDistanceCulled(AActor* thing, float gl_anamorphic_spriteclip_distance_cull)
 {
 	if (!thing) return true; // Handle null pointers
-	if (gl_anamorphic_sprite_distance_cull <= 0.0f) return false;
+	if (gl_anamorphic_spriteclip_distance_cull <= 0.0f)
+		return false;
 
-	const float cullDist = gl_anamorphic_sprite_distance_cull;
+	const float cullDist = gl_anamorphic_spriteclip_distance_cull;
 	const float cullDistSq = cullDist * cullDist;
 
 	return (thing->Pos() - r_viewpoint.Pos).LengthSquared() > cullDistSq;
-}
-
-inline bool IsAnamorphicLineDistanceCulled(line_t *line, float gl_anamorphic_line_distance_cull)
-{
-	const float dist3 = gl_anamorphic_line_distance_cull * gl_anamorphic_line_distance_cull;
-	if (dist3 <= 0.0) return false;
-
-	float dist1 = (line->v1->fPos() - r_viewpoint.Pos).LengthSquared();
-	float dist2 = (line->v2->fPos() - r_viewpoint.Pos).LengthSquared();
-	if ((dist1 > dist3) && (dist2 > dist3)) return true;
-	return false;
 }
 
 line_t* GetClosestLineInSector(const DVector3 &thingpos, sector_t* sector)
@@ -759,11 +749,8 @@ line_t* GetClosestLineInSector(const DVector3 &thingpos, sector_t* sector)
 }
 
 // Frustum culling
-inline static bool CheckFrustumCulling(AActor* thing, line_t *line)
+static bool CheckFrustumCulling(AActor* thing)
 {
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return true;
-	if (IsAnamorphicLineDistanceCulled(line, 2048.0f)) return true;
-
 	const DVector3 viewerPos = r_viewpoint.Pos;
 	const DVector3 thingPos = thing->Pos();
 
@@ -773,11 +760,11 @@ inline static bool CheckFrustumCulling(AActor* thing, line_t *line)
 	float currentFOV2x = currentFOV * 2.0;
 
 	// Calculate frustum based on tilt
-	float tilt = abs(r_viewpoint.Angles.Pitch.Degrees);
+	float tilt = fabs(static_cast<float>(r_viewpoint.Angles.Pitch.Degrees));
 	if (tilt > 46.0f) return false; // Don't cull at extreme angles
 
 	// Use the actual FOV instead of hardcoded 90
-	const float floatangle = 2.0 + (45.0 + (tilt / 1.9)) * currentFOV2x * 48.0 / AspectMultiplier(r_viewwindow.WidescreenRatio) / currentFOV;
+	float floatangle = 2.0 + (45.0 + (tilt / 1.9)) * currentFOV2x * 48.0 / AspectMultiplier(r_viewwindow.WidescreenRatio) / currentFOV;
 	angle_t frustumAngle = DAngle(floatangle).BAMs();
 
 	if (frustumAngle < ANGLE_180)
@@ -796,6 +783,112 @@ inline static bool CheckFrustumCulling(AActor* thing, line_t *line)
 	}
 
 	return false; // Not culled by frustum
+}
+
+struct LineSegmentCommon
+{
+	float x1, y1, x2, y2;
+
+	LineSegmentCommon(float x1, float y1, float x2, float y2) : x1(x1), y1(y1), x2(x2), y2(y2) {}
+
+	bool IntersectsCommon(const LineSegmentCommon& other, float& ix, float& iy) const
+	{
+		float denom = (x1 - x2) * (other.y1 - other.y2) - (y1 - y2) * (other.x1 - other.x2);
+		if (fabs(denom) < 1e-4) return false;
+
+		float t = ((x1 - other.x1) * (other.y1 - other.y2) - (y1 - other.y1) * (other.x1 - other.x2)) / denom;
+		float u = -((x1 - x2) * (y1 - other.y1) - (y1 - y2) * (x1 - other.x1)) / denom;
+
+		if (t >= 0 && t <= 1 && u >= 0 && u <= 1)
+		{
+			ix = x1 + t * (x2 - x1);
+			iy = y1 + t * (y2 - y1);
+			return true;
+		}
+		return false;
+	}
+};
+
+// Function to check if a wall is thin (less than 12 units thick)
+// how to call: bool thisisathinwall = IsThinWallCommon(thing, r_viewpoint.camera, thingpos);
+static bool IsThinWallCommon(AActor* viewer, AActor* thing, DVector3& thingpos)
+{
+	if (!viewer || !thing) return false;
+
+	sector_t* viewSector = viewer->Sector;
+	sector_t* thingSector = P_PointInSector(thingpos.X, thingpos.Y);
+
+	// Only check if in different sectors
+	if (viewSector == thingSector) return false;
+
+	DVector3 viewerPos = viewer->Pos();
+
+	// Create sight line from viewer to sprite
+	LineSegmentCommon sight(viewerPos.X, viewerPos.Y, thingpos.X, thingpos.Y);
+
+	// Check for thin walls along the sight line
+	for (auto* sector : { viewSector, thingSector })
+	{
+		for (auto& line : sector->Lines)
+		{
+			LineSegmentCommon wall(line->v1->fX(), line->v1->fY(), line->v2->fX(), line->v2->fY());
+
+			float ix, iy;
+			if (wall.IntersectsCommon(sight, ix, iy))
+			{
+				// This wall intersects the sight line - check if it's thin
+				sector_t* otherSector = nullptr;
+
+				// Determine which sector is on the other side
+				if (sector == viewSector)
+				{
+					otherSector = thingSector;
+				}
+				else
+				{
+					otherSector = viewSector;
+				}
+
+				// Get line's perpendicular vector for thickness check
+				DVector2 wallDir(line->v2->fX() - line->v1->fX(), line->v2->fY() - line->v1->fY());
+				float wallLength = wallDir.Length();
+
+				if (wallLength > 0)
+				{
+					wallDir = wallDir / wallLength;
+					DVector2 perp(-wallDir.Y, wallDir.X);
+
+					// Sample points along the wall to check thickness
+					for (float t = 0.2; t <= 0.8; t += 0.3) // 3 sample points
+					{
+						DVector2 wallPoint(
+							line->v1->fX() + wallDir.X * wallLength * t,
+							line->v1->fY() + wallDir.Y * wallLength * t
+						);
+
+						// Ray cast in perpendicular direction to find sector boundary
+						float thickness = 0;
+						for (float rayDist = 1; rayDist <= 15; rayDist += 1) // Up to 15 units
+						{
+							DVector2 testPos = wallPoint + perp * rayDist;
+							if (P_PointInSector(testPos.X, testPos.Y) == otherSector)
+							{
+								thickness = rayDist;
+								break;
+							}
+						}
+
+						if (thickness > 0 && thickness < 12.0) // Less than 12 units thick
+						{
+							return true; // Found a thin wall
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return false; // No thin walls found
 }
 
 // ******* Anamorphic "Forced-Pespective" common early exit checks - finish *******
@@ -828,6 +921,15 @@ struct LineSegment1sided
 		return false;
 	}
 };
+
+// Wrapper function - to call struct LineSegment1sided from any other place
+// bool thingCrossed1sidedLine = Intersects1sided(viewerPos.X, viewerPos.Y, edgeX, edgeY, line->v1->fX(), line->v1->fY(), line->v2->fX(), line->v2->fY(), ix, iy);
+static bool Intersects1sided(float x1, float y1, float x2, float y2, float ox1, float oy1, float ox2, float oy2, float& ix, float& iy)
+{
+	LineSegment1sided seg1(x1, y1, x2, y2);
+	LineSegment1sided seg2(ox1, oy1, ox2, oy2);
+	return seg1.Intersects1sided(seg2, ix, iy);
+}
 
 static bool CheckLineOfSight1sided(AActor* viewer, const DVector3& thingpos, float spriteRadius)
 {
@@ -883,11 +985,11 @@ static bool CheckLineOfSight1sided(AActor* viewer, const DVector3& thingpos, flo
 	return true; // No blocking walls found
 }
 
-static bool IsSpriteVisibleBehind1sidedLines(AActor* thing, AActor* viewer, const DVector3& thingpos)
+static bool IsSpriteVisibleBehind1sidedLines(AActor* thing, AActor* viewer, const DVector3& thingpos, Clipper* clipper)
 {
 	// Fast escape checks
 	if (!thing || !viewer) return true;
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0)) return false;
 
 	float spriteScale = 0.15;
 
@@ -1032,7 +1134,7 @@ struct ObstructionData2Sided
 			{
 				// Projectiles get extra culling when near floor/ceiling
 				// where 384.0f is a permittable view height range to allow culling
-				const float heightFactor = 1.0f - fabs(thing->Z() - floorHeightInitial) / 384.0f; 
+				const float heightFactor = 1.0f - fabs(thing->Z() - floorHeightInitial) / 384.0f;
 				floorHeightMultiplier1 *= 1.0f + (0.5f * heightFactor);
 			}
 		}
@@ -1354,16 +1456,15 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 
 // this function determines visibility of sprites behind tall enough 2-sided-linedef based obstructions, call it like that:
 // bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
-bool IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(AActor* viewer, AActor* thing, line_t *line)
+bool IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(AActor* viewer, AActor* thing)
 {
 	if (!viewer || !thing || viewer == thing) return true;
 
 	// 1. Frustum culling
-	if (CheckFrustumCulling(thing, line)) return false;
+	if (CheckFrustumCulling(thing)) return false;
 
 	// 2. Distance culling
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return false;
-	if (IsAnamorphicLineDistanceCulled(line, 2048.0f)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// 3. Full occlusion test
 	return CheckLineOfSight2sided(viewer, thing);
@@ -1386,21 +1487,21 @@ bool IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(AActor* viewer, A
 //							I'd recommed to call the function like this:
 //		float behindFacingMidTxtProximity = CheckFacingMidTextureProximity(thing, r_viewpoint.camera, thingpos);
 //		bool visbible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
-static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer, TVector3<double>& thingpos, line_t* line)
+static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer, TVector3<double>& thingpos)
 {
 	//Printf("===== TEXTURE PROXIMITY CHECK START =====\n");
 	//Printf("Thing: %s at (%.1f, %.1f, %.1f)\n", thing->GetClass()->TypeName.GetChars(), thingpos.X, thingpos.Y, thingpos.Z);
 	//Printf("Camera: (%.1f, %.1f, %.1f) facing %.1f degrees\n", camera->X(), camera->Y(), camera->Z(), camera->Angles.Yaw.Degrees());
 
 	// 1. Quick out: Frustum culling
-	if (CheckFrustumCulling(thing, line))
+	if (CheckFrustumCulling(thing))
 	{
 		//Printf("Skipped: Frustum culled\n");
 		return 0.0f;
 	}
 
 	// 2. Distance culling (far planes)
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f))
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f))
 	{
 		//Printf("Skipped: Distance culled (2048+ units away)\n");
 		return 0.0f;
@@ -1599,7 +1700,7 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		DVector2 v1(line->v1->fX(), line->v1->fY());
 		DVector2 v2(line->v2->fX(), line->v2->fY());
 		DVector2 lineVec = v2 - v1;
-		float lineLenSq = lineVec.LengthSquared();
+		double lineLenSq = lineVec.LengthSquared();
 		if (lineLenSq < 1e-6)
 		{
 			//Printf("Skipped: Degenerate line (length squared=%.4f)\n", lineLenSq);
@@ -1607,7 +1708,7 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		}
 
 		DVector2 toSprite(thingpos.X - v1.X, thingpos.Y - v1.Y);
-		float dot = lineVec.X * toSprite.X + lineVec.Y * toSprite.Y;
+		double dot = lineVec.X * toSprite.X + lineVec.Y * toSprite.Y;
 		float t_segment = clamp(float(dot / lineLenSq), 0.0f, 1.0f);
 
 		DVector2 closest(v1.X + t_segment * lineVec.X, v1.Y + t_segment * lineVec.Y);
@@ -1675,7 +1776,7 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 // ******* 3DFloor-planar - floor and ceiling culling block start *******
 static DVector3 GetSpriteOcclusionPoint3DFloors(AActor* thing, DVector3& pos)
 {
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return DVector3(0, 0, 0);
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return DVector3(0, 0, 0);
 
 	DVector3 occlusionPos = pos;  // Start with original position
 
@@ -1714,7 +1815,7 @@ static DVector3 GetSpriteOcclusionPoint3DFloors(AActor* thing, DVector3& pos)
 // Shared filter to determine relevant 3D floors
 static bool IsRelevantFFloor3DFloors(F3DFloor* rover, AActor* thing)
 {
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return 0;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return 0;
 
 	return (rover->flags & FF_EXISTS) &&
 		(rover->flags & FF_SOLID) &&
@@ -1730,7 +1831,7 @@ static bool IsRelevantFFloor3DFloors(F3DFloor* rover, AActor* thing)
 // Modified to use absolute sprite bottom
 static float GetActualSpriteFloorZ3DfloorsAndOther(sector_t* s, DVector3& pos, AActor* thing)
 {
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return pos.Z;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return pos.Z;
 
 	float height = s->floorplane.ZatPoint(pos);
 	float spriteBottom = thing->Z(); // Absolute bottom position
@@ -1749,7 +1850,7 @@ static float GetActualSpriteFloorZ3DfloorsAndOther(sector_t* s, DVector3& pos, A
 // Modified to use absolute sprite top
 static float GetActualSpriteCeilingZ3DfloorsAndOther(sector_t* s, DVector3& pos, AActor* thing)
 {
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0)) return pos.Z;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0)) return pos.Z;
 
 	float height = s->ceilingplane.ZatPoint(pos);
 	float spriteTop = thing->Z() + thing->Height; // Absolute top position
@@ -1768,7 +1869,7 @@ static float GetActualSpriteCeilingZ3DfloorsAndOther(sector_t* s, DVector3& pos,
 // Helper function: Find intersection between plane and line
 static bool PlaneLineIntersection3DFloors(AActor* thing, secplane_t* plane, DVector3& start, DVector3& end, DVector3& out)
 {
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	const DVector3& n = plane->Normal();
 	float planeD = plane->fD();
@@ -1806,10 +1907,10 @@ static void GetSectorBounds3DFloors(const sector_t* sec, DVector2 &minPoint, DVe
 	}
 }
 
-bool IsSpriteBehind3DFloorPlane(DVector3& cameraPos, DVector3& spritePos, sector_t* sector, AActor* thing, line_t *line)
+bool IsSpriteBehind3DFloorPlane(DVector3& cameraPos, DVector3& spritePos, sector_t* sector, AActor* thing)
 {
-	if (CheckFrustumCulling(thing, line)) return false;
-	if (!sector || !sector->e || IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return false;
+	if (!sector || !sector->e || IsAnamorphicDistanceCulled(thing, 2048.0f))
+		return false;
 
 	const float TOLERANCE = 16.0f;    // Vertex-aligned sector tolerance
 	const float EPSILON = 8.0f;       // Vertical comparison safety
@@ -1875,8 +1976,13 @@ bool IsSpriteBehind3DFloorPlane(DVector3& cameraPos, DVector3& spritePos, sector
 
 //         ---===      ***************************************        ===---
 // ******* 3DFloor-sides culling block start *******
+// Utility: get plane height at a 2D point
+static inline float GetPlaneHeight(secplane_t* plane, const DVector2& pt)
+{
+	return plane->ZatPoint(pt);
+}
 
-bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing, line_t *line)
+bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 {
 	constexpr float RAY_EPS = 1e-4;     // tolerance for ray-intersection tests
 	constexpr float VERT_EPS = 1e-5;    // tolerance for vertical visibility checks
@@ -1885,8 +1991,8 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing, line_t *li
 	if (!viewer || !thing) return true;
 	if (viewer->Sector == thing->Sector) return true;   // same sector – no occlusion
 
-	if (CheckFrustumCulling(thing, line)) return false;
-	if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return false;
+	// Distance culling – keep your existing method
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// 2) Ray geometry
 	const TVector2<float> vd(viewer->Pos().X, viewer->Pos().Y);   // viewer
@@ -1972,6 +2078,8 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing, line_t *li
 // Anamorphic "Forced-Perspective" sprite clipping occlusion culling - finish
 //
 //==========================================================================
+
+
 
 
 void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool isSpriteShadow)
@@ -2254,31 +2362,94 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 //==========================================================================
 //
-// Begin Hybrid Anamorphic Forced-Perspective - Smart projection
+// Begin Anamorphic Forced-Perspective+ projection
 //
 //==========================================================================
 
 	if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
-		if (modelframe)
+		// ======= Anamorphic Forced-Perspective+ sprite projecting routine START =======
+
+		float minbias = r_spriteclipanamorphicminbias;
+		minbias = clamp(minbias, 0.3f, 1.0f);
+
+		// Get the viewpoint from the current draw context
+		const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to how GZDoom v4.14.2
+		// and that helped to reduce leaks, the olny difference from original sprite cliping mode of
+		// Forced-Perspective is that it's 3DFloor aware
+
+		// Regular and 3D Floor-Aware Heights
+		float btm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing) - thing->Floorclip;
+		float top = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, thingpos, thing);
+		// Viewer's actual heights (from their sector and 3D floors)
+		float vbtm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
+		float vtop = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
+
+		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
+		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
+
+		// Radius-based bias (disable with r_debug_nolimitanamorphoses) - prevents leaks
+		if (!r_debug_nolimitanamorphoses)
 		{
-			// === CRUCIAL CPU OPTIMIZATION FOR MODS LIKE BRUTAL DOOM ===
-			//    Do NOT draw 3D models as it's going to eat CPU alive!
-			gl_spriteclip = 1;   // use "Never" mode to draw 3D models
+			float objradius = thing->radius;
+			float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+			float objradiusbias = 1.f - objradius / sqrt(distsq);
+			minbias = MAX(minbias, objradiusbias);
 		}
 
-		line_t* closestLine = GetClosestLineInSector(DVector3(thing->Pos(), thing->Z()), sector);
-		if (IsAnamorphicLineDistanceCulled(closestLine, 2048.0f)) return;
+		float bintersect, tintersect;
+		if (z2 < vpz && vbtm < vpz)		bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
+		else							bintersect = 1.0;
 
-		if (IsAnamorphicSpriteDistanceCulled(thing, 2048.0f)) return;
+		if (z1 > vpz && vtop > vpz)		tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
+		else							tintersect = 1.0;
 
+		if (thing->waterlevel >= 1 && thing->waterlevel <= 2)					bintersect = tintersect = 1.0f;
+
+		float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f);
+		float vpbias = 1.0 - spbias;
+
+		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlane(r_viewpoint.Pos, thingpos, thing->Sector, thing);
+
+		// Apply projection distortion using original vp method
+		if (!a3DfloorPlaneObstructed)
+		{
+			x1 = x1 * spbias + vpx * vpbias;
+			y1 = y1 * spbias + vpy * vpbias;
+			z1 = z1 * spbias + vpz * vpbias;
+			x2 = x2 * spbias + vpx * vpbias;
+			y2 = y2 * spbias + vpy * vpbias;
+			z2 = z2 * spbias + vpz * vpbias;
+		}
+
+		// ======= Anamorphic Forced-Perspective+ sprite projecting routine FINISH =======
+	}
+
+//==========================================================================
+//
+// Finish Anamorphic Forced-Perspective+ projection
+//
+//==========================================================================
+
+
+
+//==========================================================================
+//
+// Begin Hybrid Anamorphic Forced-Perspective - Smart projection
+//
+//==========================================================================
+
+	if (gl_spriteclip == -2 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
+	{
 		// Define distance constants properly
 		const float FP_CLOSER_LIMIT = 384.0f;            // Where Forced-Perspective ends (close-up)
 		const float SMART_START_DISTANCE = 1400.0f;      // Where Smart-clip starts to show up (far-side)
 		const float TRANSITION_WIDTH = SMART_START_DISTANCE - FP_CLOSER_LIMIT;    // Length of transition
 
 		// Get the viewpoint from the current draw context
-		const DVector3 &vp = r_viewpoint.Pos; //reduces leaks
+		const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to how GZDoom v4.14.2
+		// and that helped to reduce leaks, the olny difference from original sprite cliping mode of
+		// Forced-Perspective is that it's 3DFloor aware
 
 		// Determine sprite classification
 		bool islegacyversionprojectile =
@@ -2322,12 +2493,37 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			//	tex->Name.GetChars(),spriteRasterYdimen, spriteFileOffset,visibleSpriteHeight,hasSignificantNegativeOffset ? "YES" : "NO");
 		}
 
-		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLines(thing, r_viewpoint.camera, thingpos);
-		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing, closestLine);
-		float behindFacingMidTxtProximity = CheckFacingMidTextureProximity(thing, r_viewpoint.camera, thingpos, closestLine);
+		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
+		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
+
+		// === Is sprite crossing a 1sided-linedef block - START
+		line_t* closestLine = GetClosestLineInSector(DVector3(thing->Pos(), thing->Z()), sector);
+		float ix, iy;			  // Intersection point coordinates
+		bool thingCrossed1sidedLine = false;
+		// Check all 4 edges of the sprite against the closest line
+		if (closestLine)
+		{
+			const float spriteRadius = MAX<float>(0.5f, thing->radius * 0.15f);
+			float edgeX, edgeY; // Edge point coordinates
+			// Check 4 points around sprite circumference
+			for (float angle = 0; angle < 2 * M_PI; angle += M_PI / 2)
+			{
+				edgeX = tpx + cos(angle) * spriteRadius;
+				edgeY = tpy + sin(angle) * spriteRadius;
+				thingCrossed1sidedLine = Intersects1sided(vpx, vpy, edgeX, edgeY, closestLine->v1->fX(),
+							closestLine->v1->fY(),closestLine->v2->fX(), closestLine->v2->fY(), ix, iy);
+				if (thingCrossed1sidedLine) break;
+			}
+		}
+		// === Is sprite crossing a 1sided-linedef block - FINISH
+
+		bool thisisathinwall = IsThinWallCommon(thing, r_viewpoint.camera, thingpos);
+		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLines(thing, r_viewpoint.camera, thingpos, &mDrawer->clipper);
+		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
+		float behindFacingMidTxtProximity = CheckFacingMidTextureProximity(thing, r_viewpoint.camera, thingpos);
 		bool visible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
-		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSides(r_viewpoint.camera, thing, closestLine);
-		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlane(r_viewpoint.Pos, thingpos, thing->Sector, thing, closestLine);
+		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSides(r_viewpoint.camera, thing);
+		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlane(r_viewpoint.Pos, thingpos, thing->Sector, thing);
 
 		DVector3 thingpos3D(thingpos.X, thingpos.Y, z);
 		float distSq = (thingpos3D - r_viewpoint.Pos).LengthSquared();
@@ -2338,10 +2534,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 		// With additional culling mechanism coplanar leaks already reduced
 		// But we can disable Forced-Perspective for floating sprites entirely
-		// but only for those whose Y-axis sprite offset doesn't cross ground at all
-		if (isfloatingsprite && !hasSignificantNegativeOffset)
+		// but only for those whose Y-axis sprite offset doesn't cross ground at all.
+		// we also turn off anamorphosis for things that crossed 1sided linedefs
+		if ( (isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
 		{
-			blend = 1.0f; // Force smart mode for floating sprites
+			// Force smart mode for floating sprites and things crossing 1sided-linedefs
+			blend = 1.0f;
 		}
 		else
 		{
@@ -2405,8 +2603,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float vbtm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
 			float vtop = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
 
-			float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
-			float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
+			// defined earlier
+			//float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
+			//float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
 
 			// =================== additional culling - START ======================
 			float horizontalEps = 0.1f;
@@ -2592,12 +2791,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			isatsteepangle = steepnessfact > 0.001f;
 
 			// =============================     PRODUCTION EDITION (NORMAL VISIBILITY EVEN WHEN CULLED AT LEAST 1.0f - ***START***  ================================
-			float midTexCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
-			float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? midTexCull1 : 3.25f;
-			float midTexCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
-			float projectiles_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? midTexCull2 : 14.0f;
-			float midTexCull3 = !visible2sideMidTex ? 0.025f : 1.0f;
-			float regularsizmonster_factor1 = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? midTexCull3 : 3.25f;
+			float extremeCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
+			float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? extremeCull1 : 3.25f;
+			float extremeCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
+			float projectiles_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? extremeCull2 : 14.0f;
+			float extremeCull3 = !visible2sideMidTex ? 0.025f : 1.0f;
+			float regularsizmonster_factor1 = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? extremeCull3 : 3.25f;
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
@@ -2684,11 +2883,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 	}
 
-//==========================================================================
-//
-// Finish Hybrid Anamorphic Forced-Perspective - Smart projection
-//
-//==========================================================================
+	//==========================================================================
+	//
+	// Finish Hybrid Anamorphic Forced-Perspective - Smart projection
+	//
+	//==========================================================================
+
 
 
 	// light calculation
@@ -2716,7 +2916,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool islittlesprite = (base_dimen <= 18.0f);
 		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
 
-		bool isactorclose = !IsAnamorphicSpriteDistanceCulled(thing, 128.0);
+		bool isactorclose = !IsAnamorphicDistanceCulled(thing, 128.0);
 
 		float minbias = r_spriteclipanamorphicminbias;
 		minbias = clamp<float>(minbias, 0.1f, 0.5f);
