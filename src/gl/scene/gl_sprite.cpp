@@ -2501,7 +2501,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float ix, iy;			  // Intersection point coordinates
 		bool thingCrossed1sidedLine = false;
 		// Check all 4 edges of the sprite against the closest line
-		if (closestLine)
+		if (closestLine && closestLine->sidedef[0] && !closestLine->sidedef[1]) // 1-sided only
 		{
 			const float spriteRadius = MAX<float>(0.5f, thing->radius * 0.15f);
 			float edgeX, edgeY; // Edge point coordinates
@@ -2535,7 +2535,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// With additional culling mechanism coplanar leaks already reduced
 		// But we can disable Forced-Perspective for floating sprites entirely
 		// but only for those whose Y-axis sprite offset doesn't cross ground at all.
-		// we also turn off anamorphosis for things that crossed 1sided linedefs
+		// We also turn off anamorphosis for things that crossed 1sided linedefs
 		if ( (isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
 		{
 			// Force smart mode for floating sprites and things crossing 1sided-linedefs
