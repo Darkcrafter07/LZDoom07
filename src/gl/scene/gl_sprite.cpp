@@ -1992,7 +1992,7 @@ static float GetActualSpriteCeilingZ3DfloorsAndOther(sector_t* s, DVector3& pos,
 // Helper function: Find intersection between plane and line
 static bool PlaneLineIntersection3DFloors(AActor* thing, secplane_t* plane, DVector3& start, DVector3& end, DVector3& out)
 {
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
 
 	const DVector3& n = plane->Normal();
 	float planeD = plane->fD();
@@ -2032,7 +2032,7 @@ static void GetSectorBounds3DFloors(const sector_t* sec, DVector2 &minPoint, DVe
 
 bool IsSpriteBehind3DFloorPlane(DVector3& cameraPos, DVector3& spritePos, sector_t* sector, AActor* thing)
 {
-	if (!sector || !sector->e || IsAnamorphicDistanceCulled(thing, 2048.0f))
+	if (!sector || !sector->e)
 		return false;
 
 	const float TOLERANCE = 16.0f;    // Vertex-aligned sector tolerance
@@ -2151,8 +2151,9 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 	if (!viewer || !thing) return true;
 	if (viewer->Sector == thing->Sector) return true;   // same sector – no occlusion
 
-	// Distance culling – keep your existing method
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+	// We call the function with "!" - that's why return "true" when culled
+	if (CheckFrustumCulling(thing)) return true;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
 
 	// 2) Ray geometry
 	const TVector2<float> vd(viewer->Pos().X, viewer->Pos().Y);   // viewer
@@ -2585,19 +2586,19 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// ======= Anamorphic Forced-Perspective+ sprite projecting routine FINISH =======
 	}
 
-	//==========================================================================
-	//
-	// Finish Anamorphic Forced-Perspective+ projection
-	//
-	//==========================================================================
+//==========================================================================
+//
+// Finish Anamorphic Forced-Perspective+ projection
+//
+//==========================================================================
 
 
 
-	//==========================================================================
-	//
-	// Begin Hybrid Anamorphic Forced-Perspective - Smart projection
-	//
-	//==========================================================================
+//==========================================================================
+//
+// Begin Hybrid Anamorphic Forced-Perspective - Smart projection
+//
+//==========================================================================
 
 	if (gl_spriteclip == -2 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
@@ -3039,11 +3040,11 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 	}
 
-	//==========================================================================
-	//
-	// Finish Hybrid Anamorphic Forced-Perspective - Smart projection
-	//
-	//==========================================================================
+//==========================================================================
+//
+// Finish Hybrid Anamorphic Forced-Perspective - Smart projection
+//
+//==========================================================================
 
 
 
