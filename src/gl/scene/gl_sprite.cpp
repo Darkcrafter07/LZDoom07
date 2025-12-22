@@ -64,8 +64,8 @@
 
 #include "p_3dmidtex.h"
 
-CVAR(Bool, gl_usecolorblending, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
-CVAR(Bool, gl_sprite_blend, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
+CVAR(Bool, gl_usecolorblending, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, gl_sprite_blend, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR(Int, gl_spriteclip, 1, CVAR_ARCHIVE)
 CVAR(Float, gl_sclipthreshold, 10.0, CVAR_ARCHIVE)
 CVAR(Float, gl_sclipfactor, 1.8, CVAR_ARCHIVE)
@@ -81,8 +81,8 @@ CUSTOM_CVAR(Int, gl_fuzztype, 6, CVAR_ARCHIVE)
 	if (self < 0 || self > 8) self = 0;
 }
 
-EXTERN_CVAR (Float, transsouls)
-EXTERN_CVAR (Bool, r_debug_disable_vis_filter)
+EXTERN_CVAR(Float, transsouls)
+EXTERN_CVAR(Bool, r_debug_disable_vis_filter)
 
 extern TArray<spritedef_t> sprites;
 extern TArray<spriteframe_t> SpriteFrames;
@@ -143,12 +143,12 @@ void GLSprite::CalculateVertices(FVector3 *v)
 			float cy = (y1 + y2) * 0.5;
 
 			mat.Translate(cx - x, 0, cy - y);
-			mat.Rotate(0, 1, 0, - Angles.Roll.Degrees);
+			mat.Rotate(0, 1, 0, -Angles.Roll.Degrees);
 			mat.Translate(-cx, -z, -cy);
 		}
 		else
 		{
-			mat.Rotate(0, 1, 0, - Angles.Roll.Degrees);
+			mat.Rotate(0, 1, 0, -Angles.Roll.Degrees);
 			mat.Translate(-x, -z, -y);
 		}
 		v[0] = mat * FVector3(x2, z, y2);
@@ -160,7 +160,7 @@ void GLSprite::CalculateVertices(FVector3 *v)
 		glPolygonOffset(-1.0f, -128.0f);
 		return;
 	}
-	
+
 	// [BB] Billboard stuff
 	const bool drawWithXYBillboard = ((particle && gl_billboard_particles) || (!(actor && actor->renderflags & RF_FORCEYBILLBOARD)
 		//&& GLRenderer->mViewActor != NULL
@@ -291,9 +291,9 @@ void GLSprite::Draw(int pass)
 
 	bool additivefog = false;
 	bool foglayer = false;
-	int rel = fullbright? 0 : getExtraLight();
+	int rel = fullbright ? 0 : getExtraLight();
 
-	if (pass==GLPASS_TRANSLUCENT)
+	if (pass == GLPASS_TRANSLUCENT)
 	{
 		// The translucent pass requires special setup for the various modes.
 
@@ -303,9 +303,9 @@ void GLSprite::Draw(int pass)
 			gl_RenderState.EnableBrightmap(false);
 		}
 
-		gl_SetRenderStyle(RenderStyle, false, 
+		gl_SetRenderStyle(RenderStyle, false,
 			// The rest of the needed checks are done inside gl_SetRenderStyle
-			trans > 1.f - FLT_EPSILON && gl_usecolorblending && mDrawer->FixedColormap == CM_DEFAULT && actor && 
+			trans > 1.f - FLT_EPSILON && gl_usecolorblending && mDrawer->FixedColormap == CM_DEFAULT && actor &&
 			fullbright && gltexture && !gltexture->GetTransparent());
 
 		if (hw_styleflags == STYLEHW_NoAlphaTest)
@@ -317,23 +317,23 @@ void GLSprite::Draw(int pass)
 
 		if (RenderStyle.BlendOp == STYLEOP_Shadow)
 		{
-			float fuzzalpha=0.44f;
-			float minalpha=0.1f;
+			float fuzzalpha = 0.44f;
+			float minalpha = 0.1f;
 
 			// fog + fuzz don't work well without some fiddling with the alpha value!
 			if (!gl_isBlack(Colormap.FadeColor))
 			{
-				float dist=Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, x,y);
+				float dist = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, x, y);
 				int fogd = gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
 
 				// this value was determined by trial and error and is scale dependent!
-				float factor = 0.05f + exp(-fogd*dist / 62500.f);
-				fuzzalpha*=factor;
-				minalpha*=factor;
+				float factor = 0.05f + exp(-fogd * dist / 62500.f);
+				fuzzalpha *= factor;
+				minalpha *= factor;
 			}
 
 			gl_RenderState.AlphaFunc(GL_GEQUAL, gl_mask_sprite_threshold);
-			gl_RenderState.SetColor(0.2f,0.2f,0.2f,fuzzalpha, Colormap.Desaturation);
+			gl_RenderState.SetColor(0.2f, 0.2f, 0.2f, fuzzalpha, Colormap.Desaturation);
 			additivefog = true;
 			lightlist = nullptr;	// the fuzz effect does not use the sector's light level so splitting is not needed.
 		}
@@ -376,11 +376,11 @@ void GLSprite::Draw(int pass)
 	}
 
 
-	if (gl_isBlack(Colormap.FadeColor)) foglevel=lightlevel;
+	if (gl_isBlack(Colormap.FadeColor)) foglevel = lightlevel;
 
-	if (RenderStyle.Flags & STYLEF_FadeToBlack) 
+	if (RenderStyle.Flags & STYLEF_FadeToBlack)
 	{
-		Colormap.FadeColor=0;
+		Colormap.FadeColor = 0;
 		additivefog = true;
 	}
 
@@ -409,9 +409,9 @@ void GLSprite::Draw(int pass)
 	if (gltexture) gl_RenderState.SetMaterial(gltexture, CLAMP_XY, translation, OverrideShader, !!(RenderStyle.Flags & STYLEF_RedIsAlpha));
 	else if (!modelframe) gl_RenderState.EnableTexture(false);
 
-		//mDrawer->SetColor(lightlevel, rel, Colormap, trans);
+	//mDrawer->SetColor(lightlevel, rel, Colormap, trans);
 
-	unsigned int iter = lightlist? lightlist->Size() : 1;
+	unsigned int iter = lightlist ? lightlist->Size() : 1;
 	bool clipping = false;
 	if (lightlist || topclip != LARGE_VALUE || bottomclip != -LARGE_VALUE)
 	{
@@ -430,7 +430,7 @@ void GLSprite::Draw(int pass)
 			secplane_t *lowplane = i == (*lightlist).Size() - 1 ? &bottomp : &(*lightlist)[i + 1].plane;
 
 			int thislight = (*lightlist)[i].caster != NULL ? gl_ClampLight(*(*lightlist)[i].p_lightlevel) : lightlevel;
-			int thisll = actor == nullptr? thislight : (uint8_t)gl_CheckSpriteGlow(actor->Sector, thislight, actor->InterpolatedPosition(r_viewpoint.TicFrac));
+			int thisll = actor == nullptr ? thislight : (uint8_t)gl_CheckSpriteGlow(actor->Sector, thislight, actor->InterpolatedPosition(r_viewpoint.TicFrac));
 
 			FColormap thiscm;
 			thiscm.CopyFog(Colormap);
@@ -459,7 +459,7 @@ void GLSprite::Draw(int pass)
 			FVector3 v[4];
 			gl_RenderState.SetNormal(0, 0, 0);
 			CalculateVertices(v);
-			
+
 			FQuadDrawer qd;
 			qd.Set(0, v[0][0], v[0][1], v[0][2], ul, vt);
 			qd.Set(1, v[1][0], v[1][1], v[1][2], ur, vt);
@@ -490,7 +490,7 @@ void GLSprite::Draw(int pass)
 		gl_RenderState.EnableSplit(false);
 	}
 
-	if (pass==GLPASS_TRANSLUCENT)
+	if (pass == GLPASS_TRANSLUCENT)
 	{
 		gl_RenderState.EnableBrightmap(true);
 		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -511,7 +511,7 @@ void GLSprite::Draw(int pass)
 	gl_RenderState.SetObjectColor(0xffffffff);
 	gl_RenderState.SetAddColor(0);
 	gl_RenderState.EnableTexture(true);
-	gl_RenderState.SetDynLight(0,0,0);
+	gl_RenderState.SetDynLight(0, 0, 0);
 }
 
 
@@ -546,20 +546,20 @@ void GLSprite::SplitSprite(sector_t * frontsector, bool translucent)
 	GLSprite copySprite(mDrawer);
 	double lightbottom;
 	unsigned int i;
-	bool put=false;
-	TArray<lightlist_t> & lightlist=frontsector->e->XFloor.lightlist;
+	bool put = false;
+	TArray<lightlist_t> & lightlist = frontsector->e->XFloor.lightlist;
 
-	for(i=0;i<lightlist.Size();i++)
+	for (i = 0; i < lightlist.Size(); i++)
 	{
 		// Particles don't go through here so we can safely assume that actor is not NULL
-		if (i<lightlist.Size()-1) lightbottom=lightlist[i+1].plane.ZatPoint(actor);
-		else lightbottom=frontsector->floorplane.ZatPoint(actor);
+		if (i < lightlist.Size() - 1) lightbottom = lightlist[i + 1].plane.ZatPoint(actor);
+		else lightbottom = frontsector->floorplane.ZatPoint(actor);
 
-		if (lightbottom<z2) lightbottom=z2;
+		if (lightbottom < z2) lightbottom = z2;
 
-		if (lightbottom<z1)
+		if (lightbottom < z1)
 		{
-			copySprite=*this;
+			copySprite = *this;
 			copySprite.lightlevel = gl_ClampLight(*lightlist[i].p_lightlevel);
 			copySprite.Colormap.CopyLight(lightlist[i].extra_colormap);
 
@@ -575,11 +575,11 @@ void GLSprite::SplitSprite(sector_t * frontsector, bool translucent)
 				copySprite.Colormap.LightColor.b = (copySprite.Colormap.LightColor.b*ThingColor.b) >> 8;
 			}
 
-			z1=copySprite.z2=lightbottom;
-			vt=copySprite.vb=copySprite.vt+ 
-				(lightbottom-copySprite.z1)*(copySprite.vb-copySprite.vt)/(z2-copySprite.z1);
+			z1 = copySprite.z2 = lightbottom;
+			vt = copySprite.vb = copySprite.vt +
+				(lightbottom - copySprite.z1)*(copySprite.vb - copySprite.vt) / (z2 - copySprite.z1);
 			copySprite.PutSprite(translucent);
-			put=true;
+			put = true;
 		}
 	}
 }
@@ -638,8 +638,8 @@ void GLSprite::PerformSpriteClipAdjustment(AActor *thing, const DVector2 &thingp
 			top = thing->Sector->ceilingplane.ZatPoint(thingpos);
 
 		// +/-1 to account for the one pixel empty frame around the sprite.
-		float diffb = (z2+1) - btm;
-		float difft = (z1-1) - top;
+		float diffb = (z2 + 1) - btm;
+		float difft = (z1 - 1) - top;
 		if (diffb >= 0 /*|| !gl_sprite_clip_to_floor*/) diffb = 0;
 		// Adjust sprites clipping into ceiling and adjust clipping adjustment for tall graphics
 		if (smarterclip)
@@ -710,6 +710,8 @@ inline bool IsDistanceCulled(AActor* thing)
 //
 //==========================================================================
 
+bool enableAnamorphCache = true; // gives a really considerable speed-up
+
 //         ---===      ***************************************        ===---
 // ******* Anamorphic "Forced-Pespective" common early exit checks - start *******
 // Distance cull checks on big maps with lots of 3D-floors to speed up
@@ -723,29 +725,6 @@ bool IsAnamorphicDistanceCulled(AActor* thing, float gl_anamorphic_spriteclip_di
 	const float cullDistSq = cullDist * cullDist;
 
 	return (thing->Pos() - r_viewpoint.Pos).LengthSquared() > cullDistSq;
-}
-
-line_t* GetClosestLineInSector(const DVector3 &thingpos, sector_t* sector)
-{
-	if (!sector || sector->Lines.Size() == 0) return nullptr;
-
-	line_t* closestLine = nullptr;
-	float minDistSq = FLT_MAX;
-
-	for (unsigned i = 0; i < sector->Lines.Size(); i++)
-	{
-		line_t* testLine = sector->Lines[i];
-		float distSq1 = (testLine->v1->fPos() - thingpos.XY()).LengthSquared();
-		float distSq2 = (testLine->v2->fPos() - thingpos.XY()).LengthSquared();
-		float avgDistSq = (distSq1 + distSq2) * 0.5f;
-
-		if (avgDistSq < minDistSq)
-		{
-			minDistSq = avgDistSq;
-			closestLine = testLine;
-		}
-	}
-	return closestLine;
 }
 
 // Frustum culling
@@ -785,27 +764,71 @@ static bool CheckFrustumCulling(AActor* thing)
 	return false; // Not culled by frustum
 }
 
+line_t* GetClosestLineInSector(const DVector3 &thingpos, sector_t* sector, AActor* thing)
+{
+	if (!sector || sector->Lines.Size() == 0) return nullptr;
+	// 1. Frustum culling (always check)
+	if (CheckFrustumCulling(thing)) return false;
+
+	// 2. Distance culling (always check)
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+
+	line_t* closestLine = nullptr;
+	float minDistSq = FLT_MAX;
+
+	for (unsigned i = 0; i < sector->Lines.Size(); i++)
+	{
+		line_t* testLine = sector->Lines[i];
+		float distSq1 = (testLine->v1->fPos() - thingpos.XY()).LengthSquared();
+		float distSq2 = (testLine->v2->fPos() - thingpos.XY()).LengthSquared();
+		float avgDistSq = (distSq1 + distSq2) * 0.5f;
+
+		if (avgDistSq < minDistSq)
+		{
+			minDistSq = avgDistSq;
+			closestLine = testLine;
+		}
+	}
+	return closestLine;
+}
+
 struct LineSegmentCommon
 {
 	float x1, y1, x2, y2;
 
 	LineSegmentCommon(float x1, float y1, float x2, float y2) : x1(x1), y1(y1), x2(x2), y2(y2) {}
 
-	bool IntersectsCommon(const LineSegmentCommon& other, float& ix, float& iy) const
+	bool IntersectsCommon(const LineSegmentCommon& other) const
 	{
-		float denom = (x1 - x2) * (other.y1 - other.y2) - (y1 - y2) * (other.x1 - other.x2);
-		if (fabs(denom) < 1e-4) return false;
-
-		float t = ((x1 - other.x1) * (other.y1 - other.y2) - (y1 - other.y1) * (other.x1 - other.x2)) / denom;
-		float u = -((x1 - x2) * (y1 - other.y1) - (y1 - y2) * (x1 - other.x1)) / denom;
-
-		if (t >= 0 && t <= 1 && u >= 0 && u <= 1)
+		auto cross = [](float ax, float ay, float bx, float by)
 		{
-			ix = x1 + t * (x2 - x1);
-			iy = y1 + t * (y2 - y1);
-			return true;
-		}
-		return false;
+			return ax * by - ay * bx;
+		};
+
+		// Direction vectors
+		float dx1 = x2 - x1;
+		float dy1 = y2 - y1;
+		float dx2 = other.x2 - other.x1;
+		float dy2 = other.y2 - other.y1;
+
+		// Relative vectors
+		float relAX = other.x1 - x1;
+		float relAY = other.y1 - y1;
+		float relBX = other.x2 - x1;
+		float relBY = other.y2 - y1;
+
+		float cross1 = cross(dx1, dy1, relAX, relAY);
+		float cross2 = cross(dx1, dy1, relBX, relBY);
+		if (cross1 * cross2 >= 0) return false;
+
+		float relCX = x1 - other.x1;
+		float relCY = y1 - other.y1;
+		float relDX = x2 - other.x1;
+		float relDY = y2 - other.y1;
+
+		float cross3 = cross(dx2, dy2, relCX, relCY);
+		float cross4 = cross(dx2, dy2, relDX, relDY);
+		return (cross3 * cross4 < 0);
 	}
 };
 
@@ -813,6 +836,7 @@ struct LineSegmentCommon
 // how to call: bool thisisathinwall = IsThinWallCommon(thing, r_viewpoint.camera, thingpos);
 static bool IsThinWallCommon(AActor* viewer, AActor* thing, DVector3& thingpos)
 {
+	// Early exit for invalid inputs
 	if (!viewer || !thing) return false;
 
 	sector_t* viewSector = viewer->Sector;
@@ -822,65 +846,60 @@ static bool IsThinWallCommon(AActor* viewer, AActor* thing, DVector3& thingpos)
 	if (viewSector == thingSector) return false;
 
 	DVector3 viewerPos = viewer->Pos();
-
-	// Create sight line from viewer to sprite
 	LineSegmentCommon sight(viewerPos.X, viewerPos.Y, thingpos.X, thingpos.Y);
 
-	// Check for thin walls along the sight line
+	// Precompute perpendicular direction for thickness checks
+	const DVector2 perpDirs[2] =
+	{
+		{0, 1},   // Positive perpendicular
+		{0, -1}   // Negative perpendicular
+	};
+
+	// Check both sectors
 	for (auto* sector : { viewSector, thingSector })
 	{
 		for (auto& line : sector->Lines)
 		{
 			LineSegmentCommon wall(line->v1->fX(), line->v1->fY(), line->v2->fX(), line->v2->fY());
 
-			float ix, iy;
-			if (wall.IntersectsCommon(sight, ix, iy))
+			if (wall.IntersectsCommon(sight))
 			{
-				// This wall intersects the sight line - check if it's thin
-				sector_t* otherSector = nullptr;
+				// Get the other sector
+				sector_t* otherSector = (sector == viewSector) ? thingSector : viewSector;
 
-				// Determine which sector is on the other side
-				if (sector == viewSector)
-				{
-					otherSector = thingSector;
-				}
-				else
-				{
-					otherSector = viewSector;
-				}
-
-				// Get line's perpendicular vector for thickness check
+				// Wall direction vector
 				DVector2 wallDir(line->v2->fX() - line->v1->fX(), line->v2->fY() - line->v1->fY());
 				float wallLength = wallDir.Length();
 
-				if (wallLength > 0)
+				if (wallLength <= 0) continue;
+
+				// Normalize wall direction
+				wallDir /= wallLength;
+
+				// Sample points along the wall (3 points)
+				for (float t : {0.2f, 0.5f, 0.8f})
 				{
-					wallDir = wallDir / wallLength;
-					DVector2 perp(-wallDir.Y, wallDir.X);
+					DVector2 wallPoint(
+						line->v1->fX() + wallDir.X * wallLength * t,
+						line->v1->fY() + wallDir.Y * wallLength * t
+					);
 
-					// Sample points along the wall to check thickness
-					for (float t = 0.2; t <= 0.8; t += 0.3) // 3 sample points
+					// Check thickness in both perpendicular directions
+					for (const auto& perp : perpDirs)
 					{
-						DVector2 wallPoint(
-							line->v1->fX() + wallDir.X * wallLength * t,
-							line->v1->fY() + wallDir.Y * wallLength * t
-						);
+						DVector2 testPerp(perp.Y * wallDir.X - perp.X * wallDir.Y,
+							perp.X * wallDir.Y - perp.Y * wallDir.X);
 
-						// Ray cast in perpendicular direction to find sector boundary
-						float thickness = 0;
-						for (float rayDist = 1; rayDist <= 15; rayDist += 1) // Up to 15 units
+						// Ray cast for thickness
+						for (float rayDist = 1.0f; rayDist <= 15.0f; rayDist += 1.0f)
 						{
-							DVector2 testPos = wallPoint + perp * rayDist;
+							DVector2 testPos = wallPoint + testPerp * rayDist;
 							if (P_PointInSector(testPos.X, testPos.Y) == otherSector)
 							{
-								thickness = rayDist;
+								if (rayDist < 12.0f) // Thin wall found
+									return true;
 								break;
 							}
-						}
-
-						if (thickness > 0 && thickness < 12.0) // Less than 12 units thick
-						{
-							return true; // Found a thin wall
 						}
 					}
 				}
@@ -888,7 +907,13 @@ static bool IsThinWallCommon(AActor* viewer, AActor* thing, DVector3& thingpos)
 		}
 	}
 
-	return false; // No thin walls found
+	return false;
+}
+
+bool IsThinWallCommonWrapper(AActor* viewer, AActor* thing, DVector3& thingpos)
+{
+	bool thisIsAthinWall = IsThinWallCommon(thing, r_viewpoint.camera, thingpos);
+	return thisIsAthinWall;
 }
 
 // ******* Anamorphic "Forced-Pespective" common early exit checks - finish *******
@@ -898,37 +923,31 @@ static bool IsThinWallCommon(AActor* viewer, AActor* thing, DVector3& thingpos)
 
 //         ---===      ***************************************        ===---
 // ******* 1-sided-linedef culling block start *******
-struct LineSegment1sided
-{
-	float x1, y1, x2, y2;
-
-	LineSegment1sided(float x1, float y1, float x2, float y2) : x1(x1), y1(y1), x2(x2), y2(y2) {}
-
-	bool Intersects1sided(const LineSegment1sided& other, float& ix, float& iy) const
-	{
-		float denom = (x1 - x2) * (other.y1 - other.y2) - (y1 - y2) * (other.x1 - other.x2);
-		if (fabs(denom) < 1e-4) return false;
-
-		float t = ((x1 - other.x1) * (other.y1 - other.y2) - (y1 - other.y1) * (other.x1 - other.x2)) / denom;
-		float u = -((x1 - x2) * (y1 - other.y1) - (y1 - y2) * (x1 - other.x1)) / denom;
-
-		if (t >= 0 && t <= 1 && u >= 0 && u <= 1)
-		{
-			ix = x1 + t * (x2 - x1);
-			iy = y1 + t * (y2 - y1);
-			return true;
-		}
-		return false;
-	}
-};
 
 // Wrapper function - to call struct LineSegment1sided from any other place
 // bool thingCrossed1sidedLine = Intersects1sided(viewerPos.X, viewerPos.Y, edgeX, edgeY, line->v1->fX(), line->v1->fY(), line->v2->fX(), line->v2->fY(), ix, iy);
 static bool Intersects1sided(float x1, float y1, float x2, float y2, float ox1, float oy1, float ox2, float oy2, float& ix, float& iy)
 {
-	LineSegment1sided seg1(x1, y1, x2, y2);
-	LineSegment1sided seg2(ox1, oy1, ox2, oy2);
-	return seg1.Intersects1sided(seg2, ix, iy);
+	LineSegmentCommon seg1(x1, y1, x2, y2);
+	LineSegmentCommon seg2(ox1, oy1, ox2, oy2);
+
+	if (!seg1.IntersectsCommon(seg2))
+		return false;
+
+	// Calculate intersection point
+	float denom = (x1 - x2) * (oy1 - oy2) - (y1 - y2) * (ox1 - ox2);
+	float t = ((x1 - ox1) * (oy1 - oy2) - (y1 - oy1) * (ox1 - ox2)) / denom;
+	ix = x1 + t * (x2 - x1);
+	iy = y1 + t * (y2 - y1);
+
+	return true;
+}
+
+// Helper function to check if a point is in void space (no sectors)
+static bool IsPointInVoid(const DVector2& point)
+{
+	sector_t* sector = P_PointInSector(point.X, point.Y);
+	return (sector == nullptr);
 }
 
 static bool CheckLineOfSight1sided(AActor* viewer, const DVector3& thingpos, float spriteRadius)
@@ -937,71 +956,92 @@ static bool CheckLineOfSight1sided(AActor* viewer, const DVector3& thingpos, flo
 	sector_t* viewSector = viewer->Sector;
 	sector_t* thingSector = P_PointInSector(thingpos.X, thingpos.Y);
 
-	// Direction from viewer to sprite
+	// Early exit for same position
+	if (viewerPos.XY() == thingpos.XY()) return true;
+
+	// Direction vector (non-normalized)
 	float dx = thingpos.X - viewerPos.X;
 	float dy = thingpos.Y - viewerPos.Y;
-	float dist = sqrt(dx*dx + dy * dy);
 
-	if (dist == 0) return true; // Same position
+	// Perpendicular vector
+	float px = -dy;
+	float py = dx;
 
-	// Normalize direction
-	dx /= dist;
-	dy /= dist;
+	// Precompute test points (4 orthogonal directions)
+	DVector2 testPoints[4];
+	float scale = spriteRadius / sqrt(dx*dx + dy * dy + 1e-8f);
 
-	// Check both sectors for blocking walls
+	testPoints[0] = { thingpos.X + px * scale, thingpos.Y + py * scale };
+	testPoints[1] = { thingpos.X - px * scale, thingpos.Y - py * scale };
+	testPoints[2] = { thingpos.X + dx * scale, thingpos.Y + dy * scale };
+	testPoints[3] = { thingpos.X - dx * scale, thingpos.Y - dy * scale };
+
+	// Check both sectors
 	for (auto* sector : { viewSector, thingSector })
 	{
 		for (auto& line : sector->Lines)
 		{
-			if (line->sidedef[0] && !line->sidedef[1]) // 1-sided line
+			// Only check 1-sided lines
+			if (!line->sidedef[0] || line->sidedef[1]) continue;
+
+			LineSegmentCommon wall(line->v1->fX(), line->v1->fY(), line->v2->fX(), line->v2->fY());
+
+			for (const auto& pt : testPoints)
 			{
-				LineSegment1sided wall(line->v1->fX(), line->v1->fY(), line->v2->fX(), line->v2->fY());
+				LineSegmentCommon sight(viewerPos.X, viewerPos.Y, pt.X, pt.Y);
 
-				// Create points at sprite's edges in the direction of the viewer
-				DVector2 spriteCenter(thingpos.X, thingpos.Y);
-
-				// Perpendicular vector
-				float px = -dy;
-				float py = dx;
-
-				// Check multiple points around the sprite's circumference
-				for (float angle = 0; angle < 2 * M_PI; angle += (M_PI * 0.5)) // 4 directions
-				{
-					// Rotate perpendicular vector
-					float rotX = px * cos(angle) - py * sin(angle);
-					float rotY = px * sin(angle) + py * cos(angle);
-
-					DVector2 testPoint(spriteCenter.X + rotX * spriteRadius, spriteCenter.Y + rotY * spriteRadius);
-
-					LineSegment1sided sight(viewerPos.X, viewerPos.Y, testPoint.X, testPoint.Y);
-
-					float ix, iy;
-					if (wall.Intersects1sided(sight, ix, iy)) return false; // Blocked
-				}
+				if (wall.IntersectsCommon(sight))  // Now correct - single argument
+					return false; // Blocked by 1-sided line
 			}
 		}
 	}
 
-	return true; // No blocking walls found
+	return true; // No blocking 1-sided lines found
 }
 
-static bool IsSpriteVisibleBehind1sidedLines(AActor* thing, AActor* viewer, const DVector3& thingpos, Clipper* clipper)
+// Cache structure for 1-sided checks
+struct Visibility1sidedCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached1sidedResult = true;
+};
+
+// Global cache storage for 1-sided checks
+static TMap<AActor*, Visibility1sidedCacheEntry> Visibility1sidedCache;
+
+static bool IsSpriteVisibleBehind1sidedLines(AActor* thing, AActor* viewer, const DVector3& thingpos)
 {
 	// Fast escape checks
 	if (!thing || !viewer) return true;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
-	float spriteScale = 0.15;
+	float spriteScale = 0.15f;
 
-	// Use microscopic epsilon-sized radius for precise checks
-	if (viewer->Sector == thing->Sector)
+	// Use caching if enabled
+	if (enableAnamorphCache)
 	{
-		// Same sector - always visible except extreme cases
+		const int currentMapTimeTick = level.maptime;
+		Visibility1sidedCacheEntry& entry = Visibility1sidedCache[thing];
+
+		// Return cached result if valid
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		{
+			return entry.cached1sidedResult;
+		}
+
+		// Compute and cache fresh result
+		bool result = CheckLineOfSight1sided(viewer, thingpos, ((thing->radius) * spriteScale));
+		entry.cached1sidedResult = result;
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return result;
+	}
+	else
+	{
+		// Original uncached behavior
 		return CheckLineOfSight1sided(viewer, thingpos, ((thing->radius) * spriteScale));
 	}
-
-	return CheckLineOfSight1sided(viewer, thingpos, ((thing->radius) * spriteScale));
 }
+
 // ******* 1-sided-linedef culling block finish *******
 //         ---===      ***************************************        ===---
 
@@ -1013,6 +1053,22 @@ constexpr float MINCOORD2SIDED = -32768.0;
 constexpr float MAXCOORD2SIDED = 32767.9999847;
 constexpr float EPSILON2SIDED = 0.001;
 float Ztolerance2sided = 4.0f;
+
+// Optimized position getters that avoid implicit conversions - again
+static FVector2 GetVertexPosition(const vertex_t* vert)
+{
+	return FVector2(static_cast<float>(vert->fX()), static_cast<float>(vert->fY()));
+}
+
+static FVector2 GetActorPosition(const AActor* actor)
+{
+	return FVector2(static_cast<float>(actor->X()), static_cast<float>(actor->Y()));
+}
+
+static FVector3 GetActorPosition3D(const AActor* actor)
+{
+	return FVector3(static_cast<float>(actor->X()), static_cast<float>(actor->Y()), static_cast<float>(actor->Z()));
+}
 
 struct ObstructionData2Sided
 {
@@ -1026,12 +1082,8 @@ struct ObstructionData2Sided
 
 	bool valid = false;
 
-	// 2sided helpers
-	static DVector2 GetVertexPosition(const vertex_t* vert) { return vert->fPos(); }
-	static DVector2 GetActorPosition(const AActor* actor) { return { actor->X(), actor->Y() }; }
-	static DVector3 GetActorPosition3D(const AActor* actor) { return { actor->X(), actor->Y(), actor->Z() }; }
 
-	void Update2sidedTallObstructions(AActor* thing, AActor* viewer, const sector_t* sector, const DVector2& point)
+	void Update2sidedTallObstructions(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point)
 	{
 		// Determine sprite classification
 		// Must be done via "AND" but "OR" works better
@@ -1072,7 +1124,7 @@ struct ObstructionData2Sided
 			EyeHeight *= 2.0f;
 		}
 
-		const DVector2 clamped =
+		const FVector2 clamped =
 		{
 			clamp<float>(point.X, MINCOORD2SIDED, MAXCOORD2SIDED),
 			clamp<float>(point.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
@@ -1110,8 +1162,8 @@ struct ObstructionData2Sided
 		float floorHeightMultiplier1 = ((isLegacyProjectile || isLargeSprite) && isObstructionTallEnough) ? 2.5f : 1.0f;
 		float ceilingHeightMultiplier1 = ((isLegacyProjectile || isLargeSprite) && isObstructionTallEnough) ? 2.75f : 1.0f;
 		// Calculate distance between viewer and sprite
-		const DVector2 viewerPos = GetActorPosition(viewer);
-		const DVector2 thingPos = GetActorPosition(thing);
+		const FVector2 viewerPos = GetActorPosition(viewer);
+		const FVector2 thingPos = GetActorPosition(thing);
 		const float distanceSquared = (viewerPos - thingPos).LengthSquared();
 		const float distance = sqrt(distanceSquared);
 
@@ -1157,7 +1209,7 @@ struct ObstructionData2Sided
 		valid = true;
 	}
 
-	bool IsSpriteVisible2sided(AActor* viewer, AActor* thing, const DVector3& pos, float height) const
+	bool IsSpriteVisible2sided(AActor* viewer, AActor* thing, const FVector3& pos, float height) const
 	{
 		if (!valid) return true;
 
@@ -1223,29 +1275,49 @@ struct ObstructionData2Sided
 	}
 };
 
-// 2sided helpers - again
-static DVector2 GetVertexPosition(const vertex_t* vert) { return vert->fPos(); }
-static DVector2 GetActorPosition(const AActor* actor) { return { actor->X(), actor->Y() }; }
-static DVector3 GetActorPosition3D(const AActor* actor) { return { actor->X(), actor->Y(), actor->Z() }; }
-
 // Line-intersection test
-static bool LineIntersectsSegment2sided(const DVector2& seg1Start, const DVector2& seg1End, const DVector2& seg2Start, const DVector2& seg2End, DVector2& intersectionPoint)
+static bool LineIntersectsSegment2sided(const FVector2& seg1Start, const FVector2& seg1End, const FVector2& seg2Start, const FVector2& seg2End, FVector2& intersectionPoint)
 {
-	const DVector2 d1 = seg1End - seg1Start;
-	const DVector2 d2 = seg2End - seg2Start;
-	const float det = d1.X * d2.Y - d1.Y * d2.X;
-	if (abs(det) < EPSILON2SIDED) return false;
-
-	const DVector2 delta = seg2Start - seg1Start;
-	const float t1 = (delta.X * d2.Y - delta.Y * d2.X) / det;
-	const float t2 = (delta.X * d1.Y - delta.Y * d1.X) / det;
-
-	if (t1 >= -EPSILON2SIDED && t1 <= 1.0 + EPSILON2SIDED && t2 >= -EPSILON2SIDED && t2 <= 1.0 + EPSILON2SIDED)
+	// Cross product helper - same as LineSegmentCommon implementation
+	const auto cross = [](const FVector2& a, const FVector2& b)
 	{
-		intersectionPoint = seg1Start + d1 * t1;
-		return true;
-	}
-	return false;
+		return a.X*b.Y - a.Y*b.X;
+	};
+
+	const FVector2 d1 = seg1End - seg1Start;
+	const FVector2 d2 = seg2End - seg2Start;
+
+	// Relative vectors (vectors from seg1Start to seg2 points)
+	const FVector2 relA = seg2Start - seg1Start;
+	const FVector2 relB = seg2End - seg1Start;
+
+	// Cross products for segment 1 straddle check
+	const float cross1 = cross(d1, relA);
+	const float cross2 = cross(d1, relB);
+
+	// If same sign (not straddling) - no intersection
+	if (cross1 * cross2 > EPSILON2SIDED) return false;
+
+	// Relative vectors (vectors from seg2Start to seg1 points)
+	const FVector2 relC = seg1Start - seg2Start;
+	const FVector2 relD = seg1End - seg2Start;
+
+	// Cross products for segment 2 straddle check
+	const float cross3 = cross(d2, relC);
+	const float cross4 = cross(d2, relD);
+
+	// If same sign (not straddling) - no intersection
+	if (cross3 * cross4 > EPSILON2SIDED) return false;
+
+	// Calculate intersection point (now that we know they intersect)
+	// Division happens only once per intersection
+	const float det = cross(d1, d2);
+	if (fabs(det) < EPSILON2SIDED) return false; // Parallel case
+
+	const float t = cross(relA, d2) / det;
+	intersectionPoint = seg1Start + d1 * t;
+
+	return true;
 }
 
 // Sides of the world helper.
@@ -1262,18 +1334,27 @@ inline int CountBits2sidedObstr(unsigned int mask)
 }
 
 // Helper function for distance calculation
-static float SegmentPointDistanceSqForCheckLineOfSight2Sided(const DVector2& segA, const DVector2& segB, const DVector2& point)
+static float SegmentPointDistanceSqForCheckLineOfSight2Sided(const FVector2& segA, const FVector2& segB, const FVector2& point)
 {
-	DVector2 segVec = segB - segA;
-	DVector2 ptVec = point - segA;
+	FVector2 segVec = segB - segA;
+	FVector2 ptVec = point - segA;
 
 	float segLengthSq = segVec.LengthSquared();
 	float t = (ptVec | segVec) / segLengthSq;
 	t = clamp(t, 0.0f, 1.0f);
 
-	DVector2 projection = segA + segVec * t;
+	FVector2 projection = segA + segVec * t;
 	return (point - projection).LengthSquared();
 }
+
+// Precomputed direction vectors (E, S, W, N)
+static const FVector2 directionVectors[4] =
+{
+	{1.0f, 0.0f},   // East
+	{0.0f, 1.0f},   // South
+	{-1.0f, 0.0f},  // West
+	{0.0f, -1.0f}   // North
+};
 
 // Optimized Implementation of CheckLineOfSight2sided with extended radius
 static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
@@ -1313,8 +1394,8 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	const float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 12.0f : 4.0f) : 1.64f;
 
 	// Core sprite positions (using expansion factors)
-	const DVector2 viewerPos = { viewer->X(), viewer->Y() };
-	const DVector2 thingCenterPos = { thing->X(), thing->Y() };
+	const FVector2 viewerPos = GetActorPosition(viewer);
+	const FVector2 thingCenterPos = GetActorPosition(thing);
 	float spriteBottom = thing->Z();
 	float spriteTop = thing->Z() + thing->Height * HeightExpansionFactor;
 	float sprBottomAdj = spriteBottom + Ztolerance2sided;
@@ -1332,7 +1413,7 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 		const float camHeight = (EyeLevel == 0) ? viewerBottomAdj : viewerTopAdj;
 
 		// Initialize the test point to the sprite's center. We only deviate for large sprites.
-		DVector2 testPoint = thingCenterPos;
+		FVector2 testPoint = thingCenterPos;
 
 		// We only do the detailed check if we have directions to test.
 		for (int testIdx = 0; testIdx <= numDirectionChecks; ++testIdx)
@@ -1341,14 +1422,12 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 			{
 				// if this isn't the initial center test
 				int shift = testIdx - 1;
-				float angle = 90.0f * shift * M_PI / 180.0f; // 0=E, 1=S, 2=W, 3=N
 				// Get the actual direction from the mask
 				unsigned int currentDir = (1 << shift);
 				if (!(directionMask & currentDir)) continue;
 
-				float cosA = cos(angle);
-				float sinA = sin(angle);
-				testPoint = thingCenterPos + DVector2{ cosA * thing->radius * RadiusExpansionFactor, sinA * thing->radius * RadiusExpansionFactor };
+				// Use precomputed direction vector instead of trig functions
+				testPoint = thingCenterPos + directionVectors[shift] * (thing->radius * RadiusExpansionFactor);
 			}
 
 			// Check both sectors (viewer & sprite)
@@ -1358,69 +1437,42 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 
 				for (auto line : sector->Lines)
 				{
-					const DVector2 lineStart = GetVertexPosition(line->v1);
-					const DVector2 lineEnd = GetVertexPosition(line->v2);
-					DVector2 intersectionPoint;
+					LineSegmentCommon sight(viewerPos.X, viewerPos.Y, testPoint.X, testPoint.Y);
+
+					LineSegmentCommon wall(line->v1->fX(), line->v1->fY(), line->v2->fX(), line->v2->fY());
+
+					if (!sight.IntersectsCommon(wall))
+					{
+						continue;
+					}
+
+					// Calculate intersection point if needed
+					FVector2 intersectionPoint;
+					if (!LineIntersectsSegment2sided(viewerPos, testPoint, GetVertexPosition(line->v1), GetVertexPosition(line->v2), intersectionPoint))
+					{
+						continue;
+					}
+				}
+			}
+
+			// Check both sectors (viewer & sprite)
+			for (int SectorCheck = 0; SectorCheck < 2; SectorCheck++)
+			{
+				const sector_t* sector = (SectorCheck == 0) ? viewer->Sector : thing->Sector;
+
+				for (auto line : sector->Lines)
+				{
+					const FVector2 lineStart = GetVertexPosition(line->v1);
+					const FVector2 lineEnd = GetVertexPosition(line->v2);
+					FVector2 intersectionPoint;
 
 					if (!LineIntersectsSegment2sided(viewerPos, testPoint, lineStart, lineEnd, intersectionPoint))
 					{
 						continue;
 					}
 
-					// When we're on top of elevation and shoot a rocket from above to below
-					// We can observe it culls too much because our elevation cuts it, thus
-					// Enhanced back-face culling (checks if line faces towards the sprite's center)
-					//const DVector2 lineVec = lineEnd - lineStart;
-					//DVector2 lineNormal(-lineVec.Y, lineVec.X);
-					//lineNormal = lineNormal.Unit();
-					//const DVector2 viewToIntersect = intersectionPoint - viewerPos;
-					//DVector2 thingToIntersect = intersectionPoint - thingCenterPos;
-
-
-					//	// ===============================================================
-					//	// *** FACE CHECK SKIPPING LOGIC - START ***    WIP
-					//
-					//	// Track potential obstructions
-					//potentialObstructionFound = true;
-					//
-					//	// Vertical separation check with tolerance buffer
-					//const float verticalTolerance = 24.0f;
-					//bool spriteIsBelow = (sprTopAdj + verticalTolerance) < viewerBottom;
-					//bool spriteIsAbove = (sprBottomAdj - verticalTolerance) > viewerTop;
-					//
-					//if (spriteIsBelow || spriteIsAbove)
-					//{
-					//	//Printf("Z-SKIP: Sprite (%.1f-%.1f) vertical separation from viewer (%.1f-%.1f)", sprBottomAdj, sprTopAdj, viewerBottom, viewerTop);
-					//	continue; // Skip facing check for vertically separated sprites
-					//}
-					//
-					//	// Perform facing direction check
-					//const DVector2 lineDelta = line->Delta();
-					//DVector2 lineNormal(-lineDelta.Y, lineDelta.X);
-					//lineNormal = lineNormal.Unit();
-					//
-					//const DVector2 viewToIntersect = intersectionPoint - viewerPos;
-					//
-					//if (viewToIntersect.Length() > EPSILON2SIDED)
-					//{
-					//	const DVector2 viewDir = viewToIntersect.Unit();
-					//	double dot = (viewDir | lineNormal);
-					//
-					//	if (dot > 0.25) // More lenient facing threshold
-					//	{
-					//		//Printf("OCCLUDED: Line %d faces viewer (dot=%.2f). Sprite (%.1f-%.1f) blocked.", line->Index(), dot, spriteBottom, spriteTop);
-					//		return false; // Immediate occlusion
-					//	}
-					//	else
-					//	{
-					//		//Printf("Line %d faces away (dot=%.2f) - no occlusion", line->Index(), dot);
-					//	}
-					//}
-					//	// *** FACE CHECK SKIPPING LOGIC - FINISH ***WIP
-					//	// ===============================================================
-
 					// Clamp intersection point
-					const DVector2 clamped =
+					const FVector2 clamped =
 					{
 						clamp<float>(intersectionPoint.X, MINCOORD2SIDED, MAXCOORD2SIDED),
 						clamp<float>(intersectionPoint.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
@@ -1439,8 +1491,7 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 					}
 
 					// Final visibility check with expanded height
-					if (!obsData.IsSpriteVisible2sided(viewer, thing,
-						DVector3{ testPoint.X, testPoint.Y, spriteMidHeight }, spriteTop))
+					if (!obsData.IsSpriteVisible2sided(viewer, thing, FVector3{ testPoint.X, testPoint.Y, spriteMidHeight }, spriteTop))
 					{
 						return false; // Sprite is occluded
 					}
@@ -1454,21 +1505,51 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	return true; // No obstructions found
 }
 
+// Cache structure - stores only what we need
+struct Visibility2sidedObstrCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached2sidedObstrResult = true;
+};
+
+// Global cache storage
+static TMap<AActor*, Visibility2sidedObstrCacheEntry> Visibility2sidedObstrCache;
+
 // this function determines visibility of sprites behind tall enough 2-sided-linedef based obstructions, call it like that:
 // bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
 bool IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(AActor* viewer, AActor* thing)
 {
 	if (!viewer || !thing || viewer == thing) return true;
 
-	// 1. Frustum culling
+	// 1. Frustum culling (always check)
 	if (CheckFrustumCulling(thing)) return false;
 
-	// 2. Distance culling
+	// 2. Distance culling (always check)
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
-	// 3. Full occlusion test
-	return CheckLineOfSight2sided(viewer, thing);
+	// 3. Occlusion test - choose implementation based on toggle
+	if (enableAnamorphCache)
+	{
+		// CACHED VERSION
+		const int currentMapTimeTick = level.maptime;
+		Visibility2sidedObstrCacheEntry& entry = Visibility2sidedObstrCache[viewer, thing];
+
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		{
+			return entry.cached2sidedObstrResult;
+		}
+
+		entry.cached2sidedObstrResult = CheckLineOfSight2sided(viewer, thing);
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return entry.cached2sidedObstrResult;
+	}
+	else
+	{
+		// UNCACHED VERSION
+		return CheckLineOfSight2sided(viewer, thing);
+	}
 }
+
 // ******* 2-sided-linedef tall enough sector obstructions culling block finish *******
 //         ---===      ***************************************        ===---
 
@@ -1759,6 +1840,44 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	}
 }
 
+struct MidTextureProximityCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	float cachedProximityFactor = 1.0f;  // Changed to float
+};
+
+static TMap<AActor*, MidTextureProximityCacheEntry> MidTextureProximityCache;
+
+bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVector3<double>& thingpos)
+{
+	// Use caching if enabled
+	if (enableAnamorphCache)
+	{
+		const int currentMapTimeTick = level.maptime;
+		MidTextureProximityCacheEntry& entry = MidTextureProximityCache[thing];
+
+		// Return cached result if valid (updated within last 3 ticks)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		{
+			// Use cached proximity factor to compute boolean
+			return entry.cachedProximityFactor > 0.55f;
+		}
+
+		// Compute fresh proximity factor and cache it
+		entry.cachedProximityFactor = CheckFacingMidTextureProximity(thing, viewer, thingpos);
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+
+		// Convert cached proximity to boolean
+		return entry.cachedProximityFactor > 0.55f;
+	}
+	else
+	{
+		// Original uncached behavior
+		float proximity = CheckFacingMidTextureProximity(thing, viewer, thingpos);
+		return proximity > 0.55f;
+	}
+}
+
 //         ---===      ***************************************        ===---
 // ******* 2-sided-linedef-based mid-texture in front of a sprite facing camera - finish *******
 
@@ -1968,6 +2087,43 @@ bool IsSpriteBehind3DFloorPlane(DVector3& cameraPos, DVector3& spritePos, sector
 
 	return false;
 }
+
+// Cache structure for 3D floor plane checks
+struct a3DFloorPlaneCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached3DFloorPlaneResult = false;
+};
+
+// Global cache storage
+static TMap<AActor*, a3DFloorPlaneCacheEntry> FloorPlaneCache;
+
+bool IsSpriteBehind3DFloorPlaneWrapper(DVector3& cameraPos, DVector3& spritePos, sector_t* sector, AActor* thing)
+{
+	// Use caching if enabled
+	if (enableAnamorphCache)
+	{
+		const int currentMapTimeTick = level.maptime;
+		a3DFloorPlaneCacheEntry& entry = FloorPlaneCache[thing];
+
+		// Return cached result if valid (updated within last 3 ticks)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		{
+			return entry.cached3DFloorPlaneResult;
+		}
+
+		// Compute fresh result and cache it
+		entry.cached3DFloorPlaneResult = IsSpriteBehind3DFloorPlane(cameraPos, spritePos, sector, thing);
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return entry.cached3DFloorPlaneResult;
+	}
+	else
+	{
+		// Original uncached behavior
+		return IsSpriteBehind3DFloorPlane(cameraPos, spritePos, sector, thing);
+	}
+}
+
 // ******* 3DFloor-planar - floor and ceiling culling block finish *******
 //         ---===      ***************************************        ===---
 
@@ -2090,7 +2246,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	if (thing == nullptr)
 		return;
 
-	if (IsDistanceCulled(thing)) 
+	if (IsDistanceCulled(thing))
 		return;
 
 	// [ZZ] allow CustomSprite-style direct picnum specification
@@ -2238,7 +2394,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// Animate picnum overrides.
 			auto tex = TexMan(thing->picnum);
 			if (tex == nullptr) return;
-			patch =  tex->id;
+			patch = tex->id;
 			mirror = false;
 		}
 		else
@@ -2291,7 +2447,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			thing->renderflags ^= RF_XFLIP;
 
 		r.Scale(sprscale.X, isSpriteShadow ? sprscale.Y * 0.15 : sprscale.Y);
-		
+
 		float SpriteOffY = thing->SpriteOffset.Y;
 		float rightfac = -r.left - thing->SpriteOffset.X;
 		float leftfac = rightfac - r.width;
@@ -2313,10 +2469,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float viewvecX = GLRenderer->mViewVector.X;
 			float viewvecY = GLRenderer->mViewVector.Y;
 
-			x1 = x - viewvecY*leftfac;
-			x2 = x - viewvecY*rightfac;
-			y1 = y + viewvecX*leftfac;
-			y2 = y + viewvecX*rightfac;
+			x1 = x - viewvecY * leftfac;
+			x2 = x - viewvecY * rightfac;
+			y1 = y + viewvecX * leftfac;
+			y2 = y + viewvecX * rightfac;
 			break;
 		}
 		case RF_FLATSPRITE:
@@ -2340,10 +2496,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float viewvecX = Angles.Yaw.Cos();
 			float viewvecY = Angles.Yaw.Sin();
 
-			x1 = x + viewvecY*leftfac;
-			x2 = x + viewvecY*rightfac;
-			y1 = y - viewvecX*leftfac;
-			y2 = y - viewvecX*rightfac;
+			x1 = x + viewvecY * leftfac;
+			x2 = x + viewvecY * rightfac;
+			y1 = y - viewvecX * leftfac;
+			y2 = y - viewvecX * rightfac;
 			break;
 		}
 		}
@@ -2357,7 +2513,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	}
 
 	depth = (float)((x - r_viewpoint.Pos.X) * r_viewpoint.TanCos + (y - r_viewpoint.Pos.Y) * r_viewpoint.TanSin);
-	if (isSpriteShadow) depth += 1.f/65536.f; // always sort shadows behind the sprite.
+	if (isSpriteShadow) depth += 1.f / 65536.f; // always sort shadows behind the sprite.
 
 
 //==========================================================================
@@ -2425,19 +2581,19 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// ======= Anamorphic Forced-Perspective+ sprite projecting routine FINISH =======
 	}
 
-//==========================================================================
-//
-// Finish Anamorphic Forced-Perspective+ projection
-//
-//==========================================================================
+	//==========================================================================
+	//
+	// Finish Anamorphic Forced-Perspective+ projection
+	//
+	//==========================================================================
 
 
 
-//==========================================================================
-//
-// Begin Hybrid Anamorphic Forced-Perspective - Smart projection
-//
-//==========================================================================
+	//==========================================================================
+	//
+	// Begin Hybrid Anamorphic Forced-Perspective - Smart projection
+	//
+	//==========================================================================
 
 	if (gl_spriteclip == -2 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
@@ -2497,33 +2653,29 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
 
 		// === Is sprite crossing a 1sided-linedef block - START
-		line_t* closestLine = GetClosestLineInSector(DVector3(thing->Pos(), thing->Z()), sector);
-		float ix, iy;			  // Intersection point coordinates
 		bool thingCrossed1sidedLine = false;
-		// Check all 4 edges of the sprite against the closest line
+
+		// Get closest line and verify it's 1-sided
+		line_t* closestLine = GetClosestLineInSector(DVector3(thing->Pos(), thing->Z()), sector, thing);
 		if (closestLine && closestLine->sidedef[0] && !closestLine->sidedef[1]) // 1-sided only
 		{
-			const float spriteRadius = MAX<float>(0.5f, thing->radius * 0.15f);
-			float edgeX, edgeY; // Edge point coordinates
-			// Check 4 points around sprite circumference
-			for (float angle = 0; angle < 2 * M_PI; angle += M_PI / 2)
-			{
-				edgeX = tpx + cos(angle) * spriteRadius;
-				edgeY = tpy + sin(angle) * spriteRadius;
-				thingCrossed1sidedLine = Intersects1sided(vpx, vpy, edgeX, edgeY, closestLine->v1->fX(),
-							closestLine->v1->fY(),closestLine->v2->fX(), closestLine->v2->fY(), ix, iy);
-				if (thingCrossed1sidedLine) break;
-			}
+			float ix, iy;
+			// Single check: viewer -> sprite center vs closest 1-sided line
+			thingCrossed1sidedLine = Intersects1sided(
+				vpx, vpy, tpx, tpy,  // Viewer to sprite center
+				closestLine->v1->fX(), closestLine->v1->fY(),
+				closestLine->v2->fX(), closestLine->v2->fY(),
+				ix, iy);
 		}
 		// === Is sprite crossing a 1sided-linedef block - FINISH
 
-		bool thisisathinwall = IsThinWallCommon(thing, r_viewpoint.camera, thingpos);
-		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLines(thing, r_viewpoint.camera, thingpos, &mDrawer->clipper);
+		//bool isSpriteOutsideMap = IsPointInVoid(DVector2(thingpos));
+		bool thisIsAthinWall = IsThinWallCommon(thing, r_viewpoint.camera, thingpos);
+		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLines(thing, r_viewpoint.camera, thingpos);
 		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
-		float behindFacingMidTxtProximity = CheckFacingMidTextureProximity(thing, r_viewpoint.camera, thingpos);
-		bool visible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
+		bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSides(r_viewpoint.camera, thing);
-		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlane(r_viewpoint.Pos, thingpos, thing->Sector, thing);
+		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
 
 		DVector3 thingpos3D(thingpos.X, thingpos.Y, z);
 		float distSq = (thingpos3D - r_viewpoint.Pos).LengthSquared();
@@ -2535,8 +2687,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// With additional culling mechanism coplanar leaks already reduced
 		// But we can disable Forced-Perspective for floating sprites entirely
 		// but only for those whose Y-axis sprite offset doesn't cross ground at all.
-		// We also turn off anamorphosis for things that crossed 1sided linedefs
-		if ( (isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
+		// Turn off anamorphosis for things that crossed 1sided linedefs.
+		if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
 		{
 			// Force smart mode for floating sprites and things crossing 1sided-linedefs
 			blend = 1.0f;
@@ -2908,7 +3060,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	lightlevel = gl_CheckSpriteGlow(rendersector, lightlevel, thingpos);
 
 	// anamorphic Forced-Perspective overbright darkening start
-	if (gl_spriteclip == -1 && !fullbright)
+	if (((gl_spriteclip == -1) || (gl_spriteclip == -2)) && !fullbright)
 	{
 		float base_radius = thing->radius;
 		float base_height = thing->Height;
@@ -3171,7 +3323,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 //
 //==========================================================================
 
-void GLSprite::ProcessParticle (particle_t *particle, sector_t *sector)//, int shade, int fakeside)
+void GLSprite::ProcessParticle(particle_t *particle, sector_t *sector)//, int shade, int fakeside)
 {
 	if (GLRenderer->mClipPortal)
 	{
@@ -3179,27 +3331,27 @@ void GLSprite::ProcessParticle (particle_t *particle, sector_t *sector)//, int s
 		if (clipres == GLPortal::PClip_InFront) return;
 	}
 
-	player_t *player=&players[consoleplayer];
-	
-	if (particle->alpha==0) return;
+	player_t *player = &players[consoleplayer];
 
-	lightlevel = gl_ClampLight(sector->GetTexture(sector_t::ceiling) == skyflatnum ? 
+	if (particle->alpha == 0) return;
+
+	lightlevel = gl_ClampLight(sector->GetTexture(sector_t::ceiling) == skyflatnum ?
 		sector->GetCeilingLight() : sector->GetFloorLight());
 	foglevel = (uint8_t)clamp<short>(sector->lightlevel, 0, 255);
 
-	if (mDrawer->FixedColormap) 
+	if (mDrawer->FixedColormap)
 	{
 		Colormap.Clear();
 	}
 	else if (!particle->bright)
 	{
-		TArray<lightlist_t> & lightlist=sector->e->XFloor.lightlist;
+		TArray<lightlist_t> & lightlist = sector->e->XFloor.lightlist;
 		double lightbottom;
 
 		Colormap = sector->Colormap;
-		for(unsigned int i=0;i<lightlist.Size();i++)
+		for (unsigned int i = 0; i < lightlist.Size(); i++)
 		{
-			if (i<lightlist.Size()-1) lightbottom = lightlist[i+1].plane.ZatPoint(particle->Pos);
+			if (i < lightlist.Size() - 1) lightbottom = lightlist[i + 1].plane.ZatPoint(particle->Pos);
 			else lightbottom = sector->floorplane.ZatPoint(particle->Pos);
 
 			if (lightbottom < particle->Pos.Z)
@@ -3221,15 +3373,15 @@ void GLSprite::ProcessParticle (particle_t *particle, sector_t *sector)//, int s
 		Colormap.ClearColor();
 	}
 
-	trans=particle->alpha;
+	trans = particle->alpha;
 	RenderStyle = STYLE_Translucent;
 	OverrideShader = 0;
 
 	ThingColor = particle->color;
 	ThingColor.a = 255;
 
-	modelframe=NULL;
-	gltexture=NULL;
+	modelframe = NULL;
+	gltexture = NULL;
 	topclip = LARGE_VALUE;
 	bottomclip = -LARGE_VALUE;
 	index = 0;
@@ -3272,31 +3424,31 @@ void GLSprite::ProcessParticle (particle_t *particle, sector_t *sector)//, int s
 	x = float(particle->Pos.X) + xvf;
 	y = float(particle->Pos.Y) + yvf;
 	z = float(particle->Pos.Z) + zvf;
-	
+
 	float factor;
 	if (gl_particles_style == 1) factor = 1.3f / 7.f;
 	else if (gl_particles_style == 2) factor = 2.5f / 7.f;
 	else factor = 1 / 7.f;
-	float scalefac=particle->size * factor;
+	float scalefac = particle->size * factor;
 
 	float viewvecX = GLRenderer->mViewVector.X;
 	float viewvecY = GLRenderer->mViewVector.Y;
 
-	x1=x+viewvecY*scalefac;
-	x2=x-viewvecY*scalefac;
-	y1=y-viewvecX*scalefac;
-	y2=y+viewvecX*scalefac;
-	z1=z-scalefac;
-	z2=z+scalefac;
+	x1 = x + viewvecY * scalefac;
+	x2 = x - viewvecY * scalefac;
+	y1 = y - viewvecX * scalefac;
+	y2 = y + viewvecX * scalefac;
+	z1 = z - scalefac;
+	z2 = z + scalefac;
 
 	depth = (float)((x - r_viewpoint.Pos.X) * r_viewpoint.TanCos + (y - r_viewpoint.Pos.Y) * r_viewpoint.TanSin);
 
-	actor=NULL;
-	this->particle=particle;
+	actor = NULL;
+	this->particle = particle;
 	fullbright = !!particle->bright;
-	
+
 	// [BB] Translucent particles have to be rendered without the alpha test.
-	if (gl_particles_style != 2 && trans>=1.0f-FLT_EPSILON) hw_styleflags = STYLEHW_Solid;
+	if (gl_particles_style != 2 && trans >= 1.0f - FLT_EPSILON) hw_styleflags = STYLEHW_Solid;
 	else hw_styleflags = STYLEHW_NoAlphaTest;
 
 	if (sector->e->XFloor.lightlist.Size() != 0 && mDrawer->FixedColormap == CM_DEFAULT && !fullbright)
