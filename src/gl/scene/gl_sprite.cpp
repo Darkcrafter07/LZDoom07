@@ -768,10 +768,10 @@ line_t* GetClosestLineInSector(const DVector3 &thingpos, sector_t* sector, AActo
 {
 	if (!sector || sector->Lines.Size() == 0) return nullptr;
 	// 1. Frustum culling (always check)
-	if (CheckFrustumCulling(thing)) return false;
+	if (CheckFrustumCulling(thing)) return nullptr;
 
 	// 2. Distance culling (always check)
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return nullptr;
 
 	line_t* closestLine = nullptr;
 	float minDistSq = FLT_MAX;
@@ -1013,7 +1013,10 @@ static bool IsSpriteVisibleBehind1sidedLines(AActor* thing, AActor* viewer, cons
 {
 	// Fast escape checks
 	if (!thing || !viewer) return true;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+
+	// We call the function with "!" - that's why return "true" when culled
+	if (CheckFrustumCulling(thing)) return true;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
 
 	float spriteScale = 0.15f;
 
@@ -1521,11 +1524,12 @@ bool IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(AActor* viewer, A
 {
 	if (!viewer || !thing || viewer == thing) return true;
 
+	// We call the function with "!" - that's why return "true" when culled
 	// 1. Frustum culling (always check)
-	if (CheckFrustumCulling(thing)) return false;
+	if (CheckFrustumCulling(thing)) return true;
 
 	// 2. Distance culling (always check)
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
 
 	// 3. Occlusion test - choose implementation based on toggle
 	if (enableAnamorphCache)
@@ -1860,7 +1864,7 @@ bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVecto
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
 		{
 			// Use cached proximity factor to compute boolean
-			return entry.cachedProximityFactor > 0.55f;
+			return entry.cachedProximityFactor >= 0.55f;
 		}
 
 		// Compute fresh proximity factor and cache it
@@ -1874,7 +1878,7 @@ bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVecto
 	{
 		// Original uncached behavior
 		float proximity = CheckFacingMidTextureProximity(thing, viewer, thingpos);
-		return proximity > 0.55f;
+		return proximity >= 0.55f;
 	}
 }
 
