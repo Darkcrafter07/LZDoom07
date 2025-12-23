@@ -764,34 +764,6 @@ static bool CheckFrustumCulling(AActor* thing)
 	return false; // Not culled by frustum
 }
 
-line_t* GetClosestLineInSector(const DVector3 &thingpos, sector_t* sector, AActor* thing)
-{
-	if (!sector || sector->Lines.Size() == 0) return nullptr;
-	// 1. Frustum culling (always check)
-	if (CheckFrustumCulling(thing)) return nullptr;
-
-	// 2. Distance culling (always check)
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return nullptr;
-
-	line_t* closestLine = nullptr;
-	float minDistSq = FLT_MAX;
-
-	for (unsigned i = 0; i < sector->Lines.Size(); i++)
-	{
-		line_t* testLine = sector->Lines[i];
-		float distSq1 = (testLine->v1->fPos() - thingpos.XY()).LengthSquared();
-		float distSq2 = (testLine->v2->fPos() - thingpos.XY()).LengthSquared();
-		float avgDistSq = (distSq1 + distSq2) * 0.5f;
-
-		if (avgDistSq < minDistSq)
-		{
-			minDistSq = avgDistSq;
-			closestLine = testLine;
-		}
-	}
-	return closestLine;
-}
-
 struct LineSegmentCommon
 {
 	float x1, y1, x2, y2;
@@ -942,6 +914,101 @@ static bool Intersects1sided(float x1, float y1, float x2, float y2, float ox1, 
 
 	return true;
 }
+
+// === CACHED version of Intersects1sided - start
+struct LineIntersects1sidedCacheKey
+{
+	float segmentX;
+	float segmentY;
+
+	LineIntersects1sidedCacheKey(float sx, float sy) : segmentX(sx), segmentY(sy) {}
+
+	bool operator==(const LineIntersects1sidedCacheKey& other) const
+	{
+		return segmentX == other.segmentX && segmentY == other.segmentY;
+	}
+
+	bool operator!=(const LineIntersects1sidedCacheKey& other) const
+	{
+		return !(*this == other);
+	}
+
+	bool operator<(const LineIntersects1sidedCacheKey& other) const
+	{
+		if (segmentX != other.segmentX)
+			return segmentX < other.segmentX;
+		return segmentY < other.segmentY;
+	}
+};
+
+template<> struct THashTraits<LineIntersects1sidedCacheKey>
+{
+	// Custom hash function for our key type
+	hash_t Hash(const LineIntersects1sidedCacheKey key)
+	{
+		// Mix both floats into the hash
+		hash_t xhash, yhash;
+		memcpy(&xhash, &key.segmentX, sizeof(xhash));
+		memcpy(&yhash, &key.segmentY, sizeof(yhash));
+		return xhash ^ yhash;
+	}
+
+	// Compare two keys (required)
+	int Compare(const LineIntersects1sidedCacheKey left, const LineIntersects1sidedCacheKey right)
+	{
+		return !(left == right);
+	}
+};
+
+struct LineIntersection1sidedCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cachedLineIntersects1sided = false;
+	bool cachedLineIntersects1sidedValid = false;
+	float cached_1sided_ix = 0.0f, cached_1sided_iy = 0.0f;
+};
+
+static TMap<line_t*, TMap<LineIntersects1sidedCacheKey, LineIntersection1sidedCacheEntry>> LineIntersects1sidedCache;
+
+bool Intersects1sidedCachedWrapper(line_t* line, float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4, float& ix, float& iy)
+{
+	// Use caching if enabled
+	if (enableAnamorphCache)
+	{
+		const int currentMapTimeTick = level.maptime;
+
+		// Generate a unique key for this segment (using start and end points)
+		LineIntersects1sidedCacheKey key(x1 * 1000.0f + x2, y1 * 1000.0f + y2);
+
+		LineIntersection1sidedCacheEntry& entry = LineIntersects1sidedCache[line][key];
+
+		// Return cached result if valid (updated within last 3 ticks)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3 && entry.cachedLineIntersects1sidedValid)
+		{
+			ix = entry.cached_1sided_ix;
+			iy = entry.cached_1sided_iy;
+			return entry.cachedLineIntersects1sided;
+		}
+
+		// Compute fresh result and cache it
+		entry.cachedLineIntersects1sided = Intersects1sided(x1, y1, x2, y2, x3, y3, x4, y4, entry.cached_1sided_ix, entry.cached_1sided_iy);
+		entry.cachedLineIntersects1sidedValid = true;
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+
+		// Set output values
+		ix = entry.cached_1sided_ix;
+		iy = entry.cached_1sided_iy;
+
+		return entry.cachedLineIntersects1sided;
+	}
+	else
+	{
+		// Original uncached behavior
+		return Intersects1sided(x1, y1, x2, y2, x3, y3, x4, y4, ix, iy);
+	}
+}
+// === CACHED version of Intersects1sided - finish
+
 
 // Helper function to check if a point is in void space (no sectors)
 static bool IsPointInVoid(const DVector2& point)
@@ -2100,7 +2167,7 @@ struct a3DFloorPlaneCacheEntry
 };
 
 // Global cache storage
-static TMap<AActor*, a3DFloorPlaneCacheEntry> FloorPlaneCache;
+static TMap<AActor*, a3DFloorPlaneCacheEntry> a3DFloorPlaneCache;
 
 bool IsSpriteBehind3DFloorPlaneWrapper(DVector3& cameraPos, DVector3& spritePos, sector_t* sector, AActor* thing)
 {
@@ -2108,7 +2175,7 @@ bool IsSpriteBehind3DFloorPlaneWrapper(DVector3& cameraPos, DVector3& spritePos,
 	if (enableAnamorphCache)
 	{
 		const int currentMapTimeTick = level.maptime;
-		a3DFloorPlaneCacheEntry& entry = FloorPlaneCache[thing];
+		a3DFloorPlaneCacheEntry& entry = a3DFloorPlaneCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
@@ -2229,10 +2296,23 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 	if (!checkSectorForFloor(viewer->Sector) || !checkSectorForFloor(thing->Sector))
 		return false;   // at least one sector blocks
 
-	return true;        // No 3-D floor occlusion
+	return true;        // No 3D floor occlusion
 }
 // ******* 3DFloor-sides culling block finish *******
 //         ---===      ***************************************        ===---
+
+
+
+void ResetAnamorphCache()
+{
+	LineIntersects1sidedCache.Clear(1);
+	Visibility1sidedCache.Clear(1);
+	Visibility2sidedObstrCache.Clear(1);
+	MidTextureProximityCache.Clear(1);
+	a3DFloorPlaneCache.Clear(1);
+}
+
+
 
 //==========================================================================
 //
@@ -2612,6 +2692,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// and that helped to reduce leaks, the olny difference from original sprite cliping mode of
 		// Forced-Perspective is that it's 3DFloor aware
 
+		static int lastLevelMaptime = -1;
+		if (level.maptime != lastLevelMaptime) // Level changed/reloaded
+		{
+			ResetAnamorphCache();
+			lastLevelMaptime = level.maptime;
+		}
+
 		// Determine sprite classification
 		bool islegacyversionprojectile =
 			(thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
@@ -2657,22 +2744,37 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
 		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
 
+
 		// === Is sprite crossing a 1sided-linedef block - START
 		bool thingCrossed1sidedLine = false;
-
-		// Get closest line and verify it's 1-sided
-		line_t* closestLine = GetClosestLineInSector(DVector3(thing->Pos(), thing->Z()), sector, thing);
-		if (closestLine && closestLine->sidedef[0] && !closestLine->sidedef[1]) // 1-sided only
+		// Get the thing's current sector
+		sector_t* currentSector = thing->Sector;
+		for (unsigned i = 0; i < currentSector->Lines.Size(); i++)
 		{
-			float ix, iy;
-			// Single check: viewer -> sprite center vs closest 1-sided line
-			thingCrossed1sidedLine = Intersects1sided(
-				vpx, vpy, tpx, tpy,  // Viewer to sprite center
-				closestLine->v1->fX(), closestLine->v1->fY(),
-				closestLine->v2->fX(), closestLine->v2->fY(),
-				ix, iy);
+			line_t* testLine = currentSector->Lines[i];
+
+			// Check if line is one-sided
+			if (testLine->sidedef[0] && !testLine->sidedef[1])
+			{
+				float ix, iy;
+
+				// Check if viewer-to-thing line crosses this one-sided line
+				if (Intersects1sidedCachedWrapper(
+					testLine,        // Cache key: which linedef
+					vpx, vpy,        // Viewer position
+					tpx, tpy,        // Thing position
+					testLine->v1->fX(), testLine->v1->fY(),  // Line start
+					testLine->v2->fX(), testLine->v2->fY(),  // Line end
+					ix, iy))
+
+				{
+					thingCrossed1sidedLine = true;
+					break; // Found intersection, stop checking
+				}
+			}
 		}
 		// === Is sprite crossing a 1sided-linedef block - FINISH
+
 
 		//bool isSpriteOutsideMap = IsPointInVoid(DVector2(thingpos));
 		bool thisIsAthinWall = IsThinWallCommon(thing, r_viewpoint.camera, thingpos);
