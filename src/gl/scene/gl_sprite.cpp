@@ -992,7 +992,7 @@ bool spriteIntersectsLineCachedWrapper(line_t* line, float x1, float y1, float x
 		spriteIntersectsLineCacheEntry& entry = spriteIntersectsLineCache[line][key];
 
 		// Return cached result if valid (updated within last 3 ticks)
-		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3 && entry.cachedSpriteIntersectsLineValid)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7 && entry.cachedSpriteIntersectsLineValid)
 		{
 			ix = entry.cached_ix;
 			iy = entry.cached_iy;
@@ -1032,6 +1032,129 @@ static bool IsPointInVoid(const DVector2& point)
 
 //         ---===      ***************************************        ===---
 // ******* 1-sided-linedef culling block start *******
+
+bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
+{
+	if (!thing || !viewer) return false;
+
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+
+	// ONLY check sprite's sector, never viewer's sector
+	sector_t* thingSector = thing->Sector;
+	if (!thingSector || thingSector->Lines.Size() == 0) return false;
+
+	// Calculate viewer->thing line geometry
+	float viewerX = (float)viewer->X();
+	float viewerY = (float)viewer->Y();
+	float thingX = (float)thing->X();
+	float thingY = (float)thing->Y();
+
+	// Calculate sprite size with YOUR original classification logic
+	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+
+	// YOUR EXACT sprite size thresholds (unchanged)
+	const bool isMicroSprite = (spriteSize <= 8.0f);
+	const bool isTinySprite = (spriteSize <= 12.0f);
+	const bool isSmallSprite = (spriteSize <= 18.0f);
+	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
+	const bool isLargeSprite = (spriteSize > 38.0f && spriteSize < 39.0f);
+	const bool isHugeSprite = (spriteSize >= 39.0f);
+
+	// Scale adjustments based on YOUR original logic
+	float spriteScale = 0.25f;  // Default: micro/tiny/small sprites
+	if (isMediumSprite) { spriteScale = 0.2f; }
+	else if (isLargeSprite) { spriteScale = 0.15f; }
+	else if (isHugeSprite) { spriteScale = 0.1f; }
+
+	// Calculate scaled test points based on radius + size
+	float adjustedRadius = thing->radius * spriteScale;
+
+	// Generate 4 orthogonal test points around the sprite center
+	float testPoints[4][2] =
+	{
+		{thingX + adjustedRadius, thingY},           // Right
+		{thingX - adjustedRadius, thingY},           // Left  
+		{thingX, thingY + adjustedRadius},           // Up
+		{thingX, thingY - adjustedRadius}            // Down
+	};
+
+	for (auto testLine : thingSector->Lines)
+	{
+		if (!testLine->sidedef[0] || testLine->sidedef[1])
+			continue; // Skip non-1-sided lines
+
+		float lineX1 = (float)testLine->v1->fX();
+		float lineY1 = (float)testLine->v1->fY();
+		float lineX2 = (float)testLine->v2->fX();
+		float lineY2 = (float)testLine->v2->fY();
+
+		// Check each test point against the viewer line
+		for (int i = 0; i < 4; i++)
+		{
+			float ix, iy;
+			if (SpriteIntersectsLinedef
+			(
+				viewerX, viewerY,
+				testPoints[i][0], testPoints[i][1],
+				lineX1, lineY1,
+				lineX2, lineY2,
+				ix, iy))
+			{
+				return true; // Sprite crosses a 1-sided line visible to viewer
+			}
+		}
+
+		// Also check the core viewer->sprite line itself
+		float ix, iy;
+		if (SpriteIntersectsLinedef(viewerX, viewerY, thingX, thingY, lineX1, lineY1, lineX2, lineY2, ix, iy))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+struct SpriteCrossed1SidedLineCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached1sidedResult = false;  // Default: assume NO 1-sided crossing
+};
+
+static TMap<AActor*, SpriteCrossed1SidedLineCacheEntry> SpriteCrossed1sidedLineCache;
+
+bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
+{
+	// Fast escape checks
+	if (!thing || !viewer) return false;
+
+	// Use caching if enabled
+	if (enableAnamorphCache)
+	{
+		const int currentMapTimeTick = level.maptime;
+		SpriteCrossed1SidedLineCacheEntry& entry = SpriteCrossed1sidedLineCache[thing];
+
+		// Return cached result if valid (updated within last 3 ticks)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
+		{
+			return entry.cached1sidedResult;
+		}
+
+		// Compute and cache fresh result from non-cached function
+		bool result = SpriteCrossed1sidedLinedef(thing, viewer);
+		entry.cached1sidedResult = result;
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return result;
+	}
+	else
+	{
+		// Original uncached behavior
+		return SpriteCrossed1sidedLinedef(thing, viewer);
+	}
+}
+
+
+
 
 static bool CheckLineOfSight1sided(AActor* viewer, const DVector3& thingpos, float spriteRadius)
 {
@@ -1082,79 +1205,6 @@ static bool CheckLineOfSight1sided(AActor* viewer, const DVector3& thingpos, flo
 	return true; // No blocking 1-sided lines found
 }
 
-
-
-bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
-{
-	if (!thing || !viewer) return false;
-
-	sector_t* currentSector = thing->Sector;
-	if (!currentSector || currentSector->Lines.Size() == 0) return false;
-
-	float vpx = (float)viewer->X();
-	float vpy = (float)viewer->Y();
-	float tpx = (float)thing->X();
-	float tpy = (float)thing->Y();
-
-	for (unsigned i = 0; i < currentSector->Lines.Size(); i++)
-	{
-		line_t* testLine = currentSector->Lines[i];
-
-		if (testLine->sidedef[0] && !testLine->sidedef[1]) // only check 1-sided linedefs
-		{
-			float ix, iy;
-
-			// it's slower to call cached version from here, thus unused. If possible, call "SpriteCrossed1sidedLinedefCachedWrapper" as it's going to be faster
-			//if (spriteIntersectsLineCachedWrapper(testLine, vpx, vpy, tpx, tpy, testLine->v1->fX(), testLine->v1->fY(), testLine->v2->fX(), testLine->v2->fY(), ix, iy))
-			if (SpriteIntersectsLinedef(vpx, vpy, tpx, tpy, testLine->v1->fX(), testLine->v1->fY(), testLine->v2->fX(), testLine->v2->fY(), ix, iy))
-			{
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
-struct SpriteCrossed1SidedLineCacheEntry
-{
-	int lastMapTimeUpdateTick = -1;
-	bool cached1sidedResult = false;  // Default: assume NO 1-sided crossing
-};
-
-static TMap<AActor*, SpriteCrossed1SidedLineCacheEntry> SpriteCrossed1sidedLineCache;
-
-bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
-{
-	// Fast escape checks
-	if (!thing || !viewer) return false;
-
-	// Use caching if enabled
-	if (enableAnamorphCache)
-	{
-		const int currentMapTimeTick = level.maptime;
-		SpriteCrossed1SidedLineCacheEntry& entry = SpriteCrossed1sidedLineCache[thing];
-
-		// Return cached result if valid (updated within last 3 ticks)
-		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
-		{
-			return entry.cached1sidedResult;
-		}
-
-		// Compute and cache fresh result from non-cached function
-		bool result = SpriteCrossed1sidedLinedef(thing, viewer);
-		entry.cached1sidedResult = result;
-		entry.lastMapTimeUpdateTick = currentMapTimeTick;
-		return result;
-	}
-	else
-	{
-		// Original uncached behavior
-		return SpriteCrossed1sidedLinedef(thing, viewer);
-	}
-}
-
-
-
 // Cache structure for 1-sided checks
 struct Visibility1sidedCacheEntry
 {
@@ -1183,7 +1233,7 @@ static bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor*
 		Visibility1sidedCacheEntry& entry = Visibility1sidedCache[thing];
 
 		// Return cached result if valid
-		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
 		{
 			return entry.cached1sidedResult;
 		}
@@ -1233,6 +1283,10 @@ bool SpriteCrossed2sidedLinedef(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
 
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+
+	// Only check thing's sector - no other changes
 	sector_t* currentSector = thing->Sector;
 	if (!currentSector || currentSector->Lines.Size() == 0) return false;
 
@@ -1281,7 +1335,7 @@ bool SpriteCrossed2sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 		SpriteCrossed2SidedLineCacheEntry& entry = SpriteCrossed2sidedLineCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
-		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
 		{
 			return entry.cached2sidedSpriteCrossedResult;
 		}
@@ -1590,6 +1644,10 @@ static const FVector2 directionVectors[4] =
 // Optimized Implementation of CheckLineOfSight2sided with extended radius
 static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 {
+	// No obstructions found means true
+	if (CheckFrustumCulling(thing)) return true;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+
 	// Eye height calculation
 	float EyeHeight2 = 41.0f;
 	if (viewer->player && viewer->player->mo)
@@ -1794,11 +1852,9 @@ bool IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(AActor* viewer, A
 {
 	if (!viewer || !thing || viewer == thing) return true;
 
-	// 1. Frustum culling
-	if (CheckFrustumCulling(thing)) return false;
-
-	// 2. Distance culling
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+	// We call the function with "!" - that's why return "true" when culled
+	if (CheckFrustumCulling(thing)) return true;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
 
 	// 3. Full occlusion test
 	return CheckLineOfSight2sided(viewer, thing);
@@ -1823,10 +1879,7 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 	if (!viewer || !thing || viewer == thing) return true;
 
 	// We call the function with "!" - that's why return "true" when culled
-	// 1. Frustum culling (always check)
 	if (CheckFrustumCulling(thing)) return true;
-
-	// 2. Distance culling (always check)
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
 
 	// 3. Occlusion test - choose implementation based on toggle
@@ -1836,7 +1889,7 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 		const int currentMapTimeTick = level.maptime;
 		Visibility2sidedObstrCacheEntry& entry = Visibility2sidedObstrCache[viewer, thing];
 
-		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
 		{
 			return entry.cached2sidedObstrResult;
 		}
@@ -2158,7 +2211,7 @@ bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVecto
 		MidTextureProximityCacheEntry& entry = MidTextureProximityCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
-		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
 		{
 			// Use cached proximity factor to compute boolean
 			return entry.cachedProximityFactor >= 0.55f;
@@ -2332,6 +2385,10 @@ bool IsSpriteBehind3DFloorPlane(DVector3& cameraPos, DVector3& spritePos, sector
 	if (!sector || !sector->e)
 		return false;
 
+	// We call the function with "!" - that's why return "true" when culled
+	if (CheckFrustumCulling(thing)) return true;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+
 	const float TOLERANCE = 16.0f;    // Vertex-aligned sector tolerance
 	const float EPSILON = 8.0f;       // Vertical comparison safety
 	const float HORIZ_SAFETY = 32.0f; // Horizontal expansion
@@ -2408,7 +2465,7 @@ bool IsSpriteBehind3DFloorPlaneWrapper(DVector3& cameraPos, DVector3& spritePos,
 		a3DFloorPlaneCacheEntry& entry = a3DFloorPlaneCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
-		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 3)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
 		{
 			return entry.cached3DFloorPlaneResult;
 		}
@@ -2530,15 +2587,27 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 // ******* 3DFloor-sides culling block finish *******
 //         ---===      ***************************************        ===---
 
+static int resetCounter = -1;
 void ResetAnamorphCache()
 {
-	spriteIntersectsLineCache.Clear(1);
-	SpriteCrossed1sidedLineCache.Clear(1);
-	SpriteCrossed2sidedLineCache.Clear(1);
-	Visibility1sidedCache.Clear(1);
-	Visibility2sidedObstrCache.Clear(1);
-	MidTextureProximityCache.Clear(1);
-	a3DFloorPlaneCache.Clear(1);
+	// Only reset 1-2 caches per frame to spread out the cost
+	switch (resetCounter % 7)
+	{
+	case 0:
+		spriteIntersectsLineCache.Clear(0);
+		SpriteCrossed1sidedLineCache.Clear(0);
+		break;
+	case 1:
+		SpriteCrossed2sidedLineCache.Clear(0);
+		Visibility1sidedCache.Clear(0);
+		break;
+	case 2:
+		Visibility2sidedObstrCache.Clear(0);
+		MidTextureProximityCache.Clear(0);
+		a3DFloorPlaneCache.Clear(0);
+		break;
+	}
+	resetCounter++;
 }
 
 //==========================================================================
@@ -2909,6 +2978,21 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 	if (gl_spriteclip == -2 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
+		// We call the function with "!" - that's why return "true" when culled
+		if (CheckFrustumCulling(thing) || IsAnamorphicDistanceCulled(thing, 2048.0f))
+		{
+			gl_spriteclip == 3;
+		}
+
+		// Reset cache on need
+		static int lastLevelMaptime = -1;
+		// Level changed/reloaded
+		if (level.maptime != lastLevelMaptime)
+		{
+			ResetAnamorphCache();
+			lastLevelMaptime = level.maptime;
+		}
+
 		// Define distance constants properly
 		const float FP_CLOSER_LIMIT = 384.0f;            // Where Forced-Perspective ends (close-up)
 		const float SMART_START_DISTANCE = 1400.0f;      // Where Smart-clip starts to show up (far-side)
@@ -2918,13 +3002,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to how GZDoom v4.14.2
 		// and that helped to reduce leaks, the olny difference from original sprite cliping mode of
 		// Forced-Perspective is that it's 3DFloor aware
-
-		static int lastLevelMaptime = -1;
-		if (level.maptime != lastLevelMaptime) // Level changed/reloaded
-		{
-			ResetAnamorphCache();
-			lastLevelMaptime = level.maptime;
-		}
 
 		// Determine sprite classification
 		bool islegacyversionprojectile =
@@ -2943,21 +3020,17 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			(thing->flags2 & MF2_PASSMOBJ) && (thing->flags3 & MF3_ISMONSTER) &&
 			(thing->flags & MF_FLOAT || thing->flags & MF_INFLOAT);
 		bool isfloatingsprite = (thing->flags & MF_FLOAT || thing->flags & MF_INFLOAT);
-		float spriteSize = (thing->radius + thing->Height) * 0.5f;
-		bool isSmallSprite = (spriteSize <= 18.0f);
-		bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
-		bool isLargeSprite = (spriteSize > 38.0f);
-		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
-		bool isactorsmallbutnotcorpse = isSmallSprite && !isactoracorpse;
-		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
+
 
 		// An attempt to detect whether Y-axis sprite offset significant enough to cross the ground
-		int spriteFileOffset;      // Blank rows at top of texture (from file)
-		int spriteRasterYdimen;    // Total texture height (including blank rows)
+		int spriteFileOffset = 0;      // Blank rows at top of texture (from file)
+		int spriteRasterXdimen = 0;    // Total texture width (including blank columns)
+		int spriteRasterYdimen = 0;    // Total texture height (including blank rows)
 		bool hasSignificantNegativeOffset = false;
 		if (gltexture && gltexture->tex)
 		{
 			FTexture* tex = gltexture->tex;
+			spriteRasterXdimen = tex->GetWidth();
 			spriteRasterYdimen = tex->GetHeight();
 			spriteFileOffset = tex->TopOffset;
 			// Calculate visible sprite height (actual drawn pixels)
@@ -2968,9 +3041,30 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			//	tex->Name.GetChars(),spriteRasterYdimen, spriteFileOffset,visibleSpriteHeight,hasSignificantNegativeOffset ? "YES" : "NO");
 		}
 
+		float spriteSize = (thing->radius + thing->Height) * 0.5f;
+		bool isMicroSprite = (spriteSize <= 8.0f);
+		bool isTinySprite = (spriteSize <= 12.0f);
+		bool isSmallSprite = (spriteSize <= 18.0f);
+		bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
+		bool isLargeSprite = (spriteSize > 38.0f);
+		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
+		bool isactorsmallbutnotcorpse = isSmallSprite && !isactoracorpse;
+		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
+
+		// -------------
+		// Some mods have big looking sprites with little radius-or-height
+		// we need to adjust them to have a nice anamorphosis effect (increase it)
+		if ( (spriteRasterXdimen >= (thing->radius)) || (spriteRasterYdimen >= (thing->Height)) )
+		{
+			if (isMicroSprite) { spriteSize *= 5.25f; }
+			else if (isTinySprite) { spriteSize *= 3.25f; }
+			else if (isSmallSprite) { spriteSize *= 2.25f; }
+			else if (isMediumSprite) { spriteSize *1.5f; }
+		}
+		// -------------
+
 		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
 		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
-
 
 		//bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		//float spriteActualRadius = thing->radius;
@@ -2982,8 +3076,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
-		float behindFacingMidTxtProximity = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
-		bool visible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
+		bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSides(r_viewpoint.camera, thing);
 		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
 
@@ -3068,16 +3161,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// Detect whether a sprite is within viewer's vertical bounds - start
 			bool spriteIsInViewerVerticalBounds = false;
 			const float EyeHeight = 41.0f;
+			const float EyeHeightShort = 41.0f * 0.32f;
 			float vpm = (vpz + EyeHeight) * 0.5f;      // viewer position middle
-			if ((vpm <= (btm + EyeHeight)) || (vpm >= (top - EyeHeight)))
+			if ((vpm <= (btm + EyeHeightShort)) || (vpm >= (top - EyeHeightShort)))
 			{
 				// viewer is located at steep angle to a sprite
 				spriteIsInViewerVerticalBounds = true;
 			}
 
 			// =================== additional culling - START ======================
-			float horizontalEps = 0.1f;
-			float bintersect = 0.0f; float tintersect = 0.0f;
 			bool needsEnhancedCulling = spriteIsInViewerVerticalBounds;
 
 			struct AnamorphosisToleranceParams
@@ -3090,12 +3182,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				float cullThreshold2;
 			};
 
-			// Determine parameters based on sprite type
-			AnamorphosisToleranceParams toleranceAnamorphosis = { 2.0f, 6.0f, 2.0f, 0.03f, 0.6f, 1.0f };
+			// Simplified parameters - removed distance dependency
+			AnamorphosisToleranceParams			toleranceAnamorphosis = { 2.0f, 12.0f, 3.0f, 0.018f, 0.5f, 0.92f };
 
-			// We could use enhanced logic at all times but it chops legs more and more
-			// as you get higher above or lower below an observed sprite (change Z pos)
-			// Original logic for clear cases
+			float bintersect = 0.0f;
+			float tintersect = 0.0f;
+			float horizontalEps = 0.1f;
+
+			// Original logic for clear cases (no distance-based calculations)
 			if (!needsEnhancedCulling)
 			{
 				if (z2 < vpz && vbtm < vpz)		bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
@@ -3106,65 +3200,31 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 			else
 			{
-				// Apply enhanced culling only when needed
-				// Adjust parameters per sprite type
+				// Simplified enhanced culling - removed distance calculations
 				if (islegacyversionprojectile)
 				{
-					toleranceAnamorphosis = { 1.6f, 6.0f, 3.0f, 0.025f, 0.7f, 1.32f };
-				}
-				else if (isSmallSprite)
-				{
-					toleranceAnamorphosis = { 2.0f, 6.0f, 2.0f, 0.03f, 0.6f, 1.0f };
+					//toleranceAnamorphosis = { 1.6f, 6.0f, 3.0f, 0.025f, 0.7f, 1.32f };
+					toleranceAnamorphosis = { 1.6f, 8.0f, 4.0f, 0.012f, 0.55f, 1.15f };  // Tighter thresholds, less bias
 				}
 				else if (isLargeSprite)
 				{
-					toleranceAnamorphosis = { 2.2f, 14.0f, 8.0f, 0.01f, 1.2f, 1.7f };
+					//toleranceAnamorphosis = { 2.2f, 14.0f, 8.0f, 0.01f, 1.2f, 1.7f };
+					toleranceAnamorphosis = { 2.2f, 16.0f, 10.0f, 0.006f, 0.9f, 1.4f };   // More aggressive for large sprites
 				}
 				else
 				{
-					// Medium sprites (default case)
-					toleranceAnamorphosis = { 2.0f, 6.0f, 2.0f, 0.03f, 0.6f, 1.0f };
+					// All other sprite types (medium/small)
+					//toleranceAnamorphosis = { 2.0f, 6.0f, 2.0f, 0.03f, 0.6f, 1.0f };
+					toleranceAnamorphosis = { 2.0f, 12.0f, 3.0f, 0.018f, 0.5f, 0.92f };   // Tighter thresholds, reduced bias
 				}
 
-				// Calculate distances
-				const float EyeHeight = 41.0f;
-				float spr2viewDiff = btm - vbtm;
-				float vpDist = sqrt((tpx - vpx) * (tpx - vpx) + (tpy - vpy) * (tpy - vpy));
+				// REMOVED: vpDist, heightEps, and horizontalEps calculations
+				// These are now fixed constants
+				horizontalEps = 0.0f; // Always 0 for non-enchanted crossings
 
-				// Calculate dynamic epsilons
-				float heightEps = 0.0f;
-				float horizontalEps = 0.0f;
-
-				if (fabs(spr2viewDiff) <= EyeHeight * toleranceAnamorphosis.proximityRangeMult)
+				// Simplified bottom intersection with ENHANCED culling
+				if (z2 < vpz && vbtm < vpz)
 				{
-					// Vertical epsilon
-					if (fabs(spr2viewDiff) < EyeHeight * 0.5f)
-					{
-						float proximityFactor = 1.0f - (fabs(spr2viewDiff) / (EyeHeight * 0.5f));
-						heightEps = proximityFactor * toleranceAnamorphosis.maxHeightEps;
-					}
-					else
-					{
-						float proximityFactor = 1.0f - ((fabs(spr2viewDiff) - EyeHeight * 0.5f) / (EyeHeight * (toleranceAnamorphosis.proximityRangeMult - 0.5f)));
-						heightEps = proximityFactor * toleranceAnamorphosis.maxHeightEps * 0.3f;
-					}
-
-					// Horizontal epsilon
-					if (vpDist < EyeHeight * 2.0f)
-					{
-						float distFactor = 1.0f - (vpDist / (EyeHeight * 2.0f));
-						horizontalEps = distFactor * toleranceAnamorphosis.maxHorizontalEps;
-					}
-				}
-
-				// Bottom intersection with enhanced culling
-				if ((z2 + heightEps) < vpz && (vbtm + heightEps) < vpz)
-				{
-					if (horizontalEps > 0.0f && vpDist < EyeHeight * 2.0f)
-					{
-						vbtm -= horizontalEps * 0.5f;
-					}
-
 					float denom = z2 - vpz;
 					if (fabs(denom) > 0.001f)
 					{
@@ -3181,14 +3241,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					bintersect = 1.0f;
 				}
 
-				// Top intersection with enhanced culling
-				if ((z1 - heightEps) > vpz && (vtop - heightEps) > vpz)
+				// Simplified top intersection with ENHANCED culling
+				if (z1 > vpz && vtop > vpz)
 				{
-					if (horizontalEps > 0.0f && vpDist < EyeHeight * 2.0f)
-					{
-						vtop += horizontalEps * 0.5f;
-					}
-
 					float denom = z1 - vpz;
 					if (fabs(denom) > 0.001f)
 					{
@@ -3206,31 +3261,27 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				}
 			}
 
-			// Water level handling (applies to both cases)
+			// Water level handling (kept for environment consistency)
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2)
 			{
 				bintersect = tintersect = 1.0f;
 			}
 
-			// Final culling decision
+			// Final culling decision (simplified - no distance-dependent curves)
 			float final_intersect = MIN(bintersect, tintersect);
 			if (needsEnhancedCulling)
 			{
 				float cullThreshold1 = minbias * toleranceAnamorphosis.cullThreshold1;
 				float cullThreshold2 = minbias * toleranceAnamorphosis.cullThreshold2;
 
+				// Linear falloff between thresholds
 				if (final_intersect < cullThreshold1)
 				{
 					final_intersect = 0.0f;
 				}
 				else if (final_intersect < cullThreshold2)
 				{
-					float t = (final_intersect - cullThreshold1) / (cullThreshold2 - cullThreshold1);
-					if (horizontalEps > 0.0f)
-					{
-						t *= (1.0f + horizontalEps / toleranceAnamorphosis.maxHorizontalEps);
-					}
-					final_intersect = lerp(0.0f, cullThreshold2, t * t);
+					final_intersect = lerp(cullThreshold1, cullThreshold2, (final_intersect - cullThreshold1) / (cullThreshold2 - cullThreshold1));
 				}
 			}
 			else if (final_intersect < minbias)
@@ -3240,11 +3291,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			// =================== additional culling - FINISH ======================
 
-			// Compute steep factor
-			bool isatsteepangle;
-			float steepness = 0.64f;
-			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepness);
-			isatsteepangle = steepnessfact > 0.001f;
+
 
 			// =============================     PRODUCTION EDITION (NORMAL VISIBILITY EVEN WHEN CULLED AT LEAST 1.0f - ***START***  ================================
 			float extremeCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
@@ -3256,7 +3303,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
-				regularsizmonster_factor1 * 0.025f;       // shoudn't be bigger than 0.25f even in production edition cause that would enlarge radii by 4x and cause leaks!
+				regularsizmonster_factor1 * 0.025f;       // shouldn't be bigger than 0.25f even in production edition cause that would enlarge radii by 4x and cause leaks!
 
 			float extended_radius1 = (isactorsmallbutnotcorpse) ?
 				spriteSize * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 0.25 when occluded
