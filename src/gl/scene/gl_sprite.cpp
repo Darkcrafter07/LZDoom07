@@ -3219,39 +3219,38 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			if (viewer->player && viewer->player->mo)
 			{
 				EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
-				//Printf("EyeHeight1: %.2f (ViewHeight: %.2f + crouchdelta: %.2f)\n", EyeHeight1, viewer->player->mo->FloatVar(NAME_ViewHeight), viewer->player->crouchviewdelta);
-			}
-			else
-			{
-				//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
 			}
 
 			float viewerBottom = viewer->Z();
 			float viewerTop = viewerBottom + EyeHeight;
 			float spriteBottom = thing->Z();
-			float spriteTop = (thing->Z()) + (thing->Height);
+			float spriteTop = thing->Top();
 
-			float thingZtol = 8.0f;	  // to stabilize the process
-			// Just half of eyeheight level to prevent more leaks
-			float viewerTopAdj1 = viewerBottom + (EyeHeight * 0.5f);
+			// Get actual floor/ceiling heights (including 3D floors) thingpos
+			float actualFloor = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing);
+			float actualCeiling = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, thingpos, thing);
+			const float planeProximThresh = 32.0f;
 
-			// Calculate viewer's vertical sight center - midpoint of eyelevel
-			float viewerSightCenter = viewerBottom + EyeHeight * 0.5f;
+			// Adjusted viewer/sprite positions
+			float viewerTopAdj = viewerBottom + (EyeHeight * 0.5f);  // Mid-eye position
+			float spriteTopAdj = spriteTop + (EyeHeight * 0.064f);   // Small leeway threshold
 
-			// Calculate dynamic margins based on sprite height
-			float topSafeMargin = thing->Height * 0.3f;   // 30% of sprite height
-			float bottomSafeMargin = thing->Height * 0.3f;
+			// Proximity detection
+			bool isFloorSprite = (spriteBottom - actualFloor) <= planeProximThresh;
+			bool isCeilingSprite = (actualCeiling - spriteTop) <= planeProximThresh;
 
-			// Calculate adjusted thresholds for safe zone boundaries
-			float viewerTopMinusMargin = viewerSightCenter - topSafeMargin;
-			float viewerBottomPlusMargin = viewerSightCenter + bottomSafeMargin;
+			// Viewer angle detection
+			bool viewerLookingDown = viewerTopAdj >= spriteTopAdj;
+			bool viewerLookingUp = viewerTopAdj <= spriteBottom;
 
-			// Determine if floor/ceiling safe zones apply
-			bool isFloorSpriteSafe = (viewerTopMinusMargin >= (spriteTop - Ztolerance2sided));
-			bool isCeilingSpriteSafe = (viewerBottomPlusMargin <= (spriteBottom + Ztolerance2sided));
-
-			// Only apply aggressive culling when OUTSIDE both safe zones
-			if (!(isFloorSpriteSafe || isCeilingSpriteSafe))
+			// Skip culling when:
+			// - Looking down on floor sprites OR
+			// - Looking up at ceiling sprites
+			if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
+			{
+				// Skip aggressive culling
+			}
+			else // Otherwise apply culling
 			{
 				if (!r_debug_nolimitanamorphoses)
 				{
@@ -3262,14 +3261,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 			//		--- The pass 2 agressive culling core process - finish ---
 
+			// The rest of your unchanged calculations
 			float bintersect, tintersect;
-			if (z2 < vpz && vbtm < vpz)		bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
-			else							bintersect = 1.0f;
+			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
+			else bintersect = 1.0f;
 
-			if (z1 > vpz && vtop > vpz)		tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
-			else							tintersect = 1.0f;
+			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
+			else tintersect = 1.0f;
 
-			if (thing->waterlevel >= 1 && thing->waterlevel <= 2)					bintersect = tintersect = 1.0f;
+			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
 
 			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f);
 			float vpbias = 1.0 - spbias;
