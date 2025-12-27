@@ -2978,12 +2978,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 	if (gl_spriteclip == -2 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
-		// We call the function with "!" - that's why return "true" when culled
-		if (CheckFrustumCulling(thing) || IsAnamorphicDistanceCulled(thing, 2048.0f))
-		{
-			gl_spriteclip == 3;
-		}
-
 		// Reset cache on need
 		static int lastLevelMaptime = -1;
 		// Level changed/reloaded
@@ -2998,10 +2992,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		const float SMART_START_DISTANCE = 1400.0f;      // Where Smart-clip starts to show up (far-side)
 		const float TRANSITION_WIDTH = SMART_START_DISTANCE - FP_CLOSER_LIMIT;    // Length of transition
 
-		// Get the viewpoint from the current draw context
+		// Get the viewpoint from the current draw context that helped to reduce leaks
 		const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to how GZDoom v4.14.2
-		// and that helped to reduce leaks, the olny difference from original sprite cliping mode of
-		// Forced-Perspective is that it's 3DFloor aware
 
 		// Determine sprite classification
 		bool islegacyversionprojectile =
@@ -3041,6 +3033,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			//	tex->Name.GetChars(),spriteRasterYdimen, spriteFileOffset,visibleSpriteHeight,hasSignificantNegativeOffset ? "YES" : "NO");
 		}
 
+
 		float spriteSize = (thing->radius + thing->Height) * 0.5f;
 		bool isMicroSprite = (spriteSize <= 8.0f);
 		bool isTinySprite = (spriteSize <= 12.0f);
@@ -3054,12 +3047,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// -------------
 		// Some mods have big looking sprites with little radius-or-height
 		// we need to adjust them to have a nice anamorphosis effect (increase it)
-		if ( (spriteRasterXdimen >= (thing->radius)) || (spriteRasterYdimen >= (thing->Height)) )
+		if ((spriteRasterXdimen >= (thing->radius)) || (spriteRasterYdimen >= (thing->Height)))
 		{
-			if (isMicroSprite) { spriteSize *= 5.25f; }
-			else if (isTinySprite) { spriteSize *= 3.25f; }
-			else if (isSmallSprite) { spriteSize *= 2.25f; }
-			else if (isMediumSprite) { spriteSize *1.5f; }
+			if (isMicroSprite) { spriteSize *= 2.75f; }
+			else if (isTinySprite) { spriteSize *= 2.0f; }
+			else if (isSmallSprite) { spriteSize *= 1.5f; }
+			else if (isMediumSprite) { spriteSize *= 1.32f; }
+			else { spriteSize *= 1.2f; }
 		}
 		// -------------
 
@@ -3067,10 +3061,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
 
 		//bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
-		//float spriteActualRadius = thing->radius;
-		//float spriteShrinkedRadius = spriteActualRadius * 0.32f;
-		//float forceTinyRadius = (thingCrossed2sidedLine) ? spriteShrinkedRadius : spriteActualRadius;
-		//float spriteSize = (forceTinyRadius + thing->Height) * 0.5f;
+		//float forceTinySpriteSize = (thingCrossed2sidedLine) ? spriteSize : (spriteSize * 0.32f);
+		//float spriteSize = forceTinySpriteSize;
 
 		//bool isSpriteOutsideMap = IsPointInVoid(DVector2(thingpos));
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
@@ -3151,6 +3143,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			// ======= Forced-Perspective Anamorphic sprite projecting routine START =======
 
+			// we still got leaks when viewer is situtated at extremely steep angles to sprites
+			// even through 1-sided walls, which we could try to hack by adding z-tolerance
+			// but not even like that, when viewer middle is within vertical bounds of sprite
+
 			// Regular and 3D Floor-Aware Heights
 			float btm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing) - thing->Floorclip;
 			float top = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, thingpos, thing);
@@ -3158,142 +3154,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float vbtm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
 			float vtop = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
 
-			// Detect whether a sprite is within viewer's vertical bounds - start
-			bool spriteIsInViewerVerticalBounds = false;
-			const float EyeHeight = 41.0f;
-			const float EyeHeightShort = 41.0f * 0.32f;
-			float vpm = (vpz + EyeHeight) * 0.5f;      // viewer position middle
-			if ((vpm <= (btm + EyeHeightShort)) || (vpm >= (top - EyeHeightShort)))
-			{
-				// viewer is located at steep angle to a sprite
-				spriteIsInViewerVerticalBounds = true;
-			}
 
-			// =================== additional culling - START ======================
-			bool needsEnhancedCulling = spriteIsInViewerVerticalBounds;
-
-			struct AnamorphosisToleranceParams
-			{
-				float proximityRangeMult;
-				float maxHeightEps;
-				float maxHorizontalEps;
-				float intersectBias;
-				float cullThreshold1;
-				float cullThreshold2;
-			};
-
-			// Simplified parameters - removed distance dependency
-			AnamorphosisToleranceParams			toleranceAnamorphosis = { 2.0f, 12.0f, 3.0f, 0.018f, 0.5f, 0.92f };
-
-			float bintersect = 0.0f;
-			float tintersect = 0.0f;
-			float horizontalEps = 0.1f;
-
-			// Original logic for clear cases (no distance-based calculations)
-			if (!needsEnhancedCulling)
-			{
-				if (z2 < vpz && vbtm < vpz)		bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
-				else							bintersect = 1.0;
-
-				if (z1 > vpz && vtop > vpz)		tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
-				else							tintersect = 1.0;
-			}
-			else
-			{
-				// Simplified enhanced culling - removed distance calculations
-				if (islegacyversionprojectile)
-				{
-					//toleranceAnamorphosis = { 1.6f, 6.0f, 3.0f, 0.025f, 0.7f, 1.32f };
-					toleranceAnamorphosis = { 1.6f, 8.0f, 4.0f, 0.012f, 0.55f, 1.15f };  // Tighter thresholds, less bias
-				}
-				else if (isLargeSprite)
-				{
-					//toleranceAnamorphosis = { 2.2f, 14.0f, 8.0f, 0.01f, 1.2f, 1.7f };
-					toleranceAnamorphosis = { 2.2f, 16.0f, 10.0f, 0.006f, 0.9f, 1.4f };   // More aggressive for large sprites
-				}
-				else
-				{
-					// All other sprite types (medium/small)
-					//toleranceAnamorphosis = { 2.0f, 6.0f, 2.0f, 0.03f, 0.6f, 1.0f };
-					toleranceAnamorphosis = { 2.0f, 12.0f, 3.0f, 0.018f, 0.5f, 0.92f };   // Tighter thresholds, reduced bias
-				}
-
-				// REMOVED: vpDist, heightEps, and horizontalEps calculations
-				// These are now fixed constants
-				horizontalEps = 0.0f; // Always 0 for non-enchanted crossings
-
-				// Simplified bottom intersection with ENHANCED culling
-				if (z2 < vpz && vbtm < vpz)
-				{
-					float denom = z2 - vpz;
-					if (fabs(denom) > 0.001f)
-					{
-						float rawIntersect = MIN((btm - vpz) / denom, (vbtm - vpz) / denom);
-						bintersect = MAX(rawIntersect, 0.0001f) + toleranceAnamorphosis.intersectBias;
-					}
-					else
-					{
-						bintersect = 1.0f;
-					}
-				}
-				else
-				{
-					bintersect = 1.0f;
-				}
-
-				// Simplified top intersection with ENHANCED culling
-				if (z1 > vpz && vtop > vpz)
-				{
-					float denom = z1 - vpz;
-					if (fabs(denom) > 0.001f)
-					{
-						float rawIntersect = MIN((top - vpz) / denom, (vtop - vpz) / denom);
-						tintersect = MAX(rawIntersect, 0.0001f) + toleranceAnamorphosis.intersectBias;
-					}
-					else
-					{
-						tintersect = 1.0f;
-					}
-				}
-				else
-				{
-					tintersect = 1.0f;
-				}
-			}
-
-			// Water level handling (kept for environment consistency)
-			if (thing->waterlevel >= 1 && thing->waterlevel <= 2)
-			{
-				bintersect = tintersect = 1.0f;
-			}
-
-			// Final culling decision (simplified - no distance-dependent curves)
-			float final_intersect = MIN(bintersect, tintersect);
-			if (needsEnhancedCulling)
-			{
-				float cullThreshold1 = minbias * toleranceAnamorphosis.cullThreshold1;
-				float cullThreshold2 = minbias * toleranceAnamorphosis.cullThreshold2;
-
-				// Linear falloff between thresholds
-				if (final_intersect < cullThreshold1)
-				{
-					final_intersect = 0.0f;
-				}
-				else if (final_intersect < cullThreshold2)
-				{
-					final_intersect = lerp(cullThreshold1, cullThreshold2, (final_intersect - cullThreshold1) / (cullThreshold2 - cullThreshold1));
-				}
-			}
-			else if (final_intersect < minbias)
-			{
-				final_intersect = 0.0f; // Original culling for clear cases
-			}
-
-			// =================== additional culling - FINISH ======================
-
-
-
-			// =============================     PRODUCTION EDITION (NORMAL VISIBILITY EVEN WHEN CULLED AT LEAST 1.0f - ***START***  ================================
+			//			=== Dynamic anamorphosis occlusion based amount effect adjustment - START ===
 			float extremeCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
 			float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? extremeCull1 : 3.25f;
 			float extremeCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
@@ -3303,7 +3165,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
-				regularsizmonster_factor1 * 0.025f;       // shouldn't be bigger than 0.25f even in production edition cause that would enlarge radii by 4x and cause leaks!
+				regularsizmonster_factor1 * 0.25f;       // shouldn't be bigger than 0.25f even in production edition cause that would enlarge radii by 4x and cause leaks!
 
 			float extended_radius1 = (isactorsmallbutnotcorpse) ?
 				spriteSize * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 0.25 when occluded
@@ -3311,6 +3173,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float extended_radius2 = (islegacyversionprojectile) ?
 				extended_radius1 * projectiles_factor :  // 16x for projectiles like rockets, explosions and 6x when occluded
 				extended_radius1;                        // 1x for all the rest sprites
+			//			=== Dynamic anamorphosis occlusion based amount effect adjustment - FINISH ===
+
+
+			//					=== Anamorphosis culling pass 1 - START ===
+			// This type of culling is adequate only to cover for very obvious leaks
+			// but keep some extra space for stuff that don't need even that much like big explosions
 
 			// Only apply extended radius bias for specific actor types
 			float radius_for_bias = thing->radius;
@@ -3336,13 +3204,79 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					minbias = MAX(minbias, objradiusbias);
 				}
 			}
+			//					=== Anamorphosis culling pass 1 - FINISH ===
 
-			// =============================     PRODUCTION EDITION (NORMAL VISIBILITY EVEN WHEN CULLED AT LEAST 1.0f - ***FINISH***  ================================
+
+			//					=== Anamorphosis culling pass 2 - START ===
+			// This one culls agressively and prevents coplanar leaks but chops too much
+			// when we look at the sprite from above, in this case we don't do this cull at all
+			// Detect viewer middle ground is still higher than sprite bottom
+
+			// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
+			// That's why get viewer from renderer context instead of function parameters
+			AActor* viewer = r_viewpoint.camera;
+			float EyeHeight = 41.0f;
+			if (viewer->player && viewer->player->mo)
+			{
+				EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+				//Printf("EyeHeight1: %.2f (ViewHeight: %.2f + crouchdelta: %.2f)\n", EyeHeight1, viewer->player->mo->FloatVar(NAME_ViewHeight), viewer->player->crouchviewdelta);
+			}
+			else
+			{
+				//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
+			}
+
+			float viewerBottom = viewer->Z();
+			float viewerTop = viewerBottom + EyeHeight;
+			float spriteBottom = thing->Z();
+			float spriteTop = (thing->Z()) + (thing->Height);
+
+			float thingZtol = 8.0f;	  // to stabilize the process
+			// Just half of eyeheight level to prevent more leaks
+			float viewerTopAdj1 = viewerBottom + (EyeHeight * 0.5f);
+
+			// Calculate viewer's vertical sight center - midpoint of eyelevel
+			float viewerSightCenter = viewerBottom + EyeHeight * 0.5f;
+
+			// Calculate dynamic margins based on sprite height
+			float topSafeMargin = thing->Height * 0.3f;   // 30% of sprite height
+			float bottomSafeMargin = thing->Height * 0.3f;
+
+			// Calculate adjusted thresholds for safe zone boundaries
+			float viewerTopMinusMargin = viewerSightCenter - topSafeMargin;
+			float viewerBottomPlusMargin = viewerSightCenter + bottomSafeMargin;
+
+			// Determine if floor/ceiling safe zones apply
+			bool isFloorSpriteSafe = (viewerTopMinusMargin >= (spriteTop - Ztolerance2sided));
+			bool isCeilingSpriteSafe = (viewerBottomPlusMargin <= (spriteBottom + Ztolerance2sided));
+
+			// Only apply aggressive culling when OUTSIDE both safe zones
+			if (!(isFloorSpriteSafe || isCeilingSpriteSafe))
+			{
+				if (!r_debug_nolimitanamorphoses)
+				{
+					float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+					float objradiusbias = 1.f - spriteSize / sqrt(distsq);
+					minbias = MAX(minbias, objradiusbias);
+				}
+			}
+			//		--- The pass 2 agressive culling core process - finish ---
+
+			float bintersect, tintersect;
+			if (z2 < vpz && vbtm < vpz)		bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
+			else							bintersect = 1.0f;
+
+			if (z1 > vpz && vtop > vpz)		tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
+			else							tintersect = 1.0f;
+
+			if (thing->waterlevel >= 1 && thing->waterlevel <= 2)					bintersect = tintersect = 1.0f;
 
 			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f);
 			float vpbias = 1.0 - spbias;
+			//					=== Anamorphosis culling pass 2 - FINISH ===
 
-			// Apply projection distortion using original vp method
+
+			// Apply projection distortion using original vp method only if not obstructed by a 3DFloor above or below
 			if (!a3DfloorPlaneObstructed)
 			{
 				x1 = x1 * spbias + vpx * vpbias;
