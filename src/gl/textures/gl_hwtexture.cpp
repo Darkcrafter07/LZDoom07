@@ -160,67 +160,194 @@ void FHardwareTexture::Resize(int width, int height, unsigned char *src_data, un
 //
 //===========================================================================
 
+static void ManualScaleImage(GLenum format, GLint w, GLint h, GLenum type, const void* input, GLint rw, GLint rh, GLenum typeout, void* output)
+{
+	// Assuming format is GL_RGBA/GL_BGRA and type is GL_UNSIGNED_BYTE
+	unsigned char* src = (unsigned char*)input;
+	unsigned char* dst = (unsigned char*)output;
+
+	// Calculate ratios (float) to preserve aspect ratio
+	float x_ratio = (float)w / (float)rw;
+	float y_ratio = (float)h / (float)rh;
+
+	for (int y = 0; y < rh; y++)
+	{
+		// Calculate exact source Y coordinates for interpolation
+		float src_y_exact = (float)y * y_ratio;
+		int src_y1 = (int)src_y_exact;
+		int src_y2 = src_y1 + 1;
+		float y_blend = src_y_exact - src_y1; // Weight of the second row
+
+		// Clamp coordinates to prevent overflow
+		if (src_y2 >= h) { src_y2 = h - 1; src_y1 = h - 1; y_blend = 0.0f; }
+
+		for (int x = 0; x < rw; x++)
+		{
+			// Calculate exact source X coordinates for interpolation
+			float src_x_exact = (float)x * x_ratio;
+			int src_x1 = (int)src_x_exact;
+			int src_x2 = src_x1 + 1;
+			float x_blend = src_x_exact - src_x1; // Weight of the second column
+
+			// Clamp coordinates to prevent overflow
+			if (src_x2 >= w) { src_x2 = w - 1; src_x1 = w - 1; x_blend = 0.0f; }
+
+			// Get indices for the 4 neighboring pixels
+			int idx11 = (src_y1 * w + src_x1) * 4; // Top-Left
+			int idx12 = (src_y1 * w + src_x2) * 4; // Top-Right
+			int idx21 = (src_y2 * w + src_x1) * 4; // Bottom-Left
+			int idx22 = (src_y2 * w + src_x2) * 4; // Bottom-Right
+
+			int dst_idx = (y * rw + x) * 4;
+
+			// Perform Bilinear Interpolation for R, G, B, and A
+			for (int i = 0; i < 4; i++) // Loop 0=R, 1=G, 2=B, 3=A
+			{
+				float val11 = src[idx11 + i];
+				float val12 = src[idx12 + i];
+				float val21 = src[idx21 + i];
+				float val22 = src[idx22 + i];
+
+				// Interpolate horizontally first
+				float top_avg = val11 * (1.0f - x_blend) + val12 * x_blend;
+				float bottom_avg = val21 * (1.0f - x_blend) + val22 * x_blend;
+
+				// Interpolate vertically
+				float final_val = top_avg * (1.0f - y_blend) + bottom_avg * y_blend;
+
+				dst[dst_idx + i] = (unsigned char)final_val;
+			}
+		}
+	}
+}
+
 unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int h, int texunit, bool mipmap, int translation, const FString &name)
 {
-	int rh,rw;
-	int texformat=TexFormat[gl_texture_format];
-	bool deletebuffer=false;
+	int rh, rw;
+	int texformat = TexFormat[gl_texture_format];
+	bool deletebuffer = false;
 
 	if (forcenocompression)
 	{
 		texformat = GL_RGBA8;
 	}
-	TranslatedTexture * glTex=GetTexID(translation);
-	if (glTex->glTexID==0) glGenTextures(1,&glTex->glTexID);
-	if (texunit != 0) glActiveTexture(GL_TEXTURE0+texunit);
-	glBindTexture(GL_TEXTURE_2D, glTex->glTexID);
-	FGLDebug::LabelObject(GL_TEXTURE, glTex->glTexID, name);
-	lastbound[texunit] = glTex->glTexID;
 
-	if (!buffer)
+	TranslatedTexture * glTex = GetTexID(translation);
+	if (glTex->glTexID == 0) glGenTextures(1, &glTex->glTexID);
+
+	// -------------------------------------------------------------------------------
+	// GL 1.5 PATH (GeForce FX 5500)
+	// -------------------------------------------------------------------------------
+	if (gl.gl1path)
 	{
-		w=texwidth;
-		h=abs(texheight);
-		rw = GetTexDimension (w);
-		rh = GetTexDimension (h);
+		// 1. Bind and Label
+		if (texunit != 0) glActiveTexture(GL_TEXTURE0 + texunit);
+		glBindTexture(GL_TEXTURE_2D, glTex->glTexID);
+		FGLDebug::LabelObject(GL_TEXTURE, glTex->glTexID, name);
+		lastbound[texunit] = glTex->glTexID;
 
-		// The texture must at least be initialized if no data is present.
-		glTex->mipmapped = false;
-		buffer=(unsigned char *)calloc(4,rw * (rh+1));
-		deletebuffer=true;
-		//texheight=-h;	
-	}
-	else
-	{
-		rw = GetTexDimension (w);
-		rh = GetTexDimension (h);
-
-		if (rw < w || rh < h)
+		// 2. Determine Texture Dimension
+		if (!buffer)
 		{
-			// The texture is larger than what the hardware can handle so scale it down.
-			unsigned char * scaledbuffer=(unsigned char *)calloc(4,rw * (rh+1));
-			if (scaledbuffer)
+			w = texwidth;
+			h = abs(texheight);
+			rw = GetTexDimension(w);
+			rh = GetTexDimension(h);
+
+			// The texture must at least be initialized if no data is present.
+			glTex->mipmapped = false;
+			buffer = (unsigned char *)calloc(4, rw * (rh + 1));
+			deletebuffer = true;
+		}
+		else
+		{
+			rw = GetTexDimension(w);
+			rh = GetTexDimension(h);
+
+			// 3. Handle Resizing (Manual Implementation)
+			// If we need to resize (downscale or POT pad), do it manually here
+			if (rw != w || rh != h)
 			{
-				Resize(rw, rh, buffer, scaledbuffer);
-				deletebuffer=true;
-				buffer=scaledbuffer;
+				unsigned char * scaledbuffer = (unsigned char *)calloc(4, rw * (rh + 1));
+				if (scaledbuffer)
+				{
+					// Call the manual scaler implemented above
+					// Note: We use GL_RGBA for the scaler if needed, but your code uses BGRA.
+					ManualScaleImage(GL_BGRA, w, h, GL_UNSIGNED_BYTE, buffer, rw, rh, GL_UNSIGNED_BYTE, scaledbuffer);
+					deletebuffer = true;
+					buffer = scaledbuffer;
+				}
 			}
 		}
+
+		// 4. Setup Mipmaps (GL 1.5 Way)
+		// Set BEFORE glTexImage2D to trigger automatic mipmap generation on upload
+		if (mipmap && TexFilter[gl_texture_filter].mipmapping)
+		{
+			glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+			glTex->mipmapped = true;
+		}
+
+		// 5. Upload Texture Data
+		// We assume buffer is in GL_BGRA format based on original code
+		glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, GL_BGRA, GL_UNSIGNED_BYTE, buffer);
+
+		// 6. Cleanup
+		if (deletebuffer) free(buffer);
 	}
-	glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, GL_BGRA, GL_UNSIGNED_BYTE, buffer);
-
-	if (deletebuffer) free(buffer);
-
-	if (mipmap && TexFilter[gl_texture_filter].mipmapping)
+	// -------------------------------------------------------------------------------
+	// MODERN PATH (Standard LZDoom Logic)
+	// -------------------------------------------------------------------------------
+	else
 	{
-		glGenerateMipmap(GL_TEXTURE_2D);
-		glTex->mipmapped = true;
+		if (texunit != 0) glActiveTexture(GL_TEXTURE0 + texunit);
+		glBindTexture(GL_TEXTURE_2D, glTex->glTexID);
+		FGLDebug::LabelObject(GL_TEXTURE, glTex->glTexID, name);
+		lastbound[texunit] = glTex->glTexID;
+
+		if (!buffer)
+		{
+			w = texwidth;
+			h = abs(texheight);
+			rw = GetTexDimension(w);
+			rh = GetTexDimension(h);
+
+			// The texture must at least be initialized if no data is present.
+			glTex->mipmapped = false;
+			buffer = (unsigned char *)calloc(4, rw * (rh + 1));
+			deletebuffer = true;
+		}
+		else
+		{
+			rw = GetTexDimension(w);
+			rh = GetTexDimension(h);
+
+			if (rw < w || rh < h)
+			{
+				// The texture is larger than what the hardware can handle so scale it down.
+				unsigned char * scaledbuffer = (unsigned char *)calloc(4, rw * (rh + 1));
+				if (scaledbuffer)
+				{
+					Resize(rw, rh, buffer, scaledbuffer);
+					deletebuffer = true;
+					buffer = scaledbuffer;
+				}
+			}
+		}
+		glTexImage2D(GL_TEXTURE_2D, 0, texformat, rw, rh, 0, GL_BGRA, GL_UNSIGNED_BYTE, buffer);
+
+		if (deletebuffer) free(buffer);
+
+		if (mipmap && TexFilter[gl_texture_filter].mipmapping)
+		{
+			glGenerateMipmap(GL_TEXTURE_2D);
+			glTex->mipmapped = true;
+		}
 	}
 
 	if (texunit != 0) glActiveTexture(GL_TEXTURE0);
 	return glTex->glTexID;
 }
-
 
 //===========================================================================
 // 

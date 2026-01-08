@@ -14,8 +14,9 @@ enum GLCompat
 enum RenderFlags
 {
 	// [BB] Added texture compression flags.
-	RFL_TEXTURE_COMPRESSION=1,
-	RFL_TEXTURE_COMPRESSION_S3TC=2,
+	RFL_NPOT_TEXTURE = 1, // handle non-power of two textures
+	RFL_TEXTURE_COMPRESSION = 1,
+	RFL_TEXTURE_COMPRESSION_S3TC = 2,
 
 	RFL_SHADER_STORAGE_BUFFER = 4,
 	RFL_BUFFER_STORAGE = 8,
@@ -66,6 +67,7 @@ struct RenderContext
 	int max_texturesize;
 	char * vendorstring;
 	bool legacyMode;
+	bool gl1path;
 	bool es;
 
 	int MaxLights() const

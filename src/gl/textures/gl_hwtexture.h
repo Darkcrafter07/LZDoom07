@@ -52,8 +52,23 @@ public:
 
 	static int GetTexDimension(int value)
 	{
+		if (gl.gl1path)
+		{
+			if (value > gl.max_texturesize) return gl.max_texturesize;
+			// Note: Zandronum checks NPOT flag here, but in GL1.5, we assume NO NPOT support
+			// So we calculate POT always.
+			int i = 1;
+			while (i < value) i += i;
+			return i;
+		}
+
+		// Modern path
 		if (value > gl.max_texturesize) return gl.max_texturesize;
-		return value;
+		if (gl.flags & RFL_NPOT_TEXTURE) return value;
+
+		int i = 1;
+		while (i < value) i += i;
+		return i;
 	}
 
 	static void InitGlobalState() { for (int i = 0; i < MAX_TEXTURES; i++) lastbound[i] = 0; }

@@ -88,6 +88,43 @@ void FGLPostProcessState::SaveTextureBindings(unsigned int numUnits)
 
 //-----------------------------------------------------------------------------
 //
+// GL1 handling
+//
+//-----------------------------------------------------------------------------
+
+// Maps blend modes to a single (Src, Dest) pair required by glBlendFunc (GL1.x)
+struct GL1BlendFuncEntry
+{
+	int blendSrcRgb;
+	int blendDestRgb;
+	int mapSrcRgb;    // The blendSrcRgb we are looking up
+	int mapDestRgb;   // The blendDestRgb we are looking up
+};
+
+// Predefined fallbacks for common GL1.x blend modes
+static const GL1BlendFuncEntry GL1BlendModeMap[] =
+{
+	// Standard Alpha Blending (Used for STYLE_Translucent, STYLE_Normal)
+	{ GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA },
+
+	// Additive Blending (Used for STYLE_Add)
+	{ GL_SRC_ALPHA, GL_ONE, GL_SRC_ALPHA, GL_ONE },
+
+	// Reverse Subtract (Used for STYLE_SoulTrans, STYLE_Subtract)
+	{ GL_SRC_ALPHA, GL_ONE, GL_SRC_ALPHA, GL_ONE }, // Often maps to Additive in old HW if RevSub isn't supported
+
+	// Specific mappings based on what *usually* works in 1.5
+	// Note: We are mapping the stored blendSrcRgb/blendDestRgb values 
+	// (which are GL constants) to the GL1.x function calls.
+
+	// Placeholder for complex blending (e.g., Multiply/Inverse) 
+	// If the hardware truly doesn't support the requested function, we default.
+};
+
+static const int GL1BlendModeCount = 4; // Let's use a small, known list for simplicity initially
+
+//-----------------------------------------------------------------------------
+//
 // Restores state at the end of post processing
 //
 //-----------------------------------------------------------------------------
@@ -114,28 +151,84 @@ FGLPostProcessState::~FGLPostProcessState()
 	else
 		glDisable(GL_MULTISAMPLE);
 
-	glBlendEquationSeparate(blendEquationRgb, blendEquationAlpha);
-	glBlendFuncSeparate(blendSrcRgb, blendDestRgb, blendSrcAlpha, blendDestAlpha);
-
-	glUseProgram(currentProgram);
-
-	// Fully unbind to avoid incomplete texture warnings from Nvidia's driver when gl_debug_level 4 is active
-	for (unsigned int i = 0; i < textureBinding.Size(); i++)
+	// GL1.x: Fallback to basic blending
+	if (gl.gl1path)
 	{
-		glActiveTexture(GL_TEXTURE0 + i);
-		glBindTexture(GL_TEXTURE_2D, 0);
+		int srcFactor = GL_SRC_ALPHA;
+		int destFactor = GL_ONE_MINUS_SRC_ALPHA;
+		bool found = false;
+
+		// *** CRITICAL FIX: Check for common combinations ***
+		if (blendSrcRgb == GL_SRC_ALPHA && blendDestRgb == GL_ONE_MINUS_SRC_ALPHA)
+		{
+			// Standard Translucency: Already set as default
+			found = true;
+		}
+		else if (blendSrcRgb == GL_SRC_ALPHA && blendDestRgb == GL_ONE)
+		{
+			// Additive: STYLE_Add
+			srcFactor = GL_SRC_ALPHA;
+			destFactor = GL_ONE;
+			found = true;
+		}
+		// Add more checks here if you know the exact blend modes causing texture issues!
+
+		// If found, apply the simple glBlendFunc
+		if (found)
+		{
+			glBlendFunc(srcFactor, destFactor);
+		}
+		else
+		{
+			// If the requested modern blend mode (e.g., GL_DST_COLOR) isn't supported 
+			// by glBlendFunc, fall back to standard alpha blending.
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		}
+	}
+	else
+	{
+		// Modern GL: Use full blending
+		glBlendEquationSeparate(blendEquationRgb, blendEquationAlpha);
+		glBlendFuncSeparate(blendSrcRgb, blendDestRgb, blendSrcAlpha, blendDestAlpha);
 	}
 
-	for (unsigned int i = 0; i < samplerBinding.Size(); i++)
+	// **GL1.x: Restore textures but skip shaders/samplers**
+	if (!gl.gl1path)
 	{
-		glBindSampler(i, samplerBinding[i]);
-	}
+		glUseProgram(currentProgram);
 
-	for (unsigned int i = 0; i < textureBinding.Size(); i++)
+		for (unsigned int i = 0; i < textureBinding.Size(); i++)
+		{
+			glActiveTexture(GL_TEXTURE0 + i);
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+
+		for (unsigned int i = 0; i < samplerBinding.Size(); i++)
+		{
+			glBindSampler(i, samplerBinding[i]);
+		}
+
+		for (unsigned int i = 0; i < textureBinding.Size(); i++)
+		{
+			glActiveTexture(GL_TEXTURE0 + i);
+			glBindTexture(GL_TEXTURE_2D, textureBinding[i]);
+		}
+		
+		glActiveTexture(activeTex);
+	}
+	else
 	{
-		glActiveTexture(GL_TEXTURE0 + i);
-		glBindTexture(GL_TEXTURE_2D, textureBinding[i]);
-	}
+		// **GL1.x: Only bind the first texture (if any)**
+		if (textureBinding.Size() > 0 && textureBinding[0] != 0)
+		{
+			glBindTexture(GL_TEXTURE_2D, textureBinding[0]);
+		}
 
-	glActiveTexture(activeTex);
+		// **CRITICAL: Restore texture unit 0**
+		// Some sprites may assume unit 0 is active
+		if (gl.gl1path)
+		{
+			glActiveTexture(GL_TEXTURE0);
+		}
+	}
 }
