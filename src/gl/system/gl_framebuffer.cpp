@@ -225,19 +225,36 @@ void OpenGLFrameBuffer::Swap()
 
 void OpenGLFrameBuffer::SetVSync(bool vsync)
 {
+	// Check if we are running in Legacy Mode (GL 1.x / 2.0)
+	if (gl.legacyMode)
+	{
+		// If Legacy Mode, we assume FBOs are not available or safe to touch.
+		// Just call the parent and return.
+		Super::SetVSync(vsync);
+		return;
+	}
+
+	// Modern Path: Safe to use FBOs
 	// Switch to the default frame buffer because some drivers associate the vsync state with the bound FB object.
-	GLint oldDrawFramebufferBinding = 0, oldReadFramebufferBinding = 0;
+	// We use variables to store the bindings
+	GLint oldDrawFramebufferBinding = 0;
+	GLint oldReadFramebufferBinding = 0;
+
+	// Get current bindings (only valid in non-legacy contexts usually)
 	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &oldDrawFramebufferBinding);
 	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &oldReadFramebufferBinding);
+
+	// Unbind
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 
+	// Call parent (typedef Win32GLFrameBuffer OpenGLFrameBuffer::Super)
 	Super::SetVSync(vsync);
 
+	// Restore
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, oldDrawFramebufferBinding);
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, oldReadFramebufferBinding);
 }
-
 //===========================================================================
 //
 // DoSetGamma
