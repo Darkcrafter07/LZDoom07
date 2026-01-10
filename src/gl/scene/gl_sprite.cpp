@@ -3126,10 +3126,18 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float temp_x1 = orig_x1, temp_y1 = orig_y1, temp_z1 = orig_z1;
 			float temp_x2 = orig_x2, temp_y2 = orig_y2, temp_z2 = orig_z2;
 
-			// Perform smart clip on original coordinates
-			PerformSpriteClipAdjustment(thing, thingpos, 0.0);
-			smart_x1 = x1; smart_y1 = y1; smart_z1 = z1;
-			smart_x2 = x2; smart_y2 = y2; smart_z2 = z2;
+			if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
+			{
+				// Perform smart clip but don't raise for the cases above
+				PerformSpriteClipAdjustment(thing, thingpos, 0.0);
+			}
+			else
+			{
+				// Perform smart clip on original coordinates
+				PerformSpriteClipAdjustment(thing, thingpos, 0.0);
+				smart_x1 = x1; smart_y1 = y1; smart_z1 = z1;
+				smart_x2 = x2; smart_y2 = y2; smart_z2 = z2;
+			}
 
 			// Restore original coordinates for forced perspective calculation
 			x1 = temp_x1; y1 = temp_y1; z1 = temp_z1;
