@@ -3345,7 +3345,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	lightlevel = gl_CheckSpriteGlow(rendersector, lightlevel, thingpos);
 
 	// anamorphic Forced-Perspective overbright darkening start
-	if (((gl_spriteclip == -1) || (gl_spriteclip == -2)) && !fullbright)
+	if (((gl_spriteclip == -1) || (gl_spriteclip == -2)) && !fullbright && (gl_lightmode == 8 || gl_lightmode == 16) )
 	{
 		float base_radius = thing->radius;
 		float base_height = thing->Height;
