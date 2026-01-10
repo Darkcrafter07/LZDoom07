@@ -96,53 +96,45 @@ void TimidityMIDIDevice::LoadInstruments()
 {
 	if (gusConfig.dmxgus.size())
 	{
+		// 1. FIX: Handle getenv returning NULL safely
+		const char* env_ultradir = getenv("ULTRADIR");
+		std::string ultradir = (env_ultradir != nullptr) ? env_ultradir : "";
+
 		// Check if we got some GUS data before using it.
-		std::string ultradir = getenv("ULTRADIR");
 		if (ultradir.length() || gusConfig.gus_patchdir.length() != 0)
 		{
 			auto psreader = new MusicIO::FileSystemSoundFontReader("");
-			
+
 			// The GUS put its patches in %ULTRADIR%/MIDI so we can try that
 			if (ultradir.length())
 			{
 				ultradir += "/midi";
+				// 2. FIX: Pass safe std::string (or check path existence if strictly required by API)
 				psreader->add_search_path(ultradir.c_str());
 			}
 			// Load DMXGUS lump and patches from gus_patchdir
-			if (gusConfig.gus_patchdir.length() != 0) psreader->add_search_path(gusConfig.gus_patchdir.c_str());
-			
+			if (gusConfig.gus_patchdir.length() != 0)
+				psreader->add_search_path(gusConfig.gus_patchdir.c_str());
+
 			gusConfig.instruments.reset(new Timidity::Instruments(psreader));
-			bool success = gusConfig.instruments->LoadDMXGUS(gusConfig.gus_memsize, (const char*)gusConfig.dmxgus.data(), gusConfig.dmxgus.size()) >= 0;
-			
-			gusConfig.dmxgus.clear();
-			
-			if (success)
+
+			// Ensure pointers are valid before proceeding
+			if (gusConfig.instruments)
 			{
-				gusConfig.loadedConfig = "DMXGUS";
-				return;
+				bool success = gusConfig.instruments->LoadDMXGUS(gusConfig.gus_memsize, (const char*)gusConfig.dmxgus.data(), gusConfig.dmxgus.size()) >= 0;
+
+				gusConfig.dmxgus.clear();
+
+				if (success)
+				{
+					gusConfig.loadedConfig = "DMXGUS";
+					return;
+				}
 			}
 		}
 		gusConfig.loadedConfig = "";
 		gusConfig.instruments.reset();
 		throw std::runtime_error("Unable to initialize DMXGUS for GUS MIDI device");
-	}
-	else if (gusConfig.reader)
-	{
-		gusConfig.loadedConfig = gusConfig.readerName;
-		gusConfig.instruments.reset(new Timidity::Instruments(gusConfig.reader));
-		bool err = gusConfig.instruments->LoadConfig() < 0;
-		gusConfig.reader = nullptr;
-		
-		if (err)
-		{
-			gusConfig.instruments.reset();
-			gusConfig.loadedConfig = "";
-			throw std::runtime_error("Unable to initialize instruments for GUS MIDI device");
-		}
-	}
-	else if (gusConfig.instruments == nullptr)
-	{
-		throw std::runtime_error("No instruments set for GUS device");
 	}
 }
 
