@@ -68,6 +68,7 @@ struct RenderContext
 	char * vendorstring;
 	bool legacyMode;
 	bool gl1path;
+	bool glnpot = false;
 	bool es;
 
 	int MaxLights() const

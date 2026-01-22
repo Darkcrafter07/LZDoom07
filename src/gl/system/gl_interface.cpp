@@ -146,6 +146,15 @@ void gl_LoadExtensions()
 		gl.es = true;
 	}
 
+	// "-glnpot" command-line parameter
+	// as a workaround for faulty OpenGL drivers showing all textures as white
+	if (Args->CheckParm("-glnpot"))
+	{
+		gl.glnpot = true;
+		Printf("GL_Forcing power-of-two textures (-glnpot)\n");
+		Printf("... to reduce blurriness, go vid-options -> txt hires upscale\n");
+	}
+
 	const char *version = Args->CheckValue("-glversion");
 	realglversion = strtod(glversion, NULL);
 
@@ -210,6 +219,7 @@ void gl_LoadExtensions()
 			gl.buffermethod = BM_LEGACY; // Use immediate mode rendering
 			gl.glslversion = 0;          // No shaders in OpenGL 1.x
 			gl.flags |= RFL_NO_CLIP_PLANES; // Disable clip planes (not supported in GL1)
+			Printf("GL1 npot - to reduce blurriness, go vid-options -> txt hires upscale\n");
 		}
 		// Check if OpenGL version is below 3.0 (OpenGL 2.0)
 

@@ -52,7 +52,7 @@ public:
 
 	static int GetTexDimension(int value)
 	{
-		if (gl.gl1path)
+		if (gl.gl1path || gl.glnpot)
 		{
 			if (value > gl.max_texturesize) return gl.max_texturesize;
 			// Note: Zandronum checks NPOT flag here, but in GL1.5, we assume NO NPOT support

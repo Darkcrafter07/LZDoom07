@@ -238,7 +238,7 @@ unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int 
 	// -------------------------------------------------------------------------------
 	// GL 1.5 PATH (GeForce FX 5500)
 	// -------------------------------------------------------------------------------
-	if (gl.gl1path)
+	if (gl.gl1path || gl.glnpot)
 	{
 		// 1. Bind and Label
 		if (texunit != 0) glActiveTexture(GL_TEXTURE0 + texunit);
