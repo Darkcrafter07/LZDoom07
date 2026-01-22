@@ -122,6 +122,9 @@
 
 #include "fragglescript/t_fs.h"
 
+#include "g_shared/a_staticgeombaker.h" 
+bool staticGeomOpt = false; // disabled by default as it's baby steps yet
+
 #define MISSING_TEXTURE_WARN_LIMIT		20
 
 void P_SpawnSlopeMakers (FMapThing *firstmt, FMapThing *lastmt, const int *oldvertextable);
@@ -3652,6 +3655,42 @@ void P_SetupLevel(const char *lumpname, int position, bool newGame)
 	times[13].Clock();
 	P_FloodZones();
 	times[13].Unclock();
+
+	// --------------------------------------------------------
+	// Bake Static Geometry (OBJ Generation)
+	// --------------------------------------------------------
+	if (level.subsectors.Size() > 0 && staticGeomOpt)
+	{
+		GStaticBaker.Bake();
+
+		// Get all geometry actor names
+		TArray<FString> geomActors;
+		GStaticBaker.GetTextureLightKeys(geomActors);
+
+		// Spawn all geometry actors at origin
+		for (auto& actorName : geomActors)
+		{
+			PClassActor* cls = PClass::FindActor(actorName);
+			if (!cls)
+			{
+				Printf("Warning: Could not find actor class %s\n", actorName.GetChars());
+				continue;
+			}
+
+			AActor* mo = AActor::StaticSpawn(cls, DVector3(0, 0, 0), NO_REPLACE, false);
+			if (mo)
+			{
+				mo->flags |= MF_NOGRAVITY | MF_NOCLIP | MF_NOBLOCKMAP;
+				mo->SetZ(0);
+				mo->Angles.Yaw = 0.0;
+			}
+			else
+			{
+				Printf("Warning: Failed to spawn actor %s\n", actorName.GetChars());
+			}
+		}
+	}
+	// --------------------------------------------------------
 
 	if (hasglnodes)
 	{

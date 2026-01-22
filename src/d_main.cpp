@@ -124,6 +124,7 @@ extern void M_RestoreMode ();
 extern void M_SetDefaultMode ();
 extern void G_NewInit ();
 extern void SetupPlayerClasses ();
+extern bool staticGeomOpt; // defined in p_setup.h for a while
 void gl_PatchMenu();	// remove modern OpenGL options on old hardware.
 void DeinitMenus();
 void CloseNetwork();
@@ -2151,6 +2152,9 @@ static void D_DoomInit()
 	M_LoadDefaults ();			// load before initing other systems
 }
 
+// Create default static geometry dumped optimization files used to be here ( now in g_shared/a_staticgeombaker.cpp )
+
+
 //==========================================================================
 //
 // AddAutoloadFiles
@@ -2188,6 +2192,28 @@ static void AddAutoloadFiles(const char *autoname)
 			if (conpicswad)
 				D_AddFile (allwads, conpicswad);
 		}
+
+		// Static geometry dump optimization - start
+		if (staticGeomOpt)
+		{
+			FString modelDumpDir = progdir + "MdlDump";
+
+			// 1. Create directory if missing
+			if (!DirEntryExists(modelDumpDir))
+			{
+				mkdir(modelDumpDir.GetChars());
+			}
+
+			// 2. Create default static files if missing
+			if (DirEntryExists(modelDumpDir))
+			{
+				// 3. Load the directory
+				D_AddFile(allwads, modelDumpDir);
+				if (!batchrun) Printf("MdlDump initialized.\n");
+			}
+		}
+		// Static geometry dump optimization - finish 
+
 	}
 
 	if (!(gameinfo.flags & GI_SHAREWARE) && !Args->CheckParm("-noautoload") && !disableautoload)
