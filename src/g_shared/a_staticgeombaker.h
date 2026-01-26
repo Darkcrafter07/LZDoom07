@@ -7,9 +7,9 @@
 // Structure to hold geometry data for OBJ generation
 struct StaticGeometryBuffer
 {
-	FString Vertices;
 	FString UVs;
 	FString Faces;
+	FString Vertices;
 	FString Materials;
 
 	int VertCount = 1;
@@ -20,8 +20,8 @@ class StaticGeometryBaker
 {
 public:
 	bool IsStatic(const seg_t* seg);
-	void Bake3DFloorWall(seg_t* seg, F3DFloor* ffloor);
-	void Process3DFloorWalls();
+	int CalculateFakeContrast(line_t* line, side_t* side);
+	void ApplyFakeContrast(int& lightLevel, line_t* line, side_t* side);
 	void Bake();
 
 	// Clean texture name for actor/model naming
@@ -49,21 +49,24 @@ private:
 	void GenerateModelDefContent(FString& content);
 
 	// Geometry baking helpers
+	double CalculateZAtPoint(const secplane_t* plane, double x, double y);
+	bool IsPlaneSloped(const secplane_t* plane);
+	void BakeTerrainFlat(sector_t* sec, int planeType);
+	void BakeSlopedFlat(sector_t* sec, int planeType, const secplane_t* slopePlane, bool is3DFloor);
 	void BakeSectorGeometry(sector_t* sec);
-	void BakeLineGeometry(line_t* line);
-	void Bake3DFloor(sector_t* dummySec, sector_t* targetSec, line_t* masterLine, int alpha, int flags);
+
 	void BakeFlatGeometry(sector_t* sec, int planeType);
 	void BakeWallGeometry(line_t* line, side_t* side);
 	bool IsSkyFlat(FTextureID texID);
 
+	// 3DFloor geometry baking helpers
+	void Bake3DFloorWall(seg_t* seg, F3DFloor* ffloor);
+	void Process3DFloorWalls();
+	void Bake3DFloorFlat(sector_t* dummySec, sector_t* targetSec, int planeType, F3DFloor* ffloor);
+
 	// UV calculation helpers
 	void CalculateWallUVs(const seg_t* seg, double& u1, double& u2, double& v1, double& v2);
-	void CalculateFlatUVs(sector_t* sec, double x1, double y1, double x2, double y2, double& u1, double& v1, double& u2, double& v2);
-
-	// Static members for sorting
-	static int ComparePoints(const void* a, const void* b);
-	static void SortSectorPoints(TArray<DVector2>& points, DVector2 center);
-	static DVector2 StaticBakerSortedCenter;
+	void CalculateFlatUVs(sector_t* sec, int planeType, double x1, double y1, double x2, double y2, double& u1, double& v1, double& u2, double& v2);
 
 	// Instance members
 	bool baked = false;
