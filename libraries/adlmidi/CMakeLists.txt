@@ -21,5 +21,8 @@ add_library( adl STATIC
 	chips/nuked/nukedopl3_174.c
 	chips/nuked/nukedopl3.c
 	wopl/wopl_file.c
+	chips/esfm_opl3.cpp
+	chips/esfmu/esfm.c
+	chips/esfmu/esfm_registers.c
 	)
 target_link_libraries( adl )

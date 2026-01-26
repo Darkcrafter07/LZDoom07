@@ -640,6 +640,8 @@ enum ADL_Emulator
     ADLMIDI_EMU_OPAL,
     /*! Java */
     ADLMIDI_EMU_JAVA,
+	/*! ESFM */
+	ADLMIDI_EMU_ESFM,
     /*! Count instrument on the level */
     ADLMIDI_EMU_end
 };

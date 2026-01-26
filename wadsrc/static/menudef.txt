@@ -2136,6 +2136,7 @@ OptionMenu ModReplayerOptions protected
 	2, "$OPTVAL_DOSBOXOPL3"
 	3, "$OPTVAL_OPALOPL3"
 	4, "$OPTVAL_JAVAOPL3"
+	5, "$OPTVAL_ESFMOPL3"
  }
 
  OptionValue OpnCores
