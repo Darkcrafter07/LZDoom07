@@ -3,7 +3,7 @@
 //
 // Copyright(C) 2002-2016 Christoph Oelckers
 //
-// Anamorphic Hybrid-Forced-Perspective code by Vadim Taranov, (C) 2025
+// Anamorphic Hybrid-Forced-Perspective code by Vadim Taranov, (C) 2025-2026
 // All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -21,11 +21,10 @@
 //
 //--------------------------------------------------------------------------
 //
-/*
-** gl_sprite.cpp
-** Sprite/Particle rendering
-**
-*/
+
+
+// gl_sprite.cpp
+// Sprite/Particle rendering
 
 #include "gl/system/gl_system.h"
 #include "p_local.h"
@@ -1018,12 +1017,23 @@ bool spriteIntersectsLineCachedWrapper(line_t* line, float x1, float y1, float x
 }
 // === CACHED version of SpriteIntersectsLinedef - finish === UNUSED ===
 
-// Helper function to check if a point is in void space (no sectors)
-static bool IsPointInVoid(const DVector2& point)
+// Alternative version that checks the actor's position directly
+static bool IsActorInVoid(AActor *actor)
 {
-	sector_t* sector = P_PointInSector(point.X, point.Y);
-	return (sector == nullptr);
+	// Check if the actor's position is in a valid sector
+	sector_t* sector = P_PointInSector(actor->X(), actor->Y());
+
+	// If sector is nullptr, actor is outside the map
+	if (sector == nullptr)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
 }
+
 
 // ******* Anamorphic "Forced-Pespective" common early exit checks - finish *******
 //         ---===      ***************************************        ===---
@@ -1259,7 +1269,7 @@ static bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor*
 constexpr float MINCOORD2SIDED = -32768.0;
 constexpr float MAXCOORD2SIDED = 32767.9999847;
 constexpr float EPSILON2SIDED = 0.001;
-float Ztolerance2sided = 4.0f;
+float Ztolerance2sided = 2.0f;
 
 // Optimized position getters that avoid implicit conversions - again
 static FVector2 GetVertexPosition(const vertex_t* vert)
@@ -1395,11 +1405,11 @@ struct ObstructionData2Sided
 		}
 		float viewerBottom = viewer->Z();
 		float viewerTop = viewerBottom + EyeHeight;
-		float viewerBottomAdj = viewerBottom + Ztolerance2sided;
+		float viewerBottomAdj = viewerBottom - Ztolerance2sided;
 		float viewerTopAdj = viewerTop + Ztolerance2sided;
 		float spriteBottom = thing->Z();
 		float spriteTop = (thing->Z()) + (thing->Height);
-		float sprBottomAdj = spriteBottom + Ztolerance2sided;
+		float sprBottomAdj = spriteBottom - Ztolerance2sided;
 		float sprTopAdj = spriteTop + Ztolerance2sided;
 		const float cullsmallspriteslessthresh = 32.0f;
 		if (isSmallSprite)
@@ -1524,7 +1534,7 @@ struct ObstructionData2Sided
 		// large sprites have height 16 times than usual, so we must divide 1 by 16 for them
 		float spriteBottom = thing->Z();
 		float spriteTop = (thing->Z()) + (thing->Height);
-		float sprBottomAdj = spriteBottom + Ztolerance2sided;
+		float sprBottomAdj = spriteBottom - Ztolerance2sided;
 		float sprTopAdj = spriteTop + Ztolerance2sided;
 
 		bool isViewerTopHigerThanSpriteTop = viewerTop >= spriteTop;
@@ -1673,7 +1683,7 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	// Viewer positions
 	float viewerBottom = viewer->Z();
 	float viewerTop = viewerBottom + EyeHeight2;
-	float viewerBottomAdj = viewerBottom + Ztolerance2sided;
+	float viewerBottomAdj = viewerBottom - Ztolerance2sided;
 	float viewerTopAdj = viewerTop + Ztolerance2sided;
 
 	// ==================================================================================================
@@ -1687,7 +1697,7 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	const FVector2 thingCenterPos = GetActorPosition(thing);
 	float spriteBottom = thing->Z();
 	float spriteTop = thing->Z() + thing->Height * HeightExpansionFactor;
-	float sprBottomAdj = spriteBottom + Ztolerance2sided;
+	float sprBottomAdj = spriteBottom - Ztolerance2sided;
 	float sprTopAdj = spriteTop + Ztolerance2sided;
 	float spriteMidHeight = spriteBottom + ((spriteTop - spriteBottom) * 0.5f);
 
@@ -1960,11 +1970,11 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	}
 	float viewerBottom = viewer->Z();
 	float viewerTop = viewerBottom + EyeHeight;
-	float viewerBottomAdj = viewerBottom + Ztolerance2sided;
+	float viewerBottomAdj = viewerBottom - Ztolerance2sided;
 	float viewerTopAdj = viewerTop + Ztolerance2sided;
 	float spriteBottom = thing->Z();
 	float spriteTop = (thing->Z()) + (thing->Height);
-	float sprBottomAdj = spriteBottom + Ztolerance2sided;
+	float sprBottomAdj = spriteBottom - Ztolerance2sided;
 	float sprTopAdj = spriteTop + Ztolerance2sided;
 
 	// pretty useless
@@ -2988,12 +2998,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 
 		// Define distance constants properly
-		const float FP_CLOSER_LIMIT = 384.0f;            // Where Forced-Perspective ends (close-up)
-		const float SMART_START_DISTANCE = 1400.0f;      // Where Smart-clip starts to show up (far-side)
+		const float FP_CLOSER_LIMIT = 384.0f;            // Where Forced-Perspective coordinates without lift-up end (close-up)
+		const float SMART_START_DISTANCE = 1400.0f;      // Where Smart-clip starts coordinates start to lift-up (far-side)
 		const float TRANSITION_WIDTH = SMART_START_DISTANCE - FP_CLOSER_LIMIT;    // Length of transition
 
 		// Get the viewpoint from the current draw context that helped to reduce leaks
-		const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to how GZDoom v4.14.2
+		const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to GZDoom v4.14.2
 
 		// Determine sprite classification
 		bool islegacyversionprojectile =
@@ -3064,13 +3074,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		//float forceTinySpriteSize = (thingCrossed2sidedLine) ? spriteSize : (spriteSize * 0.32f);
 		//float spriteSize = forceTinySpriteSize;
 
-		//bool isSpriteOutsideMap = IsPointInVoid(DVector2(thingpos));
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
+		bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
 		bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSides(r_viewpoint.camera, thing);
 		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
+		bool actorInVoid = IsActorInVoid(thing);
 
 		DVector3 thingpos3D(thingpos.X, thingpos.Y, z);
 		float distSq = (thingpos3D - r_viewpoint.Pos).LengthSquared();
@@ -3083,7 +3094,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// But we can disable Forced-Perspective for floating sprites entirely
 		// but only for those whose Y-axis sprite offset doesn't cross ground at all.
 		// Turn off anamorphosis for things that crossed 1sided linedefs.
-		if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
+		if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine || actorInVoid)
 		{
 			// Force smart mode for floating sprites and things crossing 1sided-linedefs
 			blend = 1.0f;
@@ -3173,7 +3184,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
-				regularsizmonster_factor1 * 0.25f;       // shouldn't be bigger than 0.25f even in production edition cause that would enlarge radii by 4x and cause leaks!
+				regularsizmonster_factor1 * 4.0f;
 
 			float extended_radius1 = (isactorsmallbutnotcorpse) ?
 				spriteSize * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 0.25 when occluded
@@ -3269,12 +3280,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 			//		--- The pass 2 agressive culling core process - finish ---
 
-			// The rest of your unchanged calculations
+			float epsZtolOfspriteSize = spriteSize * 0.01f; // add this to bintersect and tintersect to reduce coplanar leaks
+
 			float bintersect, tintersect;
-			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
+			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz)) + epsZtolOfspriteSize;
 			else bintersect = 1.0f;
 
-			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
+			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz)) + epsZtolOfspriteSize;
 			else tintersect = 1.0f;
 
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
