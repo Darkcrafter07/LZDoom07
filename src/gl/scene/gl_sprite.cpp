@@ -3280,13 +3280,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 			//		--- The pass 2 agressive culling core process - finish ---
 
-			float epsZtolOfspriteSize = spriteSize * 0.01f; // add this to bintersect and tintersect to reduce coplanar leaks
+			float ZtolOfspriteSize = 0.0f; // init and add to bintersect and tintersect to reduce coplanar leaks
+			if (isMicroSprite || isTinySprite || isSmallSprite)			{ ZtolOfspriteSize = 0.055f; }
+			else														{ ZtolOfspriteSize = 0.085f; }
 
 			float bintersect, tintersect;
-			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz)) + epsZtolOfspriteSize;
+			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz)) + ZtolOfspriteSize;
 			else bintersect = 1.0f;
 
-			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz)) + epsZtolOfspriteSize;
+			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz)) + ZtolOfspriteSize;
 			else tintersect = 1.0f;
 
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
