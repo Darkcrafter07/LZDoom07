@@ -1028,10 +1028,8 @@ static bool IsActorInVoid(AActor *actor)
 	{
 		return true;
 	}
-	else
-	{
-		return false;
-	}
+
+	return false;
 }
 
 
@@ -1063,7 +1061,7 @@ bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
 	// Calculate sprite size with YOUR original classification logic
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
 
-	// YOUR EXACT sprite size thresholds (unchanged)
+	// Sprite size thresholds
 	const bool isMicroSprite = (spriteSize <= 8.0f);
 	const bool isTinySprite = (spriteSize <= 12.0f);
 	const bool isSmallSprite = (spriteSize <= 18.0f);
@@ -1071,9 +1069,9 @@ bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
 	const bool isLargeSprite = (spriteSize > 38.0f && spriteSize < 39.0f);
 	const bool isHugeSprite = (spriteSize >= 39.0f);
 
-	// Scale adjustments based on YOUR original logic
-	float spriteScale = 0.25f;  // Default: micro/tiny/small sprites
-	if (isMediumSprite) { spriteScale = 0.2f; }
+	// Scale adjustments
+	float spriteScale = 0.7f;  // Default: micro/tiny/small sprites
+	if (isMediumSprite) { spriteScale = 0.5f; }
 	else if (isLargeSprite) { spriteScale = 0.15f; }
 	else if (isHugeSprite) { spriteScale = 0.1f; }
 
@@ -1128,7 +1126,7 @@ bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
 struct SpriteCrossed1SidedLineCacheEntry
 {
 	int lastMapTimeUpdateTick = -1;
-	bool cached1sidedResult = false;  // Default: assume NO 1-sided crossing
+	bool cached1sidedCrossResult = false;  // Default: assume NO 1-sided crossing
 };
 
 static TMap<AActor*, SpriteCrossed1SidedLineCacheEntry> SpriteCrossed1sidedLineCache;
@@ -1147,12 +1145,12 @@ bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 		// Return cached result if valid (updated within last 3 ticks)
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
 		{
-			return entry.cached1sidedResult;
+			return entry.cached1sidedCrossResult;
 		}
 
 		// Compute and cache fresh result from non-cached function
 		bool result = SpriteCrossed1sidedLinedef(thing, viewer);
-		entry.cached1sidedResult = result;
+		entry.cached1sidedCrossResult = result;
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
 		return result;
 	}
@@ -1160,6 +1158,155 @@ bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 	{
 		// Original uncached behavior
 		return SpriteCrossed1sidedLinedef(thing, viewer);
+	}
+}
+
+bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
+{
+	if (!thing || !viewer) return false;
+
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+
+	sector_t* thingSector = thing->Sector;
+	if (!thingSector || thingSector->Lines.Size() == 0) return false;
+
+	// Calculate viewer->thing line geometry
+	float viewerX = (float)viewer->X();
+	float viewerY = (float)viewer->Y();
+	float thingX = (float)thing->X();
+	float thingY = (float)thing->Y();
+
+	// Calculate sprite size with YOUR original classification logic
+	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+
+	// Sprite size thresholds
+	const bool isMicroSprite = (spriteSize <= 8.0f);
+	const bool isTinySprite = (spriteSize <= 12.0f);
+	const bool isSmallSprite = (spriteSize <= 18.0f);
+	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
+	const bool isLargeSprite = (spriteSize > 38.0f && spriteSize < 39.0f);
+	const bool isHugeSprite = (spriteSize >= 39.0f);
+
+	float spriteScale = 8.0f;
+	if (isMediumSprite) { spriteScale = 0.5f; }
+	else if (isLargeSprite) { spriteScale = 0.15f; }
+	else if (isHugeSprite) { spriteScale = 0.1f; }
+
+	float adjustedRadius = thing->radius * spriteScale;
+
+	// Calculate viewer direction relative to sprite
+	float dx = viewerX - thingX;
+	float dy = viewerY - thingY;
+	float viewerDist = sqrt(dx * dx + dy * dy);
+
+	if (viewerDist > 0.0f)
+	{
+		dx /= viewerDist;
+		dy /= viewerDist;
+	}
+
+	// Determine which side of the bbox faces the viewer most directly
+	float rightDot = dx;      // Right side normal
+	float leftDot = -dx;      // Left side normal
+	float upDot = dy;         // Up side normal
+	float downDot = -dy;      // Down side normal
+
+	// Find the side with the highest dot product (most facing)
+	float maxDot = MAX(MAX(rightDot, leftDot), MAX(upDot, downDot));
+
+	// Determine test point based on most-facing side
+	float testX, testY;
+	if (maxDot == rightDot)
+	{
+		testX = thingX + adjustedRadius;
+		testY = thingY;
+	}
+	else if (maxDot == leftDot)
+	{
+		testX = thingX - adjustedRadius;
+		testY = thingY;
+	}
+	else if (maxDot == upDot)
+	{
+		testX = thingX;
+		testY = thingY + adjustedRadius;
+	}
+	else // maxDot == downDot
+	{
+		testX = thingX;
+		testY = thingY - adjustedRadius;
+	}
+
+	// Check only the single most-facing test point against 1-sided lines
+	for (auto testLine : thingSector->Lines)
+	{
+		if (!testLine->sidedef[0] || testLine->sidedef[1])
+			continue; // Skip non-1-sided lines
+
+		float lineX1 = (float)testLine->v1->fX();
+		float lineY1 = (float)testLine->v1->fY();
+		float lineX2 = (float)testLine->v2->fX();
+		float lineY2 = (float)testLine->v2->fY();
+
+		// Check the most-facing test point
+		float ix, iy;
+		if (SpriteIntersectsLinedef
+		(
+			viewerX, viewerY,
+			testX, testY,
+			lineX1, lineY1,
+			lineX2, lineY2,
+			ix, iy))
+		{
+			return true; // Sprite crosses a 1-sided line visible to viewer
+		}
+
+		// Also check the core viewer->sprite line itself
+		ix, iy;
+		if (SpriteIntersectsLinedef(viewerX, viewerY, thingX, thingY, lineX1, lineY1, lineX2, lineY2, ix, iy))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+struct SpriteBboxFacingCameraCrossed1sLineCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached1sCrossBboxFacingResult = false;  // Default: assume NO 1-sided crossing
+};
+
+static TMap<AActor*, SpriteBboxFacingCameraCrossed1sLineCacheEntry> SpriteBboxFacingCrossed1sCache;
+
+bool SpriteBboxFacingCameraCrossed1sLineCachedWrapper(AActor* thing, AActor* viewer)
+{
+	// Fast escape checks
+	if (!thing || !viewer) return false;
+
+	// Use caching if enabled
+	if (enableAnamorphCache)
+	{
+		const int currentMapTimeTick = level.maptime;
+		SpriteBboxFacingCameraCrossed1sLineCacheEntry& entry = SpriteBboxFacingCrossed1sCache[thing];
+
+		// Return cached result if valid (updated within last 3 ticks)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
+		{
+			return entry.cached1sCrossBboxFacingResult;
+		}
+
+		// Compute and cache fresh result from non-cached function
+		bool result = SpriteBboxFacingCameraCrossed1sLine(thing, viewer);
+		entry.cached1sCrossBboxFacingResult = result;
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return result;
+	}
+	else
+	{
+		// Original uncached behavior
+		return SpriteBboxFacingCameraCrossed1sLine(thing, viewer);
 	}
 }
 
@@ -1952,6 +2099,8 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		return 0.0f;
 	}
 
+	const float ZtoleranceMidTxt = 16.0f; // ensures a much better detection
+
 	// 3. Actor classification flags and thresholds
 	const bool isLegacyVersionProjectile = thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY) || thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS);
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
@@ -1968,14 +2117,17 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	{
 		//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
 	}
+
+	// --- Who knows why but it works better this way ---
+	// For midtexture detection, we add ztol to bottom and subtract from top
 	float viewerBottom = viewer->Z();
 	float viewerTop = viewerBottom + EyeHeight;
-	float viewerBottomAdj = viewerBottom - Ztolerance2sided;
-	float viewerTopAdj = viewerTop + Ztolerance2sided;
+	float viewerBottomAdj = viewerBottom + ZtoleranceMidTxt;
+	float viewerTopAdj = viewerTop - ZtoleranceMidTxt;
 	float spriteBottom = thing->Z();
 	float spriteTop = (thing->Z()) + (thing->Height);
-	float sprBottomAdj = spriteBottom - Ztolerance2sided;
-	float sprTopAdj = spriteTop + Ztolerance2sided;
+	float sprBottomAdj = spriteBottom + ZtoleranceMidTxt;
+	float sprTopAdj = spriteTop - ZtoleranceMidTxt;
 
 	// pretty useless
 	//bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) <= EyeHeight;
@@ -2606,6 +2758,7 @@ void ResetAnamorphCache()
 	case 0:
 		spriteIntersectsLineCache.Clear(0);
 		SpriteCrossed1sidedLineCache.Clear(0);
+		SpriteBboxFacingCrossed1sCache.Clear(0);
 		break;
 	case 1:
 		SpriteCrossed2sidedLineCache.Clear(0);
@@ -3075,6 +3228,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		//float spriteSize = forceTinySpriteSize;
 
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
+		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
 		bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
@@ -3175,12 +3329,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 
 			//			=== Dynamic anamorphosis occlusion based amount effect adjustment - START ===
-			float extremeCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
-			float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? extremeCull1 : 3.25f;
+			float extremeCull1 = (!visible2sideMidTex) ? 0.025f : 1.0f;
+			float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : 3.25f;
 			float extremeCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
-			float projectiles_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? extremeCull2 : 14.0f;
+			float projectiles_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : 14.0f;
 			float extremeCull3 = !visible2sideMidTex ? 0.025f : 1.0f;
-			float regularsizmonster_factor1 = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || !visible3dfloorSides) ? extremeCull3 : 3.25f;
+			float regularsizmonster_factor1 = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : 3.25f;
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
@@ -3253,6 +3407,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// Adjusted viewer/sprite positions
 			float viewerTopAdj = viewerBottom + (EyeHeight * 0.5f);  // Mid-eye position
 			float spriteTopAdj = spriteTop + (EyeHeight * 0.064f);   // Small leeway threshold
+			float viewerBottomAdj = viewerBottom - Ztolerance2sided;
+			float sprBottomAdj = spriteBottom - Ztolerance2sided;
 
 			// Proximity detection
 			bool isFloorSprite = (spriteBottom - actualFloor) <= planeProximThresh;
@@ -3280,15 +3436,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 			//		--- The pass 2 agressive culling core process - finish ---
 
-			float ZtolOfspriteSize = 0.0f; // init and add to bintersect and tintersect to reduce coplanar leaks
-			if (isMicroSprite || isTinySprite || isSmallSprite)			{ ZtolOfspriteSize = 0.055f; }
-			else														{ ZtolOfspriteSize = 0.085f; }
-
+			//					=== Anamorphosis culling pass 2 - START ===
 			float bintersect, tintersect;
-			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz)) + ZtolOfspriteSize;
+			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
 			else bintersect = 1.0f;
 
-			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz)) + ZtolOfspriteSize;
+			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
 			else tintersect = 1.0f;
 
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
