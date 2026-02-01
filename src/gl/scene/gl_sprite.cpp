@@ -1417,6 +1417,7 @@ constexpr float MINCOORD2SIDED = -32768.0;
 constexpr float MAXCOORD2SIDED = 32767.9999847;
 constexpr float EPSILON2SIDED = 0.001;
 float Ztolerance2sided = 2.0f;
+float Ztolerance2sidedBot = 4.0f; // lower vals - legs on elevations cull more if seen from below
 
 // Optimized position getters that avoid implicit conversions - again
 static FVector2 GetVertexPosition(const vertex_t* vert)
@@ -1556,7 +1557,7 @@ struct ObstructionData2Sided
 		float viewerTopAdj = viewerTop + Ztolerance2sided;
 		float spriteBottom = thing->Z();
 		float spriteTop = (thing->Z()) + (thing->Height);
-		float sprBottomAdj = spriteBottom - Ztolerance2sided;
+		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
 		float sprTopAdj = spriteTop + Ztolerance2sided;
 		const float cullsmallspriteslessthresh = 32.0f;
 		if (isSmallSprite)
@@ -1681,7 +1682,7 @@ struct ObstructionData2Sided
 		// large sprites have height 16 times than usual, so we must divide 1 by 16 for them
 		float spriteBottom = thing->Z();
 		float spriteTop = (thing->Z()) + (thing->Height);
-		float sprBottomAdj = spriteBottom - Ztolerance2sided;
+		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
 		float sprTopAdj = spriteTop + Ztolerance2sided;
 
 		bool isViewerTopHigerThanSpriteTop = viewerTop >= spriteTop;
@@ -1844,7 +1845,7 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	const FVector2 thingCenterPos = GetActorPosition(thing);
 	float spriteBottom = thing->Z();
 	float spriteTop = thing->Z() + thing->Height * HeightExpansionFactor;
-	float sprBottomAdj = spriteBottom - Ztolerance2sided;
+	float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
 	float sprTopAdj = spriteTop + Ztolerance2sided;
 	float spriteMidHeight = spriteBottom + ((spriteTop - spriteBottom) * 0.5f);
 
@@ -3330,11 +3331,17 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			//			=== Dynamic anamorphosis occlusion based amount effect adjustment - START ===
 			float extremeCull1 = (!visible2sideMidTex) ? 0.025f : 1.0f;
-			float smallsprtncrps_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : 3.25f;
+			float smallsprtncrps_factor =
+				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : 3.25f;
 			float extremeCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
-			float projectiles_factor = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : 14.0f;
+			float projectiles_factor =
+				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : 14.0f;
 			float extremeCull3 = !visible2sideMidTex ? 0.025f : 1.0f;
-			float regularsizmonster_factor1 = (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : 3.25f;
+			float regularsizmonster_factor1 =
+				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : 3.25f;
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
@@ -3402,13 +3409,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// Get actual floor/ceiling heights (including 3D floors) thingpos
 			float actualFloor = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing);
 			float actualCeiling = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, thingpos, thing);
-			const float planeProximThresh = 32.0f;
+			const float planeProximThresh = 64.0f;
 
 			// Adjusted viewer/sprite positions
 			float viewerTopAdj = viewerBottom + (EyeHeight * 0.5f);  // Mid-eye position
 			float spriteTopAdj = spriteTop + (EyeHeight * 0.064f);   // Small leeway threshold
 			float viewerBottomAdj = viewerBottom - Ztolerance2sided;
-			float sprBottomAdj = spriteBottom - Ztolerance2sided;
+			float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
 
 			// Proximity detection
 			bool isFloorSprite = (spriteBottom - actualFloor) <= planeProximThresh;
