@@ -3189,8 +3189,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		if (gltexture && gltexture->tex)
 		{
 			FTexture* tex = gltexture->tex;
-			spriteRasterXdimen = tex->GetWidth();
-			spriteRasterYdimen = tex->GetHeight();
+
+			// we get scaled dim because they can be hires
+			spriteRasterXdimen = tex->GetScaledWidth();
+			spriteRasterYdimen = tex->GetScaledHeight();
 			spriteFileOffset = tex->TopOffset;
 			// Calculate visible sprite height (actual drawn pixels)
 			int visibleSpriteHeight = spriteRasterYdimen - spriteFileOffset;
@@ -3249,7 +3251,18 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// we need to adjust them to have a nice anamorphosis effect (increase it)
 		if ((spriteRasterXdimen >= (thing->radius)) || (spriteRasterYdimen >= (thing->Height)))
 		{
-			if (isMicroSprite) { spriteSize = 1.9f; }
+			if (isMicroSprite)
+			{
+				if (spriteRasterXdimen >= 64.0f || spriteRasterYdimen >= 64.0f)
+				{
+					// handle bigger sized sprites first
+					spriteSize = 4.8f;
+				}
+				else
+				{
+					spriteSize = 2.12f;
+				}
+			}
 			else if (isTinySprite) { spriteSize += 1.0f; }
 			else if (isSmallSprite) { spriteSize += 1.2f; }
 			else if (isMediumSprite) { spriteSize += 2.4f; }
@@ -3282,7 +3295,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// are too big and cross the linedefs, making them invisible to detection systems.
 		// In this case, we must decrease their sprite sizes to make them reasonable sizes.
 		if (!visible2sideTallEnoughObstr)
-		{   spriteSize = 16.0f;  }
+		{   spriteSize *= 0.5f;  }
 		// -------------
 
 		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
@@ -3444,45 +3457,49 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 
 			//					=== Anamorphosis culling pass 2 - START ===
+			// Another approach to prevent more leaks
 			// This one culls agressively and prevents coplanar leaks but chops too much
 			// when we look at the sprite from above, in this case we don't do this cull at all
 			// Detect viewer middle ground is still higher than sprite bottom
-
-			// Actual floor/ceiling heights are "btm" and "top"
-			const float planeProximThresh = 64.0f;
-
-			// Adjusted viewer/sprite positions
-			float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);  // Mid-eye position
-			float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);   // Small leeway threshold
-
-
-			// Proximity detection
-			bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
-			bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
-
-			// Viewer angle detection
-			bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
-			bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
-
-			// Skip culling when:
-			// - Looking down on floor sprites OR
-			// - Looking up at ceiling sprites
-			if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
+			bool anamorphCullPass2 = true; // disabled by default
+			if (anamorphCullPass2)
 			{
-				// Skip aggressive culling
-			}
-			else // Otherwise apply culling
-			{
-				if (!r_debug_nolimitanamorphoses)
+				// Actual floor/ceiling heights are "btm" and "top"
+				const float planeProximThresh = 64.0f;
+
+				// Adjusted viewer/sprite positions
+				float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);  // Mid-eye position
+				float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);   // Small leeway threshold
+
+
+				// Proximity detection
+				bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
+				bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
+
+				// Viewer angle detection
+				bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
+				bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
+
+				// Skip culling when:
+				// - Looking down on floor sprites OR
+				// - Looking up at ceiling sprites
+				if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
 				{
-					float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
-					float objradiusbias = 1.f - spriteSize / sqrt(distsq);
-					minbias = MAX(minbias, objradiusbias);
+					// Skip aggressive culling
+				}
+				else // Otherwise apply culling
+				{
+					if (!r_debug_nolimitanamorphoses)
+					{
+						float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+						float objradiusbias = 1.f - spriteSize / sqrt(distsq);
+						minbias = MAX(minbias, objradiusbias);
+					}
 				}
 			}
 			//		--- The pass 2 agressive culling core process - finish ---
 
-			//					=== Anamorphosis culling pass 2 - START ===
+			//					=== Anamorphosis final culling pass - START ===
 			float bintersect, tintersect;
 			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
 			else bintersect = 1.0f;
@@ -3494,7 +3511,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f);
 			float vpbias = 1.0 - spbias;
-			//					=== Anamorphosis culling pass 2 - FINISH ===
+			//					=== Anamorphosis final culling pass - FINISH ===
 
 
 			// Apply projection distortion using original vp method only if not obstructed by a 3DFloor above or below
