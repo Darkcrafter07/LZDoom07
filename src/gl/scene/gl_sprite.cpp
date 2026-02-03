@@ -1161,6 +1161,8 @@ bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 	}
 }
 
+// If only one side of a sprite bbox closest to and facing the viewer crossed a 1sided line
+// Prevent coplanar leaks of sprites so close to walls that cross them and off 1sided obstruction radar
 bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
@@ -1189,9 +1191,9 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
 	const bool isHugeSprite = (spriteSize >= 39.0f);
 
 	float spriteScale = 8.0f;
-	if (isMediumSprite) { spriteScale = 0.5f; }
-	else if (isLargeSprite) { spriteScale = 0.15f; }
-	else if (isHugeSprite) { spriteScale = 0.1f; }
+	if (isMediumSprite) { spriteScale = 4.5f; }
+	else if (isLargeSprite) { spriteScale = 1.15f; }
+	else if (isHugeSprite) { spriteScale = 0.5f; }
 
 	float adjustedRadius = thing->radius * spriteScale;
 
@@ -1535,7 +1537,7 @@ struct ObstructionData2Sided
 			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
 			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
 
-		const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+		float spriteSize = (thing->radius + thing->Height) * 0.5f;
 		const bool isSmallSprite = (spriteSize <= 18.0f);
 		const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 40.0f);
 		const bool isLargeSprite = (spriteSize > 40.0f);
@@ -2062,6 +2064,7 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 		return CheckLineOfSight2sided(viewer, thing);
 	}
 }
+
 // ******* 2-sided-linedef tall enough sector obstructions culling block finish *******
 //         ---===      ***************************************        ===---
 
@@ -3199,34 +3202,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 
 		float spriteSize = (thing->radius + thing->Height) * 0.5f;
-		bool isMicroSprite = (spriteSize <= 8.0f);
-		bool isTinySprite = (spriteSize <= 12.0f);
+		bool isMicroSprite = (spriteSize <= 8.0f && spriteSize < 12.0f);
+		bool isTinySprite = (spriteSize <= 12.0f && spriteSize < 18.0f);
 		bool isSmallSprite = (spriteSize <= 18.0f);
-		bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
+		bool isMediumSprite = (spriteSize > 18.0f && spriteSize < 38.0f);
 		bool isLargeSprite = (spriteSize > 38.0f);
 		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
 		bool isactorsmallbutnotcorpse = isSmallSprite && !isactoracorpse;
 		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
 
-		// -------------
-		// Some mods have big looking sprites with little radius-or-height
-		// we need to adjust them to have a nice anamorphosis effect (increase it)
-		if ((spriteRasterXdimen >= (thing->radius)) || (spriteRasterYdimen >= (thing->Height)))
-		{
-			if (isMicroSprite) { spriteSize *= 2.75f; }
-			else if (isTinySprite) { spriteSize *= 2.0f; }
-			else if (isSmallSprite) { spriteSize *= 1.5f; }
-			else if (isMediumSprite) { spriteSize *= 1.32f; }
-			else { spriteSize *= 1.2f; }
-		}
-		// -------------
-
-		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
-		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
-
-		//bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
-		//float forceTinySpriteSize = (thingCrossed2sidedLine) ? spriteSize : (spriteSize * 0.32f);
-		//float spriteSize = forceTinySpriteSize;
 
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
@@ -3237,6 +3221,76 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSides(r_viewpoint.camera, thing);
 		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
 		bool actorInVoid = IsActorInVoid(thing);
+
+		bool isSpriteObstructed = (!visible1sidesInfTallObstr || thingCrossed1sidedLine || !visible2sideTallEnoughObstr || !visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides);
+
+		// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
+		// That's why get viewer from renderer context instead of function parameters
+		AActor* viewer = r_viewpoint.camera;
+		float EyeHeight = 41.0f;
+		if (viewer->player && viewer->player->mo)
+		{
+			EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+		}
+
+		float viewerBottom = viewer->Z();
+		float viewerTop = viewerBottom + EyeHeight;
+		float spriteBottom = thing->Z();
+		float spriteTop = thing->Top();
+		float sprLowerMid = (spriteBottom + (spriteTop * 0.25f));
+		float sprLowerMidAdj = sprLowerMid + Ztolerance2sided;
+		float viewerBottomAdj = viewerBottom - Ztolerance2sided;
+		float viewerTopAdj = viewerTop + Ztolerance2sided;
+		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
+		float sprTopAdj = spriteTop + Ztolerance2sided;
+
+		// -------------
+		// Some mods have big looking sprites with little radius-or-height
+		// we need to adjust them to have a nice anamorphosis effect (increase it)
+		if ((spriteRasterXdimen >= (thing->radius)) || (spriteRasterYdimen >= (thing->Height)))
+		{
+			if (isMicroSprite) { spriteSize = 1.9f; }
+			else if (isTinySprite) { spriteSize += 1.0f; }
+			else if (isSmallSprite) { spriteSize += 1.2f; }
+			else if (isMediumSprite) { spriteSize += 2.4f; }
+			else { spriteSize *= 1.1f; }
+		}
+		// -------------
+
+		// -------------
+		// We'll have to limit spriteSize to minimize the leaks unfortunately
+		if (spriteSize >= 44.0f)
+		{
+			spriteSize = 44.0f;
+		}
+		// -------------
+
+
+		// -------------
+		// sprites that are located slightly above on an elevated platform might cut too much
+		// determine which sprites are located slightly above on elevated platforms
+		// bool isViewerBottomLowerThanSpriteBottom = viewerBottomAdj <= sprBottomAdj;  // we need some Z tolerance here
+		// bool isThatElevatedSpriteStillSeen = isViewerBottomLowerThanSpriteBottom && (viewerTopAdj <= sprLowerMidAdj);
+		//if (spriteSize <= 40.0f)
+		//{
+		//	spriteSize = 72.0f;
+		//}
+		// -------------
+
+		// -------------
+		// Too many leaks through 2sided obstructions because even default sprite sizes
+		// are too big and cross the linedefs, making them invisible to detection systems.
+		// In this case, we must decrease their sprite sizes to make them reasonable sizes.
+		if (!visible2sideTallEnoughObstr)
+		{   spriteSize = 16.0f;  }
+		// -------------
+
+		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
+		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
+
+		//bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
+		//float forceTinySpriteSize = (thingCrossed2sidedLine) ? spriteSize : (spriteSize * 0.32f);
+		//float spriteSize = forceTinySpriteSize;
 
 		DVector3 thingpos3D(thingpos.X, thingpos.Y, z);
 		float distSq = (thingpos3D - r_viewpoint.Pos).LengthSquared();
@@ -3292,7 +3346,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float temp_x1 = orig_x1, temp_y1 = orig_y1, temp_z1 = orig_z1;
 			float temp_x2 = orig_x2, temp_y2 = orig_y2, temp_z2 = orig_z2;
 
-			if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
+			if ( (isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine )
 			{
 				// Perform smart clip but don't raise for the cases above
 				PerformSpriteClipAdjustment(thing, thingpos, 0.0);
@@ -3330,7 +3384,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 
 			//			=== Dynamic anamorphosis occlusion based amount effect adjustment - START ===
-			float extremeCull1 = (!visible2sideMidTex) ? 0.025f : 1.0f;
+			float extremeCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
 			float smallsprtncrps_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
 					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : 3.25f;
@@ -3361,7 +3415,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// but keep some extra space for stuff that don't need even that much like big explosions
 
 			// Only apply extended radius bias for specific actor types
-			float radius_for_bias = thing->radius;
+			// float radius_for_bias = thing->radius;
+			float radius_for_bias = spriteSize;
+
 			if (isactorsmallbutnotcorpse || islegacyversionprojectile)
 			{
 				radius_for_bias = extended_radius2;
@@ -3392,38 +3448,21 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// when we look at the sprite from above, in this case we don't do this cull at all
 			// Detect viewer middle ground is still higher than sprite bottom
 
-			// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
-			// That's why get viewer from renderer context instead of function parameters
-			AActor* viewer = r_viewpoint.camera;
-			float EyeHeight = 41.0f;
-			if (viewer->player && viewer->player->mo)
-			{
-				EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
-			}
-
-			float viewerBottom = viewer->Z();
-			float viewerTop = viewerBottom + EyeHeight;
-			float spriteBottom = thing->Z();
-			float spriteTop = thing->Top();
-
-			// Get actual floor/ceiling heights (including 3D floors) thingpos
-			float actualFloor = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing);
-			float actualCeiling = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, thingpos, thing);
+			// Actual floor/ceiling heights are "btm" and "top"
 			const float planeProximThresh = 64.0f;
 
 			// Adjusted viewer/sprite positions
-			float viewerTopAdj = viewerBottom + (EyeHeight * 0.5f);  // Mid-eye position
-			float spriteTopAdj = spriteTop + (EyeHeight * 0.064f);   // Small leeway threshold
-			float viewerBottomAdj = viewerBottom - Ztolerance2sided;
-			float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
+			float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);  // Mid-eye position
+			float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);   // Small leeway threshold
+
 
 			// Proximity detection
-			bool isFloorSprite = (spriteBottom - actualFloor) <= planeProximThresh;
-			bool isCeilingSprite = (actualCeiling - spriteTop) <= planeProximThresh;
+			bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
+			bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
 
 			// Viewer angle detection
-			bool viewerLookingDown = viewerTopAdj >= spriteTopAdj;
-			bool viewerLookingUp = viewerTopAdj <= spriteBottom;
+			bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
+			bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
 
 			// Skip culling when:
 			// - Looking down on floor sprites OR
