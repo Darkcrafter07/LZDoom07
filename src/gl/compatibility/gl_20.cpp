@@ -722,10 +722,11 @@ bool GLWall::PrepareLight(FDynamicLight * light, int pass)
 
 	p.Set(&glseg);
 
-	if (!p.ValidNormal())
-	{
-		return false;
-	}
+	// TO DO: this causes some walls to not receieve dynlights at all, try to fix gl_geometric.h and gl_wall.h
+	//if (!p.ValidNormal())
+	//{
+	//	return false;
+	//}
 
 	if (!gl_SetupLight(seg->frontsector->PortalGroup, p, light, nearPt, up, right, scale, true, pass != GLPASS_LIGHTTEX))
 	{
