@@ -60,6 +60,8 @@ enum Drawpasses
 	GLPASS_TEXONLY,		// finishing texture pass
 	GLPASS_LIGHTTEX_ADDITIVE,	// lighttexture pass (additive)
 	GLPASS_LIGHTTEX_FOGGY,	// lighttexture pass on foggy surfaces (forces all lights to be additive)
+	GLPASS_FOGBOUNDARY,    // Apply fog to dynamically lit surfaces
+	GLPASS_BRIGHTEN,
 
 };
 
