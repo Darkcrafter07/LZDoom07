@@ -2,6 +2,7 @@
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2005-2016 Christoph Oelckers
+// Copyright(C) 2026 Vadim Taranov
 // All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 **
 ** Fallback code for ancient hardware
 ** This file collects everything larger that is only needed for
-** OpenGL 2.0/no shader compatibility.
+** OpenGL 1.2 and 2.0x family, NO shaders required.
 **
 */
 
@@ -397,8 +398,7 @@ void FRenderState::DrawColormapOverlay()
 //
 //==========================================================================
 
-bool gl_SetupLight(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right,
-	float & scale, bool checkside, bool additive)
+bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
 {
 	FVector3 fn, pos;
 
@@ -423,7 +423,8 @@ bool gl_SetupLight(int group, Plane & p, FDynamicLight * light, FVector3 & nearP
 		return false;
 	}
 
-	scale = 1.0f / ((2.f * radius) - dist);
+	//scale = 1.0f / ((2.f * radius) - dist);
+	scale = 1.0f / ((2.25f * radius) - dist);
 
 	// project light position onto plane (find closest point on plane)
 
@@ -437,9 +438,33 @@ bool gl_SetupLight(int group, Plane & p, FDynamicLight * light, FVector3 & nearP
 
 	float cs = 1.0f - (dist / radius);
 	if (additive) cs *= 0.2f;	// otherwise the light gets too strong.
-	float r = light->GetRed() / 255.0f * cs;
-	float g = light->GetGreen() / 255.0f * cs;
-	float b = light->GetBlue() / 255.0f * cs;
+
+	// the bigger the dynlight radius the lesser brighter it should get
+	float r, g, b;
+	if (radius >= 384.0f && radius <= 800.0f)
+	{
+		r = light->GetRed() / 286.0f * cs;
+		g = light->GetGreen() / 286.0f * cs;
+		b = light->GetBlue() / 286.0f * cs;
+	}
+	else if (radius >= 800.0f && radius <= 1600.0f)
+	{
+		r = light->GetRed() / 322.0f * cs;
+		g = light->GetGreen() / 324.0f * cs;
+		b = light->GetBlue() / 324.0f * cs;
+	}
+	else if (radius >= 1600.0f)
+	{
+		r = light->GetRed() / 424.0f * cs;
+		g = light->GetGreen() / 424.0f * cs;
+		b = light->GetBlue() / 424.0f * cs;
+	}
+	else
+	{
+		r = light->GetRed() / 255.0f * cs;
+		g = light->GetGreen() / 255.0f * cs;
+		b = light->GetBlue() / 255.0f * cs;
+	}
 
 	if (light->IsSubtractive())
 	{
@@ -456,6 +481,94 @@ bool gl_SetupLight(int group, Plane & p, FDynamicLight * light, FVector3 & nearP
 	gl_RenderState.SetColor(r, g, b);
 	return true;
 }
+
+bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
+{
+	// we need to get flats darker, that's why we have a separate gl_SetupLightFlat function
+
+	FVector3 fn, pos;
+
+	DVector3 lpos = light->PosRelative(group);
+
+	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
+	float radius = light->GetRadius();
+
+	if (gl.legacyMode && (light->IsAttenuated()))
+	{
+		radius *= 0.66f;
+	}
+
+	if (radius <= 0.f) return false;
+	if (dist > radius) return false;
+	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y))
+	{
+		return false;
+	}
+	if (!light->visibletoplayer)
+	{
+		return false;
+	}
+
+	//scale = 1.0f / ((2.f * radius) - dist);
+	scale = 1.0f / ((2.25f * radius) - dist);
+
+	// project light position onto plane (find closest point on plane)
+
+
+	pos = { (float)lpos.X, (float)lpos.Z, (float)lpos.Y };
+	fn = p.Normal();
+	fn.GetRightUp(right, up);
+
+	FVector3 tmpVec = fn * dist;
+	nearPt = pos + tmpVec;
+
+	float cs = 1.0f - (dist / radius);
+	if (additive) cs *= 0.2f;	// otherwise the light gets too strong.
+
+	// the bigger the dynlight radius the lesser brighter it should get
+	float r, g, b;
+	// we need to get flats darker, that's why we increase divisors twice from 255.0f to 510.0f
+	if (radius >= 384.0f && radius <= 800.0f)
+	{
+		r = light->GetRed() / 384.0f * cs;
+		g = light->GetGreen() / 384.0f * cs;
+		b = light->GetBlue() / 384.0f * cs;
+	}
+	else if (radius >= 800.0f && radius <= 1600.0f)
+	{
+		r = light->GetRed() / 540.0f * cs;
+		g = light->GetGreen() / 540.0f * cs;
+		b = light->GetBlue() / 540.0f * cs;
+	}
+	else if (radius >= 1600.0f)
+	{
+		r = light->GetRed() / 848.0f * cs;
+		g = light->GetGreen() / 848.0f * cs;
+		b = light->GetBlue() / 848.0f * cs;
+	}
+	else
+	{
+		r = light->GetRed() / 255.0f * cs;
+		g = light->GetGreen() / 255.0f * cs;
+		b = light->GetBlue() / 255.0f * cs;
+	}
+
+	if (light->IsSubtractive())
+	{
+		gl_RenderState.BlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+		float length = float(FVector3(r, g, b).Length());
+		r = length - r;
+		g = length - g;
+		b = length - b;
+	}
+	else
+	{
+		gl_RenderState.BlendEquation(GL_FUNC_ADD);
+	}
+	gl_RenderState.SetColor(r, g, b);
+	return true;
+}
+
 
 //==========================================================================
 //
@@ -532,7 +645,8 @@ bool GLWall::PutWallCompat(int passflag)
 	}
 
 	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
-	bool masked = passflag == 2 && gltexture->isMasked();
+	//bool masked = passflag == 2 && gltexture->isMasked();
+	bool masked = false; // do dynlights even on masked textures ffs
 
 	int list = list_indices[masked][foggy];
 	gl_drawinfo->dldrawlists[list].AddWall(this);
@@ -556,6 +670,7 @@ bool GLFlat::PutFlatCompat(bool fog)
 
 	bool masked = gltexture->isMasked() && ((renderflags&SSRF_RENDER3DPLANES) || stack);
 	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
+	//bool foggy = false;
 
 	
 	int list = list_indices[masked][foggy];
@@ -624,7 +739,19 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	FVector3 nearPt, up, right, t1;
 	float scale;
 
+	float fogdensity = gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
+
 	FLightNode * node = sub->lighthead;
+
+	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
+
+	if (!foggy)
+	{
+		// black fog is diminishing light and should affect lights less than the rest!
+		if (pass == GLPASS_LIGHTTEX) mDrawer->SetFog((255 + lightlevel) >> 1, 0, NULL, false);
+		else mDrawer->SetFog(lightlevel, 0, &Colormap, true);
+	}
+
 	while (node)
 	{
 		FDynamicLight * light = node->lightsource;
@@ -637,21 +764,38 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			continue;
 		}
 
-		// we must do the side check here because gl_SetupLight needs the correct plane orientation
+		// We must do the side check here because gl_SetupLight needs the correct plane orientation
 		// which we don't have for Legacy-style 3D-floors
-		double planeh = plane.plane.ZatPoint(light->Pos);
-		if (gl_lights_checkside && ((planeh<light->Z() && ceiling) || (planeh>light->Z() && !ceiling)))
+		double planeh = plane.plane.ZatPoint(light->Pos.X, light->Pos.Y);
+		if (gl_lights_checkside && ((planeh < light->Z() && ceiling) || (planeh > light->Z() && !ceiling)))
 		{
 			node = node->nextLight;
 			continue;
 		}
 
 		p.Set(plane.plane);
-		if (!gl_SetupLight(sub->sector->PortalGroup, p, light, nearPt, up, right, scale, false, pass != GLPASS_LIGHTTEX))
+		if (!gl_SetupLightFlat(sub->sector->PortalGroup, p, light, nearPt, up, right, scale, false, pass != GLPASS_LIGHTTEX))
 		{
 			node = node->nextLight;
 			continue;
 		}
+
+		// For foggy flats, ensure fog is properly applied with subtler intensity
+		if (gl_CheckFog(&Colormap, lightlevel))
+		{
+			glEnable(GL_FOG);
+			GLfloat fogColor[4] = {
+				Colormap.FadeColor.r / 255.0f,
+				Colormap.FadeColor.g / 255.0f,
+				Colormap.FadeColor.b / 255.0f,
+				1.0f
+			};
+			glFogfv(GL_FOG_COLOR, fogColor);
+			glFogf(GL_FOG_DENSITY, fogdensity * -0.6931471f * 2.0f); // Reduced factor
+			glFogi(GL_FOG_MODE, GL_EXP);
+			glHint(GL_FOG_HINT, GL_NICEST);
+		}
+
 		gl_RenderState.Apply();
 
 		FFlatVertex *ptr = GLRenderer->mVBO->GetBuffer();
@@ -669,6 +813,13 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			ptr++;
 		}
 		GLRenderer->mVBO->RenderCurrent(ptr, GL_TRIANGLE_FAN);
+
+		// Reset fog state after rendering
+		if (gl_CheckFog(&Colormap, lightlevel))
+		{
+			glDisable(GL_FOG);
+		}
+
 		node = node->nextLight;
 	}
 }
@@ -681,9 +832,11 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 
 void GLFlat::DrawLightsCompat(int pass)
 {
-	gl_RenderState.Apply();
+	// Set fog for this pass
+	mDrawer->SetFog(lightlevel, gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor), &Colormap, true);
+
 	// Draw the subsectors belonging to this sector
-	for (int i = 0; i<sector->subsectorcount; i++)
+	for (int i = 0; i < sector->subsectorcount; i++)
 	{
 		subsector_t * sub = sector->subsectors[i];
 		if (gl_drawinfo->ss_renderflags[sub->Index()] & renderflags)
@@ -707,7 +860,6 @@ void GLFlat::DrawLightsCompat(int pass)
 	}
 }
 
-
 //==========================================================================
 //
 // Sets up the texture coordinates for one light to be rendered
@@ -728,7 +880,7 @@ bool GLWall::PrepareLight(FDynamicLight * light, int pass)
 	//	return false;
 	//}
 
-	if (!gl_SetupLight(seg->frontsector->PortalGroup, p, light, nearPt, up, right, scale, true, pass != GLPASS_LIGHTTEX))
+	if (!gl_SetupLightWall(seg->frontsector->PortalGroup, p, light, nearPt, up, right, scale, true, pass != GLPASS_LIGHTTEX))
 	{
 		return false;
 	}
@@ -766,6 +918,21 @@ void GLWall::RenderLightsCompat(int pass)
 	if (pass == GLPASS_LIGHTTEX) mDrawer->SetFog((255 + lightlevel) >> 1, 0, NULL, false);
 	else mDrawer->SetFog(lightlevel, 0, &Colormap, true);
 
+	// Calculate fog density properly
+	float fogdensity = gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
+
+	// Set fog for this pass
+	if (pass == GLPASS_LIGHTTEX)
+	{
+		// For regular light pass, use the fog from the sector
+		mDrawer->SetFog(lightlevel, fogdensity, &Colormap, true);
+	}
+	else
+	{
+		// For additive light pass, also use the fog from the sector
+		mDrawer->SetFog(lightlevel, fogdensity, &Colormap, true);
+	}
+
 	if (seg->sidedef == NULL)
 	{
 		return;
@@ -801,7 +968,38 @@ void GLWall::RenderLightsCompat(int pass)
 		if (PrepareLight(light, pass))
 		{
 			vertcount = 0;
+
+			// For foggy walls, ensure fog is properly applied
+			if (gl_CheckFog(&Colormap, lightlevel))
+			{
+				// Enable fog and set proper parameters
+				glEnable(GL_FOG);
+				GLfloat fogColor[4] = {
+					Colormap.FadeColor.r / 255.0f,
+					Colormap.FadeColor.g / 255.0f,
+					Colormap.FadeColor.b / 255.0f,
+					1.0f
+				};
+				glFogfv(GL_FOG_COLOR, fogColor);
+
+				// Set fog density - use a more stable factor
+				glFogf(GL_FOG_DENSITY, fogdensity * -0.6931471f);
+
+				// Set fog mode to exponential for more realistic fog
+				glFogi(GL_FOG_MODE, GL_EXP);
+
+				// Set fog hint to improve stability
+				glHint(GL_FOG_HINT, GL_NICEST);
+			}
+
+			// Render the wall with fog applied
 			RenderWall(RWF_TEXTURED);
+
+			// Reset fog state after rendering
+			if (gl_CheckFog(&Colormap, lightlevel))
+			{
+				glDisable(GL_FOG);
+			}
 		}
 		node = node->nextLight;
 	}
@@ -819,17 +1017,14 @@ void GLSceneDrawer::RenderMultipassStuff()
 {
 	// First pass: empty background with sector light only
 
-	// Part 1: solid geometry. This is set up so that there are no transparent parts
-
-	// remove any remaining texture bindings and shaders whick may get in the way.
+	// Part 1: solid geometry
 	gl_RenderState.EnableTexture(false);
 	gl_RenderState.EnableBrightmap(false);
 	gl_RenderState.Apply();
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_PLAIN);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_PLAIN);
 
-	// Part 2: masked geometry. This is set up so that only pixels with alpha>0.5 will show
-	// This creates a blank surface that only fills the nontransparent parts of the texture
+	// Part 2: masked geometry
 	gl_RenderState.EnableTexture(true);
 	gl_RenderState.SetTextureMode(TM_MASK);
 	gl_RenderState.EnableBrightmap(true);
@@ -837,7 +1032,8 @@ void GLSceneDrawer::RenderMultipassStuff()
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_PLAIN);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_PLAIN);
 
-	// Part 3: The base of fogged surfaces, including the texture
+	// Part 3: The base of fogged surfaces (without fixed fog)
+	gl_RenderState.EnableFog(false);  // Disable fixed fog for foggy surfaces
 	gl_RenderState.EnableBrightmap(false);
 	gl_RenderState.SetTextureMode(TM_MODULATE);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
@@ -847,7 +1043,7 @@ void GLSceneDrawer::RenderMultipassStuff()
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_PLAIN);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_PLAIN);
 
-	// second pass: draw lights
+	// Second pass: draw lights (including foggy surfaces)
 	glDepthMask(false);
 	if (GLRenderer->mLightCount && !FixedColormap)
 	{
@@ -856,49 +1052,131 @@ void GLSceneDrawer::RenderMultipassStuff()
 			gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 			glDepthFunc(GL_EQUAL);
 			if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
+
+			// Apply lights to ALL surfaces (including foggy ones, now without fixed fog)
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
+
 			gl_RenderState.BlendEquation(GL_FUNC_ADD);
 		}
-		else gl_lights = false;
 	}
 
-	// third pass: modulated texture
+	// Third pass: modulated texture (all surfaces)
 	gl_RenderState.SetColor(0xffffffff);
 	gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
-	gl_RenderState.EnableFog(false);
+	gl_RenderState.EnableFog(false);  // Keep fog disabled
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
 	glDepthFunc(GL_LEQUAL);
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
-	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
+	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
 
-	// fourth pass: additive lights
-	gl_RenderState.EnableFog(true);
+	// Fourth pass: apply fog as translucent overlay for foggy surfaces
+	gl_RenderState.EnableFog(false);  // Ensure fog is disabled
+	// GL_SRC_ALPHA and 1 and no any other way around
+	gl_RenderState.BlendFunc(GL_SRC_ALPHA, 1);
+	glDepthMask(false);
+
+	// Get fog color and intensity from the first foggy surface (if any exist)
+	FColormap *colormap = NULL;
+	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
+	{
+		colormap = &gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].walls[0].Colormap;
+	}
+	else if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
+	{
+		colormap = &gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].flats[0].Colormap;
+	}
+
+	// Calculate fog intensity based on distance (simulate fixed fog behavior)
+	float fogIntensity = 0.3f;
+	if (colormap)
+	{
+		// Get base fog intensity from colormap
+		fogIntensity = colormap->FogDensity * 0.003f;
+		if (fogIntensity > 1.0f) fogIntensity = 1.0f;
+		if (fogIntensity < 0.1f) fogIntensity = 0.1f;
+	}
+
+	// Get fog color (use default gray if no colormap found)
+	PalEntry fogColor;
+	if (colormap)
+	{
+		fogColor = colormap->FadeColor;
+	}
+	else
+	{
+		fogColor = PalEntry(128, 128, 128);  // Default gray fog
+	}
+
+	// Calculate distance-based fog intensity
+	float viewDistance = 250.0f;  // Example view distance, adjust as needed
+	float distanceFactor = viewDistance / 2000.0f;  // Normalize distance
+	float distanceBasedIntensity = fogIntensity * distanceFactor;
+
+	// Set fog color with alpha for blending
+	gl_RenderState.SetColor(
+		fogColor.r / 255.0f,
+		fogColor.g / 255.0f,
+		fogColor.b / 255.0f,
+		distanceBasedIntensity
+	);
+
+	// Apply fog overlay to foggy surfaces
+	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
+	{
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_PLAIN);
+	}
+	if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
+	{
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_PLAIN);
+	}
+	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].drawitems.Size() > 0)
+	{
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_PLAIN);
+	}
+	if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].drawitems.Size() > 0)
+	{
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_PLAIN);
+	}
+
+	glDepthMask(true);
+
+	// Fifth pass: additive lights (all surfaces, including foggy ones)
+	gl_RenderState.EnableFog(false);  // Keep fog disabled
 	gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 	glDepthFunc(GL_EQUAL);
 	if (gl_SetupLightTexture())
 	{
+		// Apply additive lights to ALL surfaces
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_FOGGY);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_FOGGY);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_FOGGY);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX_FOGGY);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
 	}
 	else gl_lights = false;
 
+	// Cleanup
 	glDepthFunc(GL_LESS);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	gl_RenderState.EnableFog(true);
 	gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
 	glDepthMask(true);
-
 }
-

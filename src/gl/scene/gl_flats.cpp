@@ -443,6 +443,37 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		DrawSubsectors(pass, false, false);
 		gl_RenderState.EnableTextureMatrix(false);
 		break;
+
+	case GLPASS_BRIGHTEN:
+		// Brightening pass
+		// Unused, unstable but why not keep it?
+		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
+		glDepthFunc(GL_LEQUAL);
+		glDepthMask(false);
+
+		// Apply brightening to the flat
+		mDrawer->SetColor(lightlevel, rel, Colormap, 1.0f);
+		mDrawer->SetFog(lightlevel, rel, &Colormap, false);
+		if (!gltexture->tex->isFullbright())
+			gl_RenderState.SetObjectColor(FlatColor | 0xff000000);
+
+		if (sector->special != GLSector_Skybox)
+		{
+			gl_RenderState.SetMaterial(gltexture, CLAMP_NONE, 0, -1, false);
+			gl_SetPlaneTextureRotation(&plane, gltexture);
+			DrawSubsectors(pass, false, false);
+			gl_RenderState.EnableTextureMatrix(false);
+		}
+		else
+		{
+			gl_RenderState.SetMaterial(gltexture, CLAMP_XY, 0, -1, false);
+			DrawSkyboxSector(pass, false);
+		}
+
+		glDepthMask(true);
+		glDepthFunc(GL_LESS);
+		gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+		break;
 	}
 	gl_RenderState.SetAddColor(0);
 }

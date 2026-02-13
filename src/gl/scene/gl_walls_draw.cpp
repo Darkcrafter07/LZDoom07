@@ -519,5 +519,21 @@ void GLWall::Draw(int pass)
 		gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
 		RenderWall(RWF_TEXTURED);
 		break;
+
+	case GLPASS_BRIGHTEN:
+		// Brightening pass
+		// Unused, unstable but why not keep it?
+		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
+		glDepthFunc(GL_LEQUAL);
+		glDepthMask(false);
+
+		// Apply brightening to the wall
+		gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
+		RenderWall(RWF_TEXTURED);
+
+		glDepthMask(true);
+		glDepthFunc(GL_LESS);
+		gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+		break;
 	}
 }
