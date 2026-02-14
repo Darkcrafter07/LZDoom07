@@ -645,8 +645,7 @@ bool GLWall::PutWallCompat(int passflag)
 	}
 
 	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
-	//bool masked = passflag == 2 && gltexture->isMasked();
-	bool masked = false; // do dynlights even on masked textures ffs
+	bool masked = passflag == 2 && gltexture->isMasked();
 
 	int list = list_indices[masked][foggy];
 	gl_drawinfo->dldrawlists[list].AddWall(this);
