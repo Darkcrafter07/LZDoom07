@@ -530,21 +530,21 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// we need to get flats darker, that's why we increase divisors twice from 255.0f to 510.0f
 	if (radius >= 384.0f && radius <= 800.0f)
 	{
-		r = light->GetRed() / 384.0f * cs;
-		g = light->GetGreen() / 384.0f * cs;
-		b = light->GetBlue() / 384.0f * cs;
+		r = light->GetRed() / 284.0f * cs;
+		g = light->GetGreen() / 284.0f * cs;
+		b = light->GetBlue() / 284.0f * cs;
 	}
 	else if (radius >= 800.0f && radius <= 1600.0f)
 	{
-		r = light->GetRed() / 540.0f * cs;
-		g = light->GetGreen() / 540.0f * cs;
-		b = light->GetBlue() / 540.0f * cs;
+		r = light->GetRed() / 322.0f * cs;
+		g = light->GetGreen() / 322.0f * cs;
+		b = light->GetBlue() / 322.0f * cs;
 	}
 	else if (radius >= 1600.0f)
 	{
-		r = light->GetRed() / 848.0f * cs;
-		g = light->GetGreen() / 848.0f * cs;
-		b = light->GetBlue() / 848.0f * cs;
+		r = light->GetRed() / 444.0f * cs;
+		g = light->GetGreen() / 444.0f * cs;
+		b = light->GetBlue() / 444.0f * cs;
 	}
 	else
 	{
@@ -623,6 +623,41 @@ static bool gl_CheckFog(FColormap *cm, int lightlevel)
 //
 //==========================================================================
 
+// -------------------   UNUSED   ------------------------------------------
+//bool GLWall::PutWallCompat_original_problematic_unused(int passflag)
+//{
+//	static int list_indices[2][2] =
+//	{ { GLLDL_WALLS_PLAIN, GLLDL_WALLS_FOG },{ GLLDL_WALLS_MASKED, GLLDL_WALLS_FOGMASKED } };
+//
+//	// are lights possible?
+//	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || type == RENDERWALL_M2SNF || !gltexture) return false;
+//
+//	// multipassing these is problematic.
+//	if ((flags&GLWF_SKYHACK && type == RENDERWALL_M2S)) return false;
+//
+//	// Any lights affecting this wall?
+//	
+//	//	// we need to comment out this check because then foggy-dynlight
+//	//	// walls unaffected by a huge dynlight start to brighten up entirely while another dynlight affecting it
+//	//if (!(seg->sidedef->Flags & WALLF_POLYOBJ))
+//	//{
+//	//	if (seg->sidedef->lighthead == nullptr) return false;
+//	//}
+//
+//	if (sub)
+//	{
+//		if (sub->lighthead == nullptr) return false;
+//	}
+//
+//	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
+//	bool masked = passflag == 2 && gltexture->isMasked();
+//
+//	int list = list_indices[masked][foggy];
+//	gl_drawinfo->dldrawlists[list].AddWall(this);
+//	return true;
+//}
+// -------------------   UNUSED   ------------------------------------------
+
 bool GLWall::PutWallCompat(int passflag)
 {
 	static int list_indices[2][2] =
@@ -634,23 +669,120 @@ bool GLWall::PutWallCompat(int passflag)
 	// multipassing these is problematic.
 	if ((flags&GLWF_SKYHACK && type == RENDERWALL_M2S)) return false;
 
-	// Any lights affecting this wall?
+	// Check if this wall has any lights affecting it
+	bool hasLights = false;
+
+	// First check if there are any lights at all
 	if (!(seg->sidedef->Flags & WALLF_POLYOBJ))
 	{
-		if (seg->sidedef->lighthead == nullptr) return false;
+		if (seg->sidedef->lighthead == nullptr)
+		{
+			// No lights on this wall
+			// Only skip lighting passes, not other passes like base or fog
+			if (passflag == GLPASS_LIGHTTEX || passflag == GLPASS_LIGHTTEX_ADDITIVE)
+				return false;
+		}
+		else
+		{
+			// Check if any lights are actually within range
+			for (FLightNode * ln = seg->sidedef->lighthead; ln; ln = ln->nextLight)
+			{
+				FDynamicLight * light = ln->lightsource;
+
+				// Get wall vertices
+				vertex_t *v1 = seg->sidedef->V1();
+				vertex_t *v2 = seg->sidedef->V2();
+
+				// Create a plane from the wall
+				// The plane equation is: ax + by + cz + d = 0
+				// We need to calculate a, b, c, d from the wall's vertices
+				double dx = v2->fX() - v1->fX();
+				double dy = v2->fY() - v1->fY();
+
+				// Normal is perpendicular to the wall (in 2D, just rotate 90 degrees)
+				double nx = -dy;
+				double ny = dx;
+
+				// Normalize the normal vector
+				double len = sqrt(nx*nx + ny * ny);
+				if (len > 0)
+				{
+					nx /= len;
+					ny /= len;
+				}
+
+				// Calculate d using one of the vertices
+				double d = -(nx * v1->fX() + ny * v1->fY());
+
+				// Now create a plane with these values
+				secplane_t wallPlane;
+				wallPlane.set(nx, ny, 0, d); // Set z-component to 0 as we're working in 2D
+
+				// Get light position and calculate distance
+				// Initialize group to a default value (0 is usually the default portal group)
+				int group = 0;
+				DVector3 lpos = light->PosRelative(group);
+
+				// Calculate distance from light to wall plane using the correct method
+				// PointToDist returns the actual distance value
+				float dist = fabsf(wallPlane.PointToDist(DVector2(lpos.X, lpos.Y), lpos.Z));
+				float radius = light->GetRadius();
+
+				// Check if light is within range
+				if (dist <= radius)
+				{
+					hasLights = true;
+					break; // Found at least one light that affects this wall
+				}
+			}
+
+			// If no lights are in range, skip lighting passes
+			if (!hasLights && (passflag == GLPASS_LIGHTTEX || passflag == GLPASS_LIGHTTEX_ADDITIVE))
+				return false;
+		}
 	}
 	else if (sub)
 	{
-		if (sub->lighthead == nullptr) return false;
+		// Similar logic for polyobj walls
+		if (sub->lighthead == nullptr)
+		{
+			if (passflag == GLPASS_LIGHTTEX || passflag == GLPASS_LIGHTTEX_ADDITIVE)
+				return false;
+		}
+		else
+		{
+			for (FLightNode * ln = sub->lighthead; ln; ln = ln->nextLight)
+			{
+				FDynamicLight * light = ln->lightsource;
+
+				// For subsectors, we need to find the closest wall
+				// This is more complex, so for now we'll just check if any light is in range
+				// Initialize group to a default value (0 is usually the default portal group)
+				int group = 0;
+				DVector3 lpos = light->PosRelative(group);
+				float radius = light->GetRadius();
+
+				// Simple check - if light radius overlaps with subsector bounds
+				// You might want to make this more precise
+				if (fabs(lpos.X - sub->sector->centerspot.X) < radius + 128 &&
+					fabs(lpos.Y - sub->sector->centerspot.Y) < radius + 128)
+				{
+					hasLights = true;
+					break;
+				}
+			}
+
+			if (!hasLights && (passflag == GLPASS_LIGHTTEX || passflag == GLPASS_LIGHTTEX_ADDITIVE))
+				return false;
+		}
 	}
 
-	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
+	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE);
 	bool masked = passflag == 2 && gltexture->isMasked();
 
 	int list = list_indices[masked][foggy];
 	gl_drawinfo->dldrawlists[list].AddWall(this);
 	return true;
-
 }
 
 //==========================================================================
@@ -738,19 +870,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	FVector3 nearPt, up, right, t1;
 	float scale;
 
-	float fogdensity = gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
-
 	FLightNode * node = sub->lighthead;
-
-	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
-
-	if (!foggy)
-	{
-		// black fog is diminishing light and should affect lights less than the rest!
-		if (pass == GLPASS_LIGHTTEX) mDrawer->SetFog((255 + lightlevel) >> 1, 0, NULL, false);
-		else mDrawer->SetFog(lightlevel, 0, &Colormap, true);
-	}
-
 	while (node)
 	{
 		FDynamicLight * light = node->lightsource;
@@ -763,9 +883,9 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			continue;
 		}
 
-		// We must do the side check here because gl_SetupLight needs the correct plane orientation
+		// we must do the side check here because gl_SetupLight needs the correct plane orientation
 		// which we don't have for Legacy-style 3D-floors
-		double planeh = plane.plane.ZatPoint(light->Pos.X, light->Pos.Y);
+		double planeh = plane.plane.ZatPoint(light->Pos);
 		if (gl_lights_checkside && ((planeh < light->Z() && ceiling) || (planeh > light->Z() && !ceiling)))
 		{
 			node = node->nextLight;
@@ -778,23 +898,6 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			node = node->nextLight;
 			continue;
 		}
-
-		// For foggy flats, ensure fog is properly applied with subtler intensity
-		if (gl_CheckFog(&Colormap, lightlevel))
-		{
-			glEnable(GL_FOG);
-			GLfloat fogColor[4] = {
-				Colormap.FadeColor.r / 255.0f,
-				Colormap.FadeColor.g / 255.0f,
-				Colormap.FadeColor.b / 255.0f,
-				1.0f
-			};
-			glFogfv(GL_FOG_COLOR, fogColor);
-			glFogf(GL_FOG_DENSITY, fogdensity * -0.6931471f * 2.0f); // Reduced factor
-			glFogi(GL_FOG_MODE, GL_EXP);
-			glHint(GL_FOG_HINT, GL_NICEST);
-		}
-
 		gl_RenderState.Apply();
 
 		FFlatVertex *ptr = GLRenderer->mVBO->GetBuffer();
@@ -812,13 +915,6 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			ptr++;
 		}
 		GLRenderer->mVBO->RenderCurrent(ptr, GL_TRIANGLE_FAN);
-
-		// Reset fog state after rendering
-		if (gl_CheckFog(&Colormap, lightlevel))
-		{
-			glDisable(GL_FOG);
-		}
-
 		node = node->nextLight;
 	}
 }
@@ -887,6 +983,7 @@ bool GLWall::PrepareLight(FDynamicLight * light, int pass)
 	FVector3 t1;
 	int outcnt[4] = { 0,0,0,0 };
 
+	// This sets the coordinates to project a dynlight texture onto a polygon
 	for (int i = 0; i<4; i++)
 	{
 		t1 = &vtx[i * 3];
@@ -916,21 +1013,6 @@ void GLWall::RenderLightsCompat(int pass)
 	// black fog is diminishing light and should affect lights less than the rest!
 	if (pass == GLPASS_LIGHTTEX) mDrawer->SetFog((255 + lightlevel) >> 1, 0, NULL, false);
 	else mDrawer->SetFog(lightlevel, 0, &Colormap, true);
-
-	// Calculate fog density properly
-	float fogdensity = gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
-
-	// Set fog for this pass
-	if (pass == GLPASS_LIGHTTEX)
-	{
-		// For regular light pass, use the fog from the sector
-		mDrawer->SetFog(lightlevel, fogdensity, &Colormap, true);
-	}
-	else
-	{
-		// For additive light pass, also use the fog from the sector
-		mDrawer->SetFog(lightlevel, fogdensity, &Colormap, true);
-	}
 
 	if (seg->sidedef == NULL)
 	{
@@ -967,38 +1049,7 @@ void GLWall::RenderLightsCompat(int pass)
 		if (PrepareLight(light, pass))
 		{
 			vertcount = 0;
-
-			// For foggy walls, ensure fog is properly applied
-			if (gl_CheckFog(&Colormap, lightlevel))
-			{
-				// Enable fog and set proper parameters
-				glEnable(GL_FOG);
-				GLfloat fogColor[4] = {
-					Colormap.FadeColor.r / 255.0f,
-					Colormap.FadeColor.g / 255.0f,
-					Colormap.FadeColor.b / 255.0f,
-					1.0f
-				};
-				glFogfv(GL_FOG_COLOR, fogColor);
-
-				// Set fog density - use a more stable factor
-				glFogf(GL_FOG_DENSITY, fogdensity * -0.6931471f);
-
-				// Set fog mode to exponential for more realistic fog
-				glFogi(GL_FOG_MODE, GL_EXP);
-
-				// Set fog hint to improve stability
-				glHint(GL_FOG_HINT, GL_NICEST);
-			}
-
-			// Render the wall with fog applied
 			RenderWall(RWF_TEXTURED);
-
-			// Reset fog state after rendering
-			if (gl_CheckFog(&Colormap, lightlevel))
-			{
-				glDisable(GL_FOG);
-			}
 		}
 		node = node->nextLight;
 	}
@@ -1071,21 +1122,23 @@ void GLSceneDrawer::RenderMultipassStuff()
 	gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
 	gl_RenderState.EnableFog(false);  // Keep fog disabled
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
-	glDepthFunc(GL_LEQUAL);
+	// Dynlights in front of a transparent txt make all black behind it
+	glDepthFunc(GL_EQUAL);  // CRITICAL: Use GL_EQUAL instead of GL_LEQUAL
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
 	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
+	gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TEXONLY);
+	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
+	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
+	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
+	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
 
 	// Fourth pass: apply fog as translucent overlay for foggy surfaces
 	gl_RenderState.EnableFog(false);  // Ensure fog is disabled
-	// GL_SRC_ALPHA and 1 and no any other way around
-	gl_RenderState.BlendFunc(GL_SRC_ALPHA, 1);
+	gl_RenderState.BlendFunc(GL_SRC_ALPHA, 1);  // "GL_SRC_ALPHA, 1" the only way
 	glDepthMask(false);
 
 	// Get fog color and intensity from the first foggy surface (if any exist)
@@ -1153,24 +1206,24 @@ void GLSceneDrawer::RenderMultipassStuff()
 
 	glDepthMask(true);
 
-	// Fifth pass: additive lights (all surfaces, including foggy ones)
-	gl_RenderState.EnableFog(false);  // Keep fog disabled
-	gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
-	glDepthFunc(GL_EQUAL);
-	if (gl_SetupLightTexture())
-	{
-		// Apply additive lights to ALL surfaces
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-	}
-	else gl_lights = false;
+	//	// Fifth pass: additive lights (all surfaces, including foggy ones)
+	//gl_RenderState.EnableFog(false);  // Keep fog disabled
+	//gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+	//glDepthFunc(GL_EQUAL);
+	//if (gl_SetupLightTexture())
+	//{
+	//	// Apply additive lights to ALL surfaces
+	//	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+	//	gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+	//	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+	//	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+	//
+	//	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+	//	gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+	//	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+	//	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+	//}
+	//else gl_lights = false;
 
 	// Cleanup
 	glDepthFunc(GL_LESS);

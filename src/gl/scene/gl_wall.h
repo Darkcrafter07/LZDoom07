@@ -63,12 +63,19 @@ struct GLSeg
 	float y1,y2;
 	float fracleft, fracright;	// fractional offset of the 2 vertices on the linedef
 
-	FVector3 Normal() const 
+	FVector3 Normal() const
 	{
-		// we do not use the vector math inlines here because they are not optimized for speed but accuracy in the playsim and this is called quite frequently.
 		float x = y2 - y1;
 		float y = x1 - x2;
-		float ilength = 1.f / sqrtf(x*x + y*y);
+
+		// Handle zero-length segments
+		float lengthSq = x*x + y*y;
+		if (lengthSq < 0.0001f)  // Small epsilon to account for floating-point precision
+		{
+			return FVector3(1.f, 0, 0);  // Default normal for degenerate segments
+		}
+
+		float ilength = 1.f / sqrtf(lengthSq);
 		return FVector3(x * ilength, 0, y * ilength);
 	}
 };
@@ -191,16 +198,21 @@ public:
 	seg_t * seg;			// this gives the easiest access to all other structs involved
 	subsector_t * sub;		// For polyobjects
 	sector_t *frontsector, *backsector;
+
+	void ApplyTopFog();
+	void RenderLightsCompat(int pass);
+
 private:
 
 	void CheckGlowing();
+	//bool PutWallCompat_original_problematic_unused(int passflag); // unused for a while
 	bool PutWallCompat(int passflag);
 	void PutWall(bool translucent);
 	void PutPortal(int ptype);
 	void CheckTexturePosition(FTexCoordInfo *tci);
 
 	void RenderFogBoundaryCompat();
-	void RenderLightsCompat(int pass);
+
 
 	void Put3DWall(lightlist_t * lightlist, bool translucent);
 	bool SplitWallComplex(sector_t * frontsector, bool translucent, float& maplightbottomleft, float& maplightbottomright);
