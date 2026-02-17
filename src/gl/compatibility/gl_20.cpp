@@ -55,6 +55,7 @@
 
 CVAR(Bool, gl_lights_additive, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)
+CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 //==========================================================================
 //
@@ -1099,11 +1100,12 @@ void GLSceneDrawer::RenderMultipassStuff()
 	{
 		if (gl_SetupLightTexture())
 		{
+
 			gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 			glDepthFunc(GL_EQUAL);
 			if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
 
-			// Apply lights to ALL surfaces (including foggy ones, now without fixed fog)
+			// Apply regular lights to ALL surfaces
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
@@ -1152,16 +1154,6 @@ void GLSceneDrawer::RenderMultipassStuff()
 		colormap = &gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].flats[0].Colormap;
 	}
 
-	// Calculate fog intensity based on distance (simulate fixed fog behavior)
-	float fogIntensity = 0.3f;
-	if (colormap)
-	{
-		// Get base fog intensity from colormap
-		fogIntensity = colormap->FogDensity * 0.003f;
-		if (fogIntensity > 1.0f) fogIntensity = 1.0f;
-		if (fogIntensity < 0.1f) fogIntensity = 0.1f;
-	}
-
 	// Get fog color (use default gray if no colormap found)
 	PalEntry fogColor;
 	if (colormap)
@@ -1172,19 +1164,6 @@ void GLSceneDrawer::RenderMultipassStuff()
 	{
 		fogColor = PalEntry(128, 128, 128);  // Default gray fog
 	}
-
-	// Calculate distance-based fog intensity
-	float viewDistance = 250.0f;  // Example view distance, adjust as needed
-	float distanceFactor = viewDistance / 2000.0f;  // Normalize distance
-	float distanceBasedIntensity = fogIntensity * distanceFactor;
-
-	// Set fog color with alpha for blending
-	gl_RenderState.SetColor(
-		fogColor.r / 255.0f,
-		fogColor.g / 255.0f,
-		fogColor.b / 255.0f,
-		distanceBasedIntensity
-	);
 
 	// Apply fog overlay to foggy surfaces
 	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
@@ -1205,25 +1184,6 @@ void GLSceneDrawer::RenderMultipassStuff()
 	}
 
 	glDepthMask(true);
-
-	//	// Fifth pass: additive lights (all surfaces, including foggy ones)
-	//gl_RenderState.EnableFog(false);  // Keep fog disabled
-	//gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
-	//glDepthFunc(GL_EQUAL);
-	//if (gl_SetupLightTexture())
-	//{
-	//	// Apply additive lights to ALL surfaces
-	//	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-	//	gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-	//	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-	//	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-	//
-	//	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-	//	gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-	//	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-	//	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
-	//}
-	//else gl_lights = false;
 
 	// Cleanup
 	glDepthFunc(GL_LESS);
