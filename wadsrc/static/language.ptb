@@ -898,6 +898,7 @@ GLPREFMNU_TITLE 		= "PREFERÊNCIAS";			// Preferências do OPENGL
 GLPREFMNU_SECLIGHTMODE 		= "Modo de iluminação dos setores";
 GLPREFMNU_FOGMODE 		= "Modo de neblina";
 GLPREFMNU_FOGFORCEFULLBRIGHT 	= "Neblina força brilho máximo";
+GLPREFMNU_SPAWNCAMGLOWLIGHT 	= "Spawn camera glow dynlight";
 GLPREFMNU_WPNLIGHTSTR 		= "Intensidade do brilho das armas";
 GLPREFMNU_ENVIRONMENTMAPMIRROR 	= "Mapa ambiente em espelhos";
 GLPREFMNU_ENV 			= "Modo otimizado de visão noturna";

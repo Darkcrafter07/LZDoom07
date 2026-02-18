@@ -2731,6 +2731,7 @@ GLPREFMNU_TITLE 				= "Préférences OpenGL";
 GLPREFMNU_SECLIGHTMODE 			= "Mode de lumière Secteur";
 GLPREFMNU_FOGMODE 				= "Mode du broullard";
 GLPREFMNU_FOGFORCEFULLBRIGHT 	= "Brouillard force fullbright";
+GLPREFMNU_SPAWNCAMGLOWLIGHT 	= "Spawn camera glow dynlight";
 GLPREFMNU_WPNLIGHTSTR 			= "Intensité lumineuse des armes";
 GLPREFMNU_ENVIRONMENTMAPMIRROR 	= "Mappage environment sur les miroirs";
 GLPREFMNU_ENV 					= "Mode de vision nocture amélioré";

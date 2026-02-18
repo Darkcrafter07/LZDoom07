@@ -1,4 +1,4 @@
-// 
+﻿// 
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2004-2016 Christoph Oelckers
@@ -82,6 +82,13 @@ CVAR(Float, gl_mask_threshold, 0.5f,CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Float, gl_mask_sprite_threshold, 0.5f,CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_sort_textures, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
+// *legacy* It dimed impossible to have software-renderer alike camera glow
+// in fixed-pipeline old OpenGL1 or OpenGL2 without using shader. Well, here we go.
+// The CVAR is unused in this file but declared here, and later gets the job done
+// by spawning a special dynlight with a zscript flashlight alike mod.
+// Search for it in lzdoom.pk3 by "camglow" keyword.
+CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
 EXTERN_CVAR (Bool, cl_capfps)
 EXTERN_CVAR (Bool, r_deathcamera)
 EXTERN_CVAR (Float, underwater_fade_scalar)
@@ -104,7 +111,7 @@ angle_t GLSceneDrawer::FrustumAngle()
 {
 	float tilt = fabs(GLRenderer->mAngles.Pitch.Degrees);
 
-	// If the pitch is larger than this you can look all around at a FOV of 90�
+	// If the pitch is larger than this you can look all around at a FOV of 90°
 	if (tilt > 46.0f) return 0xffffffff;
 
 	// ok, this is a gross hack that barely works...
@@ -274,6 +281,7 @@ void GLSceneDrawer::CreateScene()
 	Bsp.Clock();
 	GLRenderer->mVBO->Map();
 	SetView();
+
 	validcount++;	// used for processing sidedefs only once by the renderer.
 	RenderBSPNode (level.HeadNode());
 	if (GLRenderer->mCurrentPortal != NULL) GLRenderer->mCurrentPortal->RenderAttached();
@@ -352,10 +360,13 @@ void GLSceneDrawer::RenderScene(int recursion)
 	{
 		pass = GLPASS_ALL;
 	}
-	else // GL 2.x legacy mode
+	else // GL 1x/2x legacy modes
 	{
 		// process everything that needs to handle textured dynamic lights.
-		if (haslights) RenderMultipassStuff();
+		if (haslights)
+		{
+			RenderMultipassStuff();
+		}
 
 		// The remaining lists which are unaffected by dynamic lights are just processed as normal.
 		pass = GLPASS_PLAIN;

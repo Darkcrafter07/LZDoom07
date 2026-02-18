@@ -62,4 +62,6 @@ EXTERN_CVAR(Float, gl_ssao_blur_amount)
 EXTERN_CVAR(Int, gl_debug_level)
 EXTERN_CVAR(Bool, gl_debug_breakpoint)
 
+EXTERN_CVAR(Bool, gl_camglowlight)
+
 #endif // _GL_INTERN_H

@@ -1,0 +1,7 @@
+// Flashlight++ - https://forum.zdoom.org/viewtopic.php?t=75585
+
+version "4.5"
+
+#include "zscript/camglow_holder.zs"
+#include "zscript/camglow_handler.zs"
+#include "zscript/camglow_light.zs"

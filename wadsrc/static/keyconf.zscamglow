@@ -1,0 +1,3 @@
+// this one turns on and off the camera glow dynamic light
+
+//alias gl_camglowlight "netevent camglow_event_toggle"

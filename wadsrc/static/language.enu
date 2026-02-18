@@ -2798,6 +2798,7 @@ GLPREFMNU_TITLE 				= "OPENGL PREFERENCES";
 GLPREFMNU_SECLIGHTMODE 			= "Sector light mode";
 GLPREFMNU_FOGMODE 				= "Fog mode";
 GLPREFMNU_FOGFORCEFULLBRIGHT 	= "Fog forces fullbright";
+GLPREFMNU_SPAWNCAMGLOWLIGHT 	= "Spawn camera glow dynlight";
 GLPREFMNU_WPNLIGHTSTR 			= "Weapon light strength";
 GLPREFMNU_ENVIRONMENTMAPMIRROR 	= "Environment map on mirrors";
 GLPREFMNU_ENV 					= "Enhanced night vision mode";

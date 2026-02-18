@@ -1,0 +1,17 @@
+---=== LZDoom07 Camera Glow Light Effect ===---
+
+The main purpose is to attach a dynamic light on to a player
+so that Doom Software Renderer camera glow alike effect becomes
+possible even on OpenGL1 video cards.
+
+It's kept available for all modes since it may improve visibility.
+But MAKE SURE it looks the best in GL1/GL2 modes ONLY.
+
+I give NO warranties and NO responsibility for ANY POSSIBLE DAMAGE!
+
+by Darkcrafter07: darkcrafter774@gmail.com
+based on wonderful mod "Flashlight++", thank you SO MUCH!
+Grab it here: https://forum.zdoom.org/viewtopic.php?t=75585
+
+Regards,
+Darkcrafter07

@@ -55,7 +55,6 @@
 
 CVAR(Bool, gl_lights_additive, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)
-CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 //==========================================================================
 //
@@ -1140,32 +1139,11 @@ void GLSceneDrawer::RenderMultipassStuff()
 
 	// Fourth pass: apply fog as translucent overlay for foggy surfaces
 	gl_RenderState.EnableFog(false);  // Ensure fog is disabled
-	gl_RenderState.BlendFunc(GL_SRC_ALPHA, 1);  // "GL_SRC_ALPHA, 1" the only way
+	gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // must be a faster way to do it
+	//gl_RenderState.BlendFunc(GL_SRC_ALPHA, 1); // another way
 	glDepthMask(false);
 
-	// Get fog color and intensity from the first foggy surface (if any exist)
-	FColormap *colormap = NULL;
-	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
-	{
-		colormap = &gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].walls[0].Colormap;
-	}
-	else if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
-	{
-		colormap = &gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].flats[0].Colormap;
-	}
-
-	// Get fog color (use default gray if no colormap found)
-	PalEntry fogColor;
-	if (colormap)
-	{
-		fogColor = colormap->FadeColor;
-	}
-	else
-	{
-		fogColor = PalEntry(128, 128, 128);  // Default gray fog
-	}
-
-	// Apply fog overlay to foggy surfaces
+	// Fifth pass: apply fog overlay to foggy surfaces
 	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
 	{
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_PLAIN);

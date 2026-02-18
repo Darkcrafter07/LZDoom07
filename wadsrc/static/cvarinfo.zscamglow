@@ -1,0 +1,41 @@
+// Based on Flashlight++ - https://forum.zdoom.org/viewtopic.php?t=75585
+
+// Flashlight+
+// Default - Software Camera Glow GL1x/GL2x
+user color cl_camglow_plus_color = "47 47 47";
+user int cl_camglow_plus_intensity = 88;
+
+user float cl_camglow_plus_inner = 32.0;
+user float cl_camglow_plus_outer = 40.0;
+
+user bool cl_camglow_plus_second_beam = true;
+
+user float cl_camglow_plus_color_2_mult = 0.54;
+
+user int cl_camglow_plus_intensity_2 = 198;
+
+user float cl_camglow_plus_inner_2 = 0.0;
+user float cl_camglow_plus_outer_2 = 15.0;
+
+user int cl_camglow_plus_location = 1;
+
+
+// Flashlight++
+user int cl_camglow_sound = -1;
+
+user int cl_camglow_custpos_x = 0;
+user int cl_camglow_custpos_y = 0;
+user int cl_camglow_custpos_z = 0;
+
+user bool cl_camglow_alertmonsters = false;
+
+user int cl_camglow_sway_type = 0;
+user float cl_camglow_sway_spring = 1.0;
+user float cl_camglow_sway_damping = 1.0;
+user int cl_camglow_sway_inertia = 1;
+
+user bool cl_camglow_attenuated = false;
+user bool cl_camglow_noise = false;
+user float cl_camglow_noise_min = 0.9;
+
+user bool cl_camglow_interpolate = false;

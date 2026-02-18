@@ -1,0 +1,6 @@
+// Based on Flashlight++ - https://forum.zdoom.org/viewtopic.php?t=75585
+
+GameInfo
+{
+   AddEventHandlers = "camglow_Handler"
+}
