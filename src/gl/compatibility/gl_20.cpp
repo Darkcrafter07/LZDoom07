@@ -407,10 +407,10 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 	float radius = light->GetRadius();
 
-	if (gl.legacyMode && (light->IsAttenuated()))
-	{
-		radius *= 0.66f;
-	}
+	//if (gl.legacyMode && (light->IsAttenuated()))
+	//{
+	//	radius *= 0.66f;
+	//}
 
 	if (radius <= 0.f) return false;
 	if (dist > radius) return false;
@@ -431,6 +431,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 	pos = { (float)lpos.X, (float)lpos.Z, (float)lpos.Y };
 	fn = p.Normal();
+
 	fn.GetRightUp(right, up);
 
 	FVector3 tmpVec = fn * dist;
@@ -493,10 +494,10 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 	float radius = light->GetRadius();
 
-	if (gl.legacyMode && (light->IsAttenuated()))
-	{
-		radius *= 0.66f;
-	}
+	//if (gl.legacyMode && (light->IsAttenuated()))
+	//{
+	//	radius *= 0.66f;
+	//}
 
 	if (radius <= 0.f) return false;
 	if (dist > radius) return false;
@@ -664,9 +665,11 @@ bool GLWall::PutWallCompat(int passflag)
 	{ { GLLDL_WALLS_PLAIN, GLLDL_WALLS_FOG },{ GLLDL_WALLS_MASKED, GLLDL_WALLS_FOGMASKED } };
 
 	// are lights possible?
-	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || type == RENDERWALL_M2SNF || !gltexture) return false;
+	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || type == RENDERWALL_M2SNF || !gltexture) return false; // no foggy midtxt?
 
-	// multipassing these is problematic.
+	//if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || !gltexture) return false;
+
+	// multipassing these is problematic
 	if ((flags&GLWF_SKYHACK && type == RENDERWALL_M2S)) return false;
 
 	// Check if this wall has any lights affecting it

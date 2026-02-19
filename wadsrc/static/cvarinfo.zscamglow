@@ -1,9 +1,10 @@
-// Based on Flashlight++ - https://forum.zdoom.org/viewtopic.php?t=75585
+// Camglow dynlight by Darkcrafter07
+// Based on "Flashlight++" by SuaveSteve: https:// forum.zdoom.org/viewtopic.php?t=75585
 
 // Flashlight+
 // Default - Software Camera Glow GL1x/GL2x
-user color cl_camglow_plus_color = "47 47 47";
-user int cl_camglow_plus_intensity = 88;
+user color cl_camglow_plus_color = "96 96 96";
+user int cl_camglow_plus_intensity = 72;
 
 //user float cl_camglow_plus_inner = 32.0;
 //user float cl_camglow_plus_outer = 40.0;
@@ -13,9 +14,9 @@ user float cl_camglow_plus_outer = 115.0;
 
 user bool cl_camglow_plus_second_beam = true;
 
-user float cl_camglow_plus_color_2_mult = 0.54;
+user float cl_camglow_plus_color_2_mult = 0.42;
 
-user int cl_camglow_plus_intensity_2 = 198;
+user int cl_camglow_plus_intensity_2 = 224;
 
 //user float cl_camglow_plus_inner_2 = 0.0;
 //user float cl_camglow_plus_outer_2 = 15.0;

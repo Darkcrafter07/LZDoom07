@@ -1,3 +1,6 @@
+// Camglow dynlight by Darkcrafter07
+// Based on "Flashlight++" by SuaveSteve: https:// forum.zdoom.org/viewtopic.php?t=75585
+
 class camglow_Handler : StaticEventHandler 
 {
     // Helper method to grant the holder item to the player

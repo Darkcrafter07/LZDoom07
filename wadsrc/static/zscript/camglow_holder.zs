@@ -1,4 +1,6 @@
-// Based on Flashlight++ - https:// forum.zdoom.org/viewtopic.php?t=75585
+// Camglow dynlight by Darkcrafter07
+// Based on "Flashlight++" by SuaveSteve: https:// forum.zdoom.org/viewtopic.php?t=75585
+
 // Handles turning the camglow on and off while the player has a camglow item in their inventory
 class camglow_Holder : Inventory 
 {
