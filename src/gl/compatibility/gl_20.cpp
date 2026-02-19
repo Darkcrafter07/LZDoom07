@@ -1,25 +1,4 @@
-// 
-//---------------------------------------------------------------------------
-//
-// Copyright(C) 2005-2016 Christoph Oelckers
-// Copyright(C) 2026 Vadim Taranov
-// All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Lesser General Public License for more details.
-//
-// You should have received a copy of the GNU Lesser General Public License
-// along with this program.  If not, see http://www.gnu.org/licenses/
-//
-//--------------------------------------------------------------------------
-//
+
 /*
 ** gl_20.cpp
 **
@@ -1102,7 +1081,6 @@ void GLSceneDrawer::RenderMultipassStuff()
 	{
 		if (gl_SetupLightTexture())
 		{
-
 			gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 			glDepthFunc(GL_EQUAL);
 			if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
@@ -1162,6 +1140,29 @@ void GLSceneDrawer::RenderMultipassStuff()
 	if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].drawitems.Size() > 0)
 	{
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_PLAIN);
+	}
+
+	// Sixth pass: there are still special dynamic lights that are SET to be ADDITIVE
+	// These lights must be rendered AFTER fog to remain bright and visible
+	if (GLRenderer->mLightCount && !FixedColormap)
+	{
+		if (gl_SetupLightTexture())
+		{
+			gl_RenderState.EnableFog(true); // Let additive lights blend with fog color if needed
+			gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+			glDepthFunc(GL_EQUAL);
+			glDepthMask(false);
+
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
+		}
 	}
 
 	glDepthMask(true);
