@@ -5,8 +5,11 @@
 user color cl_camglow_plus_color = "47 47 47";
 user int cl_camglow_plus_intensity = 88;
 
-user float cl_camglow_plus_inner = 32.0;
-user float cl_camglow_plus_outer = 40.0;
+//user float cl_camglow_plus_inner = 32.0;
+//user float cl_camglow_plus_outer = 40.0;
+
+user float cl_camglow_plus_inner = 30.0;
+user float cl_camglow_plus_outer = 115.0;
 
 user bool cl_camglow_plus_second_beam = true;
 
@@ -14,10 +17,13 @@ user float cl_camglow_plus_color_2_mult = 0.54;
 
 user int cl_camglow_plus_intensity_2 = 198;
 
-user float cl_camglow_plus_inner_2 = 0.0;
-user float cl_camglow_plus_outer_2 = 15.0;
+//user float cl_camglow_plus_inner_2 = 0.0;
+//user float cl_camglow_plus_outer_2 = 15.0;
 
-user int cl_camglow_plus_location = 1;
+user float cl_camglow_plus_inner_2 = 30.0;
+user float cl_camglow_plus_outer_2 = 115.0;
+
+user int cl_camglow_plus_location = 0;
 
 
 // Flashlight++
