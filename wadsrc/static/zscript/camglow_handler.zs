@@ -11,24 +11,30 @@ class camglow_Handler : StaticEventHandler
         return holder;
     }
 
-    override void WorldLoaded(WorldEvent e)
-    {
-        // Force reset the 'on' flag for all holders when a new map loads.
-        // This ensures WorldTick recreates the light actors, as previous ones were destroyed by the engine.
-        for (int i = 0; i < MAXPLAYERS; i++)
-        {
-            if (!playeringame[i] || !players[i].mo) continue;
-            
-            let holder = camglow_Holder(players[i].mo.FindInventory("camglow_Holder"));
-            if (holder)
-            {
-                // Reset state and clear stale pointers from the previous level
-                holder.on = false; 
-                holder.light1 = null;
-                holder.light2 = null;
-            }
-        }
-    }
+	override void WorldLoaded(WorldEvent e)
+	{
+	    // 1. Full purge of all "orphaned" dynlights in the map
+	    ThinkerIterator it = ThinkerIterator.Create("camglow_Light");
+	    camglow_Light hl;
+	    while (hl = camglow_Light(it.Next())) 
+	    {
+	        hl.Destroy();
+	    }
+
+	    // 2. Holders state reset for players
+	    for (int i = 0; i < MAXPLAYERS; i++)
+	    {
+	        if (!playeringame[i] || !players[i].mo) continue;
+	        
+	        let holder = camglow_Holder(players[i].mo.FindInventory("camglow_Holder"));
+	        if (holder)
+	        {
+	            holder.on = false; 
+	            holder.light1 = null;
+	            holder.light2 = null;
+	        }
+	    }
+	}
 
     override void WorldTick()
     {

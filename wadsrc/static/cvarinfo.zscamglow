@@ -1,25 +1,33 @@
 // Camglow dynlight by Darkcrafter07
 // Based on "Flashlight++" by SuaveSteve: https:// forum.zdoom.org/viewtopic.php?t=75585
 
+
+// =====================================
+// Intensity is actually a light radius!
+// =====================================
+
+
+
 // Flashlight+
 // Default - Software Camera Glow GL1x/GL2x
-user color cl_camglow_plus_color = "96 96 96";
-user int cl_camglow_plus_intensity = 72;
 
-//user float cl_camglow_plus_inner = 32.0;
-//user float cl_camglow_plus_outer = 40.0;
+
+//Instead of 128 128 128 write 80 80 80.
+//Instead of 255 255 255 write FF FF FF.
+user color cl_camglow_plus_color = "CC CC CC";
+
+// the 1st light actual radius
+user int cl_camglow_plus_intensity = 82;
 
 user float cl_camglow_plus_inner = 30.0;
 user float cl_camglow_plus_outer = 115.0;
 
 user bool cl_camglow_plus_second_beam = true;
 
-user float cl_camglow_plus_color_2_mult = 0.42;
+// the 2nd light actual intensity multiplier
+user float cl_camglow_plus_color_2_mult = 0.44;
 
-user int cl_camglow_plus_intensity_2 = 224;
-
-//user float cl_camglow_plus_inner_2 = 0.0;
-//user float cl_camglow_plus_outer_2 = 15.0;
+user int cl_camglow_plus_intensity_2 = 256;
 
 user float cl_camglow_plus_inner_2 = 30.0;
 user float cl_camglow_plus_outer_2 = 115.0;
@@ -45,4 +53,4 @@ user bool cl_camglow_attenuated = false;
 user bool cl_camglow_noise = false;
 user float cl_camglow_noise_min = 0.9;
 
-user bool cl_camglow_interpolate = false;
+user bool cl_camglow_interpolate = true;
