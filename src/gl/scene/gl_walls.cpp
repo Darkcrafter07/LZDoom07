@@ -77,13 +77,43 @@ void GLWall::PutWall(bool translucent)
 		translucent = true;
 	}
 
+	if (gl.legacyMode || gl.gl1path)
+	{
+		if (type == RENDERWALL_FFBLOCK || type == RENDERWALL_M2S)
+		{
+			// If that's a fence (Style Normal) — force multipass (will be dynlit)
+			if (RenderStyle == STYLE_Normal)
+			{
+				translucent = false;
+			}
+			// If that's glass (Style Translucent and alpha < 1.0) - NO multipass (not dynlit)
+			// Otherwise it's gonna become opaque in the third pass
+			else if (RenderStyle == STYLE_Translucent && alpha < 1.0f)
+			{
+				translucent = true;
+			}
+		}
+	}
+
 	if (mDrawer->FixedColormap)
 	{
 		// light planes don't get drawn with fullbright rendering
 		if (gltexture == NULL) return;
 		Colormap.Clear();
 	}
+
 	if (mDrawer->isFullbright(Colormap.LightColor, lightlevel)) flags &= ~GLWF_GLOW;
+
+	// NEW: Force mid-textures into multipass if they are not truly translucent
+	// This allows dynamic lights to work on railings, grates, etc.
+	if ((gl.legacyMode || gl.gl1path) && (type == RENDERWALL_M2S || type == RENDERWALL_M2SNF))
+	{
+		// If it's a standard alpha-tested wall (not additive or low-alpha), force it out of the translucent list
+		if (RenderStyle == STYLE_Normal || (RenderStyle == STYLE_Translucent && alpha >= 1.0f))
+		{
+			translucent = false;
+		}
+	}
 
 	if (translucent) // translucent walls
 	{
@@ -95,6 +125,7 @@ void GLWall::PutWall(bool translucent)
 	{
 		if (gl.legacyMode && !translucent)
 		{
+			// Try to put the wall into the multipass dynamic light lists
 			if (PutWallCompat(passflag[type])) return;
 		}
 

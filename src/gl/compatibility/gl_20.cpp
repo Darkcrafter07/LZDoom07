@@ -665,16 +665,21 @@ bool GLWall::PutWallCompat(int passflag)
 	static int list_indices[2][2] =
 	{ { GLLDL_WALLS_PLAIN, GLLDL_WALLS_FOG },{ GLLDL_WALLS_MASKED, GLLDL_WALLS_FOGMASKED } };
 
-	// are lights possible?
-	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || type == RENDERWALL_M2SNF || !gltexture) return false; // no foggy midtxt?
+	// ALLOW M2SNF and M2S to have lights!
+	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || !gltexture) return false;
 
-	//if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || !gltexture) return false;
-
-	// multipassing these is problematic
-	if ((flags&GLWF_SKYHACK && type == RENDERWALL_M2S)) return false;
+	// Block ONLY specific Skyhack if it's really a hurdle
+	if ((flags & GLWF_SKYHACK) && type == RENDERWALL_M2S) return false;
 
 	// Check if this wall has any lights affecting it
 	bool hasLights = false;
+
+	// FORCE: If it's a Mid-Texture, we ALWAYS want it in the list for the multipass
+	// This bypasses any logic that might skip it due to "no lights in range"
+	if (type == RENDERWALL_M2S || type == RENDERWALL_M2SNF)
+	{
+		hasLights = true;
+	}
 
 	// First check if there are any lights at all
 	if (!(seg->sidedef->Flags & WALLF_POLYOBJ))
