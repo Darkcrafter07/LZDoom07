@@ -474,6 +474,19 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		glDepthFunc(GL_LESS);
 		gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
 		break;
+
+		case GLPASS_BRIGHTMAP_LEGACY:
+    {
+        FMaterial *bm = gltexture->GetBrightmap();
+        if (bm)
+        {
+            gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
+            gl_SetPlaneTextureRotation(&plane, bm); 
+            DrawSubsectors(pass, false, false);
+            gl_RenderState.EnableTextureMatrix(false);
+        }
+    }
+    break;
 	}
 	gl_RenderState.SetAddColor(0);
 }

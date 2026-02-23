@@ -1,3 +1,4 @@
+//gl_interface.h
 #ifndef R_RENDER
 #define R_RENDER
 
@@ -37,7 +38,8 @@ enum TexMode
 	TM_REDTOALPHA,		// (1, 1, 1, r)
 	TM_CLAMPY,			// (r, g, b, (t >= 0.0 && t <= 1.0)? a:0)
 
-	TM_INVERTOPAQUE,	// used by GL 2.x fallback code.
+	TM_INVERTOPAQUE,	// used by GL 1x/2x fallback code.
+	TM_BRIGHTMAP_LEGACY,	// used by GL 1x/2x fallback code.
 };
 
 enum ELightMethod

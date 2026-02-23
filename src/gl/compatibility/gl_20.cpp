@@ -188,6 +188,14 @@ void gl_SetTextureMode(int type)
 		glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_PRIMARY_COLOR);
 		glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
 	}
+	else if (type == TM_BRIGHTMAP_LEGACY)
+	{
+		// Turn modulation on: brightmap texture will be multiplied by glColor
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+		// Make sure that scale has reset to 1, otherwise overbright
+		glTexEnvi(GL_TEXTURE_ENV, GL_RGB_SCALE, 1);
+	}
 	else // if (type == TM_MODULATE)
 	{
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
@@ -1017,6 +1025,7 @@ bool GLWall::PrepareLight(FDynamicLight * light, int pass)
 
 void GLWall::RenderLightsCompat(int pass)
 {
+
 	FLightNode * node;
 
 	// black fog is diminishing light and should affect lights less than the rest!

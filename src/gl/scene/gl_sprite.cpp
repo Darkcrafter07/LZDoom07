@@ -3,12 +3,15 @@
 //
 // Copyright(C) 2002-2016 Christoph Oelckers
 //
-// Anamorphic Hybrid-Forced-Perspective code by Vadim Taranov, (C) 2025-2026
+// Anamorphic Forced-Perspective by Rachael Alexanderson, (C) 2025
+//
+// Anamorphic Forced-Perspective+ and Hybrid Forced-Perspective
+// with occlusion culling code by Vadim Taranov, (C) 2025-2026
 // All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
+// it under the terms of the GNU Lesser General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 //
 // This program is distributed in the hope that it will be useful,
@@ -466,6 +469,40 @@ void GLSprite::Draw(int pass)
 			qd.Set(3, v[3][0], v[3][1], v[3][2], ur, vb);
 			qd.Render(GL_TRIANGLE_STRIP);
 
+			// --- Legacy GL1x/GL2x sprites brightmaps block start ---
+			if (gl_RenderState.IsBrightmapEnabled() && gl.legacyMode && !fullbright)
+			{
+				FMaterial *bm = gltexture->GetBrightmap();
+				if (bm)
+				{
+					// 1. Setup brigtmaps state
+					gl_RenderState.EnableFog(false);
+					gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // Additive
+					//gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE); // Multiplicative
+					gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
+
+					// 2. Bind mask. Pass the same parameters that we do for the base texture
+					gl_RenderState.SetMaterial(bm, CLAMP_XY, translation, OverrideShader, !!(RenderStyle.Flags & STYLEF_RedIsAlpha));
+
+					// Brightmap is always fullbright but accounts sprites transparency
+					//mDrawer->SetColor(255, 0, Colormap, trans);
+					mDrawer->SetColor(96, 0, Colormap, trans); // milder effect amount
+
+					gl_RenderState.Apply();
+
+					// 3. Draw on the same "v" vertices
+					qd.Render(GL_TRIANGLE_STRIP);
+
+					// 4. Restore everything back for the next cycle step (or foglayer)
+					gl_RenderState.SetTextureMode(TM_MODULATE);
+					gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+					gl_RenderState.EnableFog(!foglayer);
+					// Return the base material not to break the logic below
+					gl_RenderState.SetMaterial(gltexture, CLAMP_XY, translation, OverrideShader, !!(RenderStyle.Flags & STYLEF_RedIsAlpha));
+				}
+			}
+			// --- Legacy GL1x/GL2x sprites brightmaps block finish ---
+
 			if (foglayer)
 			{
 				// If we get here we know that we have colored fog and no fixed colormap.
@@ -511,6 +548,7 @@ void GLSprite::Draw(int pass)
 	gl_RenderState.SetAddColor(0);
 	gl_RenderState.EnableTexture(true);
 	gl_RenderState.SetDynLight(0, 0, 0);
+
 }
 
 
@@ -758,14 +796,14 @@ static bool CheckFrustumCulling(AActor* thing)
 	// Extract the ACTUAL current FOV from the viewpoint
 	// r_viewpoint.FOV is already in degrees, so we don't need to convert
 	float currentFOV = r_viewpoint.FieldOfView.Degrees;
-	float currentFOV2x = currentFOV * 2.0;
+	float currentFOVenlarged = currentFOV * 3.0f;
 
 	// Calculate frustum based on tilt
 	float tilt = fabs(static_cast<float>(r_viewpoint.Angles.Pitch.Degrees));
 	if (tilt > 46.0f) return false; // Don't cull at extreme angles
 
 	// Use the actual FOV instead of hardcoded 90
-	float floatangle = 2.0 + (45.0 + (tilt / 1.9)) * currentFOV2x * 48.0 / AspectMultiplier(r_viewwindow.WidescreenRatio) / currentFOV;
+	float floatangle = 2.0 + (45.0 + (tilt / 1.9)) * currentFOVenlarged * 48.0 / AspectMultiplier(r_viewwindow.WidescreenRatio) / currentFOV;
 	angle_t frustumAngle = DAngle(floatangle).BAMs();
 
 	if (frustumAngle < ANGLE_180)
@@ -1017,14 +1055,34 @@ bool spriteIntersectsLineCachedWrapper(line_t* line, float x1, float y1, float x
 }
 // === CACHED version of SpriteIntersectsLinedef - finish === UNUSED ===
 
-// Alternative version that checks the actor's position directly
-static bool IsActorInVoid(AActor *actor)
+// Helper function to check for void space
+static bool IsActorInVoid(AActor* actor)
 {
-	// Check if the actor's position is in a valid sector
-	sector_t* sector = P_PointInSector(actor->X(), actor->Y());
+	if (!actor) return true;
 
-	// If sector is nullptr, actor is outside the map
-	if (sector == nullptr)
+	// Get the actor's current sector
+	subsector_t* sub = R_PointInSubsector(actor->X(), actor->Y());
+	if (!sub || !sub->sector) return true;
+
+	sector_t* sector = sub->sector;
+
+	// Calculate sector floor and ceiling heights at actor position
+	double floorZ = sector->floorplane.ZatPoint(actor->X(), actor->Y());
+	double ceilingZ = sector->ceilingplane.ZatPoint(actor->X(), actor->Y());
+
+	// Calculate actor's top and bottom positions
+	double actorBottom = actor->Z();
+	double actorTop = actorBottom + actor->Height;
+
+	// Define epsilon for floating-point comparison
+	const double epsilon = 0.1;
+
+	// Check if actor is completely above ceiling or below floor
+	bool isBelowFloor = (actorTop < floorZ - epsilon);
+	bool isAboveCeiling = (actorBottom > ceilingZ + epsilon);
+
+	// If above ceiling or below floor = In void space
+	if (isBelowFloor || isAboveCeiling)
 	{
 		return true;
 	}
@@ -1377,11 +1435,10 @@ static TMap<AActor*, Visibility1sidedCacheEntry> Visibility1sidedCache;
 static bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor* viewer, const DVector3& thingpos)
 {
 	// Fast escape checks
-	if (!thing || !viewer) return true;
+	if (!thing || !viewer) return false;
 
-	// We call the function with "!" - that's why return "true" when culled
-	if (CheckFrustumCulling(thing)) return true;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	float spriteScale = 0.15f;
 
@@ -1489,7 +1546,7 @@ bool SpriteCrossed2sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 	if (!thing || !viewer) return false;
 
 	// Use caching if enabled
-	if (enableAnamorphCache)  // Renamed variable but same concept!
+	if (enableAnamorphCache)
 	{
 		const int currentMapTimeTick = level.maptime;
 		SpriteCrossed2SidedLineCacheEntry& entry = SpriteCrossed2sidedLineCache[thing];
@@ -1555,7 +1612,7 @@ struct ObstructionData2Sided
 		}
 		float viewerBottom = viewer->Z();
 		float viewerTop = viewerBottom + EyeHeight;
-		float viewerBottomAdj = viewerBottom - Ztolerance2sided;
+		float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
 		float viewerTopAdj = viewerTop + Ztolerance2sided;
 		float spriteBottom = thing->Z();
 		float spriteTop = (thing->Z()) + (thing->Height);
@@ -1607,20 +1664,20 @@ struct ObstructionData2Sided
 		float floorHeightMultiplier1 = ((isLegacyProjectile || isLargeSprite) && isObstructionTallEnough) ? 2.5f : 1.0f;
 		float ceilingHeightMultiplier1 = ((isLegacyProjectile || isLargeSprite) && isObstructionTallEnough) ? 2.75f : 1.0f;
 		// Calculate distance between viewer and sprite
-		const FVector2 viewerPos = GetActorPosition(viewer);
-		const FVector2 thingPos = GetActorPosition(thing);
-		const float distanceSquared = (viewerPos - thingPos).LengthSquared();
-		const float distance = sqrt(distanceSquared);
+		FVector2 viewerPos = GetActorPosition(viewer);
+		FVector2 thingPos = GetActorPosition(thing);
+		float distanceSquared = (viewerPos - thingPos).LengthSquared();
+		float distance = sqrt(distanceSquared);
 
 		// Enhanced obstruction check for large sprites/projectiles
 		if (isLegacyProjectile || isLargeSprite)
 		{
 			// Calculate obstruction proximity factor (1.0 at 0 distance, 0.0 at 256 units)
-			const float proximityFactor = clamp(1.0f - (distance / 256.0f), 0.0f, 1.0f);
+			float proximityFactor = clamp(1.0f - (distance / 256.0f), 0.0f, 1.0f);
 
 			// Dynamic multipliers that increase as sprite gets closer to obstruction
-			const float baseFloorMultiplier = 2.5f;
-			const float baseCeilingMultiplier = 2.75f;
+			float baseFloorMultiplier = 2.5f;
+			float baseCeilingMultiplier = 2.75f;
 
 			// Apply proximity-based scaling
 			floorHeightMultiplier1 = 1.0f + (baseFloorMultiplier - 1.0f) * proximityFactor;
@@ -1631,7 +1688,7 @@ struct ObstructionData2Sided
 			{
 				// Projectiles get extra culling when near floor/ceiling
 				// where 384.0f is a permittable view height range to allow culling
-				const float heightFactor = 1.0f - fabs(thing->Z() - floorHeightInitial) / 384.0f;
+				float heightFactor = 1.0f - fabs(thing->Z() - floorHeightInitial) / 384.0f;
 				floorHeightMultiplier1 *= 1.0f + (0.5f * heightFactor);
 			}
 		}
@@ -1805,8 +1862,8 @@ static const FVector2 directionVectors[4] =
 static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 {
 	// No obstructions found means true
-	if (CheckFrustumCulling(thing)) return true;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// Eye height calculation
 	float EyeHeight2 = 41.0f;
@@ -1822,10 +1879,10 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 		(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
 		(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
 
-	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	float spriteSize = (thing->radius + thing->Height) * 0.5f;
 	const bool isSmallSprite = (spriteSize <= 18.0f);
-	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 40.0f);
-	const bool isLargeSprite = (spriteSize > 40.0f);
+	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
+	const bool isLargeSprite = (spriteSize > 38.0f);
 	const bool isRegularMonster = !isSmallSprite && !isLegacyProjectile;
 
 	const bool isProjectileLargeSprite = (isLegacyProjectile || isLargeSprite);
@@ -1833,18 +1890,18 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	// Viewer positions
 	float viewerBottom = viewer->Z();
 	float viewerTop = viewerBottom + EyeHeight2;
-	float viewerBottomAdj = viewerBottom - Ztolerance2sided;
+	float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
 	float viewerTopAdj = viewerTop + Ztolerance2sided;
 
 	// ==================================================================================================
 	// THIS IS THE PLACE WHERE YOU CONFIGURE SPRITES CULLING AMOUNT PER TYPE FOR 2SIDED TALL OBSTRUCTIONS
 	// 1st val is large spr, 2nd is small sprites, third is all the rest sprites, higher vals cull more
-	const float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 8.5f : 1.75f) : 6.0f;
-	const float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 12.0f : 4.0f) : 1.64f;
+	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 8.5f : 1.75f) : 6.0f;
+	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 12.0f : 4.0f) : 1.64f;
 
 	// Core sprite positions (using expansion factors)
-	const FVector2 viewerPos = GetActorPosition(viewer);
-	const FVector2 thingCenterPos = GetActorPosition(thing);
+	FVector2 viewerPos = GetActorPosition(viewer);
+	FVector2 thingCenterPos = GetActorPosition(thing);
 	float spriteBottom = thing->Z();
 	float spriteTop = thing->Z() + thing->Height * HeightExpansionFactor;
 	float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
@@ -1876,7 +1933,7 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 				if (!(directionMask & currentDir)) continue;
 
 				// Use precomputed direction vector instead of trig functions
-				testPoint = thingCenterPos + directionVectors[shift] * (thing->radius * RadiusExpansionFactor);
+				testPoint = thingCenterPos + directionVectors[shift] * ( (thing->radius) * RadiusExpansionFactor);
 			}
 
 			// Check both sectors (viewer & sprite)
@@ -2010,11 +2067,11 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 // bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
 bool IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(AActor* viewer, AActor* thing)
 {
-	if (!viewer || !thing || viewer == thing) return true;
+	if (!viewer || !thing || viewer == thing) return false;
 
 	// We call the function with "!" - that's why return "true" when culled
-	if (CheckFrustumCulling(thing)) return true;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// 3. Full occlusion test
 	return CheckLineOfSight2sided(viewer, thing);
@@ -2036,11 +2093,11 @@ static TMap<AActor*, Visibility2sidedObstrCacheEntry> Visibility2sidedObstrCache
 // bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
 bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AActor* thing)
 {
-	if (!viewer || !thing || viewer == thing) return true;
+	if (!viewer || !thing || viewer == thing) return false;
 
 	// We call the function with "!" - that's why return "true" when culled
-	if (CheckFrustumCulling(thing)) return true;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// 3. Occlusion test - choose implementation based on toggle
 	if (enableAnamorphCache)
@@ -2508,7 +2565,7 @@ static float GetActualSpriteCeilingZ3DfloorsAndOther(sector_t* s, DVector3& pos,
 // Helper function: Find intersection between plane and line
 static bool PlaneLineIntersection3DFloors(AActor* thing, secplane_t* plane, DVector3& start, DVector3& end, DVector3& out)
 {
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	const DVector3& n = plane->Normal();
 	float planeD = plane->fD();
@@ -2551,9 +2608,8 @@ bool IsSpriteBehind3DFloorPlane(DVector3& cameraPos, DVector3& spritePos, sector
 	if (!sector || !sector->e)
 		return false;
 
-	// We call the function with "!" - that's why return "true" when culled
-	if (CheckFrustumCulling(thing)) return true;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return true;
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	const float TOLERANCE = 16.0f;    // Vertex-aligned sector tolerance
 	const float EPSILON = 8.0f;       // Vertical comparison safety
@@ -3241,7 +3297,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float spriteTop = thing->Top();
 		float sprLowerMid = (spriteBottom + (spriteTop * 0.25f));
 		float sprLowerMidAdj = sprLowerMid + Ztolerance2sided;
-		float viewerBottomAdj = viewerBottom - Ztolerance2sided;
+		float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
 		float viewerTopAdj = viewerTop + Ztolerance2sided;
 		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
 		float sprTopAdj = spriteTop + Ztolerance2sided;
@@ -3316,7 +3372,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// But we can disable Forced-Perspective for floating sprites entirely
 		// but only for those whose Y-axis sprite offset doesn't cross ground at all.
 		// Turn off anamorphosis for things that crossed 1sided linedefs.
-		if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine || actorInVoid)
+		if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
 		{
 			// Force smart mode for floating sprites and things crossing 1sided-linedefs
 			blend = 1.0f;
@@ -3359,7 +3415,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float temp_x1 = orig_x1, temp_y1 = orig_y1, temp_z1 = orig_z1;
 			float temp_x2 = orig_x2, temp_y2 = orig_y2, temp_z2 = orig_z2;
 
-			if ( (isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine )
+			if ( (isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
 			{
 				// Perform smart clip but don't raise for the cases above
 				PerformSpriteClipAdjustment(thing, thingpos, 0.0);
@@ -3415,7 +3471,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				regularsizmonster_factor1 * 4.0f;
 
 			float extended_radius1 = (isactorsmallbutnotcorpse) ?
-				spriteSize * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 0.25 when occluded
+				spriteSize * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 1.0 ocl, 0.025 super occluded
 				spriteSize;                              // 1x for all the rest sprites
 			float extended_radius2 = (islegacyversionprojectile) ?
 				extended_radius1 * projectiles_factor :  // 16x for projectiles like rockets, explosions and 6x when occluded

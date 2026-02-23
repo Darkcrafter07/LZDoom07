@@ -535,5 +535,15 @@ void GLWall::Draw(int pass)
 		glDepthFunc(GL_LESS);
 		gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
 		break;
+	case GLPASS_BRIGHTMAP_LEGACY:
+	{
+		FMaterial *bm = gltexture->GetBrightmap();
+		if (bm)
+		{
+			gl_RenderState.SetMaterial(bm, flags & 3, 0, -1, false);
+			RenderWall(RWF_TEXTURED);
+		}
+	}
+	break;
 	}
 }

@@ -330,6 +330,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 	// if we don't have a persistently mapped buffer, we have to process all the dynamic lights up front,
 	// so that we don't have to do repeated map/unmap calls on the buffer.
 	bool haslights = GLRenderer->mLightCount > 0 && FixedColormap == CM_DEFAULT && gl_lights;
+	bool hasbrightmaps = gl_RenderState.IsBrightmapEnabled();
 	if (gl.lightmethod == LM_DEFERRED && haslights)
 	{
 		GLRenderer->mLights->Begin();
@@ -363,7 +364,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 	else // GL 1x/2x legacy modes
 	{
 		// process everything that needs to handle textured dynamic lights.
-		if (haslights)
+		if (haslights || hasbrightmaps)
 		{
 			RenderMultipassStuff();
 		}
@@ -438,8 +439,68 @@ void GLSceneDrawer::RenderScene(int recursion)
 
 	glPolygonOffset(0.0f, 0.0f);
 	glDisable(GL_POLYGON_OFFSET_FILL);
-	RenderAll.Unclock();
 
+	// --- Legacy GL1x/GL2x walls and flats brightmaps block start ---
+	if (gl.legacyMode && gl_RenderState.IsBrightmapEnabled())
+	{
+		// 1. Prepare state: disable fog and set "texture only" mode
+		gl_RenderState.EnableFog(false);
+		gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
+
+		// 2. Dynlight insulation: reset dynlights and sector colors
+		gl_RenderState.SetDynLight(0, 0, 0);
+		gl_RenderState.SetAddColor(0);
+		gl_RenderState.SetObjectColor(0xffffffff);
+
+		// 3. Mix: additively, with fixed effect amount
+		gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // Additive
+		//gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE); // Mutliplicative
+		gl_RenderState.SetColor(0.15f, 0.15f, 0.15f, 1.0f); // Set effect amount
+
+		// 4. Blending precision: use EQUAL not to get over the surface boundaries
+		glDepthFunc(GL_EQUAL);
+		glDepthMask(false);
+
+		// 5. Draw basic lists (they're always active even without dynlights)
+		gl_drawinfo->drawlists[GLDL_PLAINWALLS].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+		gl_drawinfo->drawlists[GLDL_PLAINFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+		gl_drawinfo->drawlists[GLDL_MASKEDWALLS].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+		gl_drawinfo->drawlists[GLDL_MASKEDFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+
+		// 6. Draw multipass-lists (only if they're created and not empty)
+		if (gl_drawinfo->dldrawlists)
+		{
+			// Safe lists iteration that could contain brightmaps
+			static const int lightLists[] = {
+				GLLDL_WALLS_PLAIN, GLLDL_WALLS_MASKED, GLLDL_WALLS_FOG, GLLDL_WALLS_FOGMASKED,
+				GLLDL_FLATS_PLAIN, GLLDL_FLATS_MASKED, GLLDL_FLATS_FOG, GLLDL_FLATS_FOGMASKED
+			};
+
+			for (int i = 0; i < 8; i++)
+			{
+				int listIdx = lightLists[i];
+				GLDrawList *list = &gl_drawinfo->dldrawlists[listIdx];
+
+				// Critical check: test size before call
+				if (list->Size() > 0)
+				{
+					// Use check inside not to call Draw to nullptr
+					if (listIdx < GLLDL_FLATS_PLAIN)	list->DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+					else	list->DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+				}
+			}
+		}
+
+		// 7. States cleaning before exiting the function
+		glDepthFunc(GL_LESS);
+		glDepthMask(true);
+		gl_RenderState.EnableFog(true);
+		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		gl_RenderState.SetTextureMode(TM_MODULATE);
+	}
+	// --- Legacy GL1x/GL2x walls and flats brightmaps block finish ---
+
+	RenderAll.Unclock();
 }
 
 //-----------------------------------------------------------------------------

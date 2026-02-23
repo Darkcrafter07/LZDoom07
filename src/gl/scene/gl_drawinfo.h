@@ -41,6 +41,8 @@ enum DLDrawListType
 	GLLDL_FLATS_FOG,			// lights on fogged walls
 	GLLDL_FLATS_FOGMASKED,		// lights on fogged masked midtextures
 
+	GLLDL_WALLS_SHADOW,
+
 	GLLDL_TYPES,
 };
 
@@ -61,7 +63,9 @@ enum Drawpasses
 	GLPASS_LIGHTTEX_ADDITIVE,	// lighttexture pass (additive)
 	GLPASS_LIGHTTEX_FOGGY,	// lighttexture pass on foggy surfaces (forces all lights to be additive)
 	GLPASS_FOGBOUNDARY,    // Apply fog to dynamically lit surfaces
-	GLPASS_BRIGHTEN,
+
+	GLPASS_BRIGHTEN,	// additional brightening pass for GL1x/GL2x legacy code (unused yet)
+	GLPASS_BRIGHTMAP_LEGACY, // GL1x/GL2x legacy brightmap simulation effect
 
 };
 

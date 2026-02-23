@@ -164,6 +164,8 @@ public:
 		mat->Bind(clampmode, translation);
 	}
 
+	bool IsBrightmapEnabled() const { return mBrightmapEnabled; }
+
 	void Apply();
 	void ApplyColorMask();
 	void ApplyMatrices();
@@ -549,6 +551,12 @@ public:
 	// Backwards compatibility crap follows
 	void ApplyFixedFunction();
 	void DrawColormapOverlay();
+
+	void SetAlpha(float alpha)
+	{
+		mColor.vec[3] = alpha;
+	}
+
 };
 
 extern FRenderState gl_RenderState;
