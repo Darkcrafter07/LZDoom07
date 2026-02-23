@@ -285,6 +285,36 @@ public:
 	static void InitGlobalState();
 };
 
+// A simple proxy texture that behaves exactly like the base texture
+// but allows having unique gl_info (and thus a unique ParentTexture)
+// to be used in "gldefs.cpp" file
+class FBrightmapClone : public FTexture
+{
+	FTexture *Base;
+public:
+	FBrightmapClone(FTexture *base) : Base(base)
+	{
+		// Copy all metadata (size, offsets, etc.) from the original
+		CopyInfo(base);
+		// Give it a unique name based on the original to help debugging
+		Name = base->Name + "_Clone";
+		UseType = base->UseType;
+	}
+
+	// Forward pixel requests to the original texture
+	const uint8_t *GetColumn(FRenderStyle style, unsigned int column, const Span **spans_out) override
+	{
+		return Base->GetColumn(style, column, spans_out);
+	}
+
+	const uint8_t *GetPixels(FRenderStyle style) override
+	{
+		return Base->GetPixels(style);
+	}
+
+	void Unload() override { Base->Unload(); }
+};
+
 #endif
 
 

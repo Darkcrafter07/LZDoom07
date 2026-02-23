@@ -1172,9 +1172,19 @@ class GLDefsParser
 			}
 			*/
 
+			// Check if this brightmap is already "owned" by another texture
+			if (bmtex->gl_info.ParentTexture != nullptr && bmtex->gl_info.ParentTexture != tex)
+			{
+				// It's a shared brightmap! Create a unique clone for the current texture
+				bmtex = new FBrightmapClone(bmtex); // declared in "gl_material.h"
+			}
+
 			bmtex->bMasked = false;
 			tex->gl_info.Brightmap = bmtex;
-			bmtex->gl_info.ParentTexture = tex; // GL1x/GL2x - find out what texture is parent to this brightmap
+
+			// Now this link is strictly 1-to-1. 
+			// When CreateTexBuffer runs, it will see the CORRECT parent for this clone.
+			bmtex->gl_info.ParentTexture = tex;
 		}	
 		tex->gl_info.bDisableFullbright = disable_fullbright;
 	}
