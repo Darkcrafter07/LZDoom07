@@ -260,8 +260,8 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 				// Calculate luminance (Rec.709) for desaturation
 				float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
 
-				// Mixing: 55% color + 45% luma (desaturate by 45%)
-				float saturationFactor = 0.55f;
+				// Mixing: 80% color + 20% luma (desaturate by 20%)
+				float saturationFactor = 0.8f;
 
 				// Final color calculation with saturation adjustment
 				float finalR = luma + (r - luma) * saturationFactor;
