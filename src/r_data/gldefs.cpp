@@ -1174,6 +1174,7 @@ class GLDefsParser
 
 			bmtex->bMasked = false;
 			tex->gl_info.Brightmap = bmtex;
+			bmtex->gl_info.ParentTexture = tex; // GL1x/GL2x - find out what texture is parent to this brightmap
 		}	
 		tex->gl_info.bDisableFullbright = disable_fullbright;
 	}
