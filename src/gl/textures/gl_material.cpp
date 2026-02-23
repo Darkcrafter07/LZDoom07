@@ -192,12 +192,11 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 	int W, H;
 	int isTransparent = -1;
 
-
 	// Textures that are already scaled in the texture lump will not get replaced
 	// by hires textures
 	if (gl_texture_usehires && hirescheck != NULL && !alphatrans)
 	{
-		buffer = LoadHiresTexture (hirescheck, &w, &h);
+		buffer = LoadHiresTexture(hirescheck, &w, &h);
 		if (buffer)
 		{
 			return buffer;
@@ -209,11 +208,10 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 	W = w = tex->GetWidth() + 2 * exx;
 	H = h = tex->GetHeight() + 2 * exx;
 
+	buffer = new unsigned char[W*(H + 1) * 4];
+	memset(buffer, 0, W * (H + 1) * 4);
 
-	buffer=new unsigned char[W*(H+1)*4];
-	memset(buffer, 0, W * (H+1) * 4);
-
-	FBitmap bmp(buffer, W*4, W, H);
+	FBitmap bmp(buffer, W * 4, W, H);
 
 	if (translation <= 0 || alphatrans)
 	{
@@ -221,6 +219,67 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 		tex->CheckTrans(buffer, W*H, trans);
 		isTransparent = tex->gl_info.mIsTransparent;
 		if (bIsTransparent == -1) bIsTransparent = isTransparent;
+
+		// --- Darkcrafter07
+		// --- Black and white brightmaps look ugly in GL1x/GL2x modes
+		// --- so colorize them and cut them according to base texture transparency
+		if (gl.legacyMode && (tex->gl_info.ParentTexture != nullptr))
+		{
+			// 1. Create a temp buffer for parent (base) texture
+			unsigned char * parentBuf = new unsigned char[W * (H + 1) * 4];
+			memset(parentBuf, 0, W * (H + 1) * 4);
+			FBitmap parentBmp(parentBuf, W * 4, W, H);
+
+			// 2. Copy parent pixels to temp buffer
+			tex->gl_info.ParentTexture->CopyTrueColorPixels(&parentBmp, exx, exx);
+
+			// 3. Process pixels: Colorize, Desaturate and Cut by Parent Alpha
+			for (int i = 0; i < W * H; i++)
+			{
+				int idx = 4 * i;
+
+				// Hard-cut: If parent pixel is fully transparent, make brightmap pixel black and transparent
+				// Using a small threshold (e.g., 0) to determine visibility
+				if (parentBuf[idx + 3] == 0)
+				{
+					buffer[idx] = 0; // R
+					buffer[idx + 1] = 0; // G
+					buffer[idx + 2] = 0; // B
+					buffer[idx + 3] = 0; // A
+					continue;
+				}
+
+				// Multiply brightmap mask by parent colors (Base * Brightmap / 255)
+				float r = (float)(buffer[idx] * parentBuf[idx]) / 255.0f;
+				float g = (float)(buffer[idx + 1] * parentBuf[idx + 1]) / 255.0f;
+				float b = (float)(buffer[idx + 2] * parentBuf[idx + 2]) / 255.0f;
+
+				// Calculate parent's alpha ratio (0.0 to 1.0)
+				float alphaRatio = (float)parentBuf[idx + 3] / 255.0f;
+
+				// Calculate luminance (Rec.709) for desaturation
+				float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+
+				// Mixing: 55% color + 45% luma (desaturate by 45%)
+				float saturationFactor = 0.55f;
+
+				// Final color calculation with saturation adjustment
+				float finalR = luma + (r - luma) * saturationFactor;
+				float finalG = luma + (g - luma) * saturationFactor;
+				float finalB = luma + (b - luma) * saturationFactor;
+
+				// Apply parent alpha to color to ensure it fades out where parent is translucent
+				buffer[idx] = (unsigned char)clamp<float>(finalR * alphaRatio, 0, 255);
+				buffer[idx + 1] = (unsigned char)clamp<float>(finalG * alphaRatio, 0, 255);
+				buffer[idx + 2] = (unsigned char)clamp<float>(finalB * alphaRatio, 0, 255);
+
+				// Final alpha should be clamped to parent's alpha to avoid "ghosting"
+				buffer[idx + 3] = (unsigned char)clamp<int>(buffer[idx + 3] * alphaRatio, 0, 255);
+			}
+			delete[] parentBuf;
+		}
+		// ------------------------
+
 		// alpha texture for legacy mode
 		if (alphatrans)
 		{
@@ -251,7 +310,7 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 
 	// [BB] The hqnx upsampling (not the scaleN one) destroys partial transparency, don't upsamle textures using it.
 	// [BB] Potentially upsample the buffer.
-	return gl_CreateUpsampledTextureBuffer ( tex, buffer, W, H, w, h, !!isTransparent);
+	return gl_CreateUpsampledTextureBuffer(tex, buffer, W, H, w, h, !!isTransparent);
 }
 
 

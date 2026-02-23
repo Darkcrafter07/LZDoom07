@@ -455,7 +455,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 		// 3. Mix: additively, with fixed effect amount
 		gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // Additive
 		//gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE); // Mutliplicative
-		gl_RenderState.SetColor(0.15f, 0.15f, 0.15f, 1.0f); // Set effect amount
+		gl_RenderState.SetColor(1.5f, 1.5f, 1.5f, 1.0f); // Set effect amount
 
 		// 4. Blending precision: use EQUAL not to get over the surface boundaries
 		glDepthFunc(GL_EQUAL);

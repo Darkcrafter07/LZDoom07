@@ -448,7 +448,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		// Brightening pass
 		// Unused, unstable but why not keep it?
 		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
-		glDepthFunc(GL_LEQUAL);
+		glDepthFunc(GL_EQUAL);
 		glDepthMask(false);
 
 		// Apply brightening to the flat
@@ -476,8 +476,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		break;
 
 		case GLPASS_BRIGHTMAP_LEGACY:
-    {
-        FMaterial *bm = gltexture->GetBrightmap();
+        FMaterial *bm = gltexture->GetBrightmapLegacy();
         if (bm)
         {
             gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
@@ -485,8 +484,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
             DrawSubsectors(pass, false, false);
             gl_RenderState.EnableTextureMatrix(false);
         }
-    }
-    break;
+		break;
 	}
 	gl_RenderState.SetAddColor(0);
 }

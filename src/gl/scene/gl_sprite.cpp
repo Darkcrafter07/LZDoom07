@@ -472,7 +472,7 @@ void GLSprite::Draw(int pass)
 			// --- Legacy GL1x/GL2x sprites brightmaps block start ---
 			if (gl_RenderState.IsBrightmapEnabled() && gl.legacyMode && !fullbright)
 			{
-				FMaterial *bm = gltexture->GetBrightmap();
+				FMaterial *bm = gltexture->GetBrightmapLegacy();
 				if (bm)
 				{
 					// 1. Setup brigtmaps state
@@ -486,7 +486,7 @@ void GLSprite::Draw(int pass)
 
 					// Brightmap is always fullbright but accounts sprites transparency
 					//mDrawer->SetColor(255, 0, Colormap, trans);
-					mDrawer->SetColor(96, 0, Colormap, trans); // milder effect amount
+					mDrawer->SetColor(386, 0, Colormap, trans); // more pronounced effect
 
 					gl_RenderState.Apply();
 

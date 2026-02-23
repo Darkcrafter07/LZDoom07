@@ -405,6 +405,7 @@ protected:
 		gl_info.Metallic = NULL;
 		gl_info.Roughness = NULL;
 		gl_info.AmbientOcclusion = NULL;
+		gl_info.ParentTexture = NULL;
 		gl_info.areas = NULL;
 	}
 
@@ -444,6 +445,7 @@ public:
 		FTexture *Metallic;						// Metalness texture for the physically based rendering (PBR) light model
 		FTexture *Roughness;					// Roughness texture for PBR
 		FTexture *AmbientOcclusion;				// Ambient occlusion texture for PBR
+		FTexture *ParentTexture;				// GL1x/GL2x brightmaps - find out what's the parent texture for it
 		float Glossiness;
 		float SpecularLevel;
 		PalEntry GlowColor;

@@ -243,7 +243,8 @@ public:
 		return !!mBaseLayer->bIsTransparent;
 	}
 
-	FMaterial *FMaterial::GetBrightmap()
+	// GL1x/2x function to get brightmaps, because GL3x/GL4x paths don't need it
+	FMaterial *FMaterial::GetBrightmapLegacy()
 	{
 		if (tex == nullptr) return nullptr;
 
@@ -253,22 +254,24 @@ public:
 			return FMaterial::ValidateTexture(tex->gl_info.Brightmap, false);
 		}
 
-		// 2. If not and it hasn't been checked yet - try finding it in TexMan
-		if (!tex->gl_info.bBrightmapChecked)
-		{
-			tex->gl_info.bBrightmapChecked = 1;
-
-			// In LZDoom brightmaps are often registed in TexMan with their names.
-			// Let's try finding a texture which is marked as Brightmap for this ID.
-			// If CreateDefaultBrightmap auto method is available - call it
-
-			tex->CreateDefaultBrightmap();
-		}
-
-		if (tex->gl_info.Brightmap != nullptr)
-		{
-			return FMaterial::ValidateTexture(tex->gl_info.Brightmap, false);
-		}
+		// === USELESS, our legacy brightmaps work without this block ===============
+		//	// 2. If not and it hasn't been checked yet - try finding it in TexMan
+		//if (!tex->gl_info.bBrightmapChecked)
+		//{
+		//	tex->gl_info.bBrightmapChecked = 1;
+		//
+		//	// In LZDoom brightmaps are often registed in TexMan with their names.
+		//	// Let's try finding a texture which is marked as Brightmap for this ID.
+		//	// If CreateDefaultBrightmap auto method is available - call it
+		//
+		//	tex->CreateDefaultBrightmap();
+		//}
+		//
+		//if (tex->gl_info.Brightmap != nullptr)
+		//{
+		//	return FMaterial::ValidateTexture(tex->gl_info.Brightmap, false);
+		//}
+		//===========================================================================
 
 		return nullptr;
 	}
