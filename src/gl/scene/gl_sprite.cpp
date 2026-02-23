@@ -484,16 +484,23 @@ void GLSprite::Draw(int pass)
 					// 2. Bind mask. Pass the same parameters that we do for the base texture
 					gl_RenderState.SetMaterial(bm, CLAMP_XY, translation, OverrideShader, !!(RenderStyle.Flags & STYLEF_RedIsAlpha));
 
-					// The brighter the environment (lightlevel), the weaker the brightmap effect.
-					// We use a factor: 1.0 at light 0, and 0.1 at light 255.
-					float lightFactor = 1.0f - (float)lightlevel / 255.0f;
+					// The brightmap effect remains at full strength until lightlevel >= 128.
+					// After that, it linearly decreases to 15% at lightlevel 255.
 
-					// Keep a minimum 15% glow even in full light so it doesn't look dead
-					lightFactor = 0.15f + 0.85f * lightFactor;
+					float lightFactor;
+					if (lightlevel < 128)
+					{
+						// Full effect below 128
+						lightFactor = 1.0f; 
+					}
+					else
+					{
+						// Linear decrease from 1.0 (at 128) to 0.15 (at 255)
+						lightFactor = 1.0f - (float)(lightlevel - 128) / (255.0f - 128.0f);
+						lightFactor = 0.15f + 0.85f * lightFactor;  // Ensure minimum 15% glow
+					}
 
 					int intensity = (int)(255 * lightFactor);
-
-					// Apply the dimmed color. We use the existing Colormap and trans.
 					mDrawer->SetColor(intensity, rel, Colormap, trans);
 
 					gl_RenderState.Apply();
