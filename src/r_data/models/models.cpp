@@ -361,12 +361,31 @@ static int FindGFXFile(FString & fn)
 FTextureID LoadSkin(const char * path, const char * fn)
 {
 	FString buffer;
-
 	buffer.Format("%s%s", path, fn);
-
 	int texlump = FindGFXFile(buffer);
 	const char * const texname = texlump < 0 ? fn : Wads.GetLumpFullName(texlump);
-	return TexMan.CheckForTexture(texname, ETextureType::Any, FTextureManager::TEXMAN_TryAny);
+
+	FTextureID id = TexMan.CheckForTexture(texname, ETextureType::Any, FTextureManager::TEXMAN_TryAny);
+
+	// [Darkcrafter07]: Look for brightmap associated with this skin
+	if (id.isValid())
+	{
+		FTexture *tex = TexMan[id];
+		// If the texture doesn't have a brightmap yet, try to find one by convention
+		if (tex && !tex->gl_info.Brightmap)
+		{
+			FString bmName = tex->Name;
+			//bmName += "_BM";
+			FTextureID bmid = TexMan.CheckForTexture(bmName, ETextureType::Any, FTextureManager::TEXMAN_TryAny);
+			if (bmid.isValid())
+			{
+				tex->gl_info.Brightmap = TexMan[bmid];
+			}
+		}
+	}
+	// --------------------------------------------------------------------
+
+	return id;
 }
 
 //===========================================================================
@@ -571,6 +590,14 @@ static void ParseModelDefLump(int Lump)
 
 			FSpriteModelFrame smf;
 			memset(&smf, 0, sizeof(smf));
+
+			// [Darkcrafter07] - init models and skins IDs
+			for (int i = 0; i < MAX_MODELS_PER_FRAME; i++)
+			{
+				smf.modelIDs[i] = -1;
+				smf.brightmapIDs[i] = FNullTextureID(); // init brightmaps
+			}
+
 			smf.modelIDs[0] = smf.modelIDs[1] = smf.modelIDs[2] = smf.modelIDs[3] = -1;
 			smf.xscale=smf.yscale=smf.zscale=1.f;
 
@@ -740,6 +767,39 @@ static void ParseModelDefLump(int Lump)
 						{
 							Printf("Skin '%s' not found in '%s'\n",
 								sc.String, smf.type->TypeName.GetChars());
+						}
+					}
+				}
+				else if (sc.Compare("brightmap"))	// [Darkcrafter07] - add brightmaps parsing to modeldef
+				{
+					sc.MustGetNumber();
+					index = sc.Number;
+					if (index < 0 || index >= MAX_MODELS_PER_FRAME)
+					{
+						sc.ScriptError("Too many brightmaps in %s", smf.type->TypeName.GetChars());
+					}
+					sc.MustGetString();
+					FixPathSeperator(sc.String);
+
+					if (!sc.Compare(""))
+					{
+						// Load the brightmap texture ID
+						smf.brightmapIDs[index] = LoadSkin(path.GetChars(), sc.String);
+        
+						if (smf.brightmapIDs[index].isValid())
+						{
+							// [Darkcrafter07]: Crucial link for GL3 and Legacy modes
+							FTexture *baseTex = TexMan[smf.skinIDs[index]];
+							FTexture *bmTex = TexMan[smf.brightmapIDs[index]];
+            
+							if (baseTex && bmTex)
+							{
+								// This link is what GetBrightmapLegacy() and GL3 shaders look for!
+								baseTex->gl_info.Brightmap = bmTex;
+								bmTex->gl_info.ParentTexture = baseTex; // Required for GL1x/GL2x brightmap colorization logic
+                
+								bmTex->bMasked = false; 
+							}
 						}
 					}
 				}

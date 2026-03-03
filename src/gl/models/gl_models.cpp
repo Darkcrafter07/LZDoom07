@@ -83,9 +83,64 @@ void FGLModelRenderer::BeginDrawModel(AActor *actor, FSpriteModelFrame *smf, con
 
 void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
 {
-	gl_RenderState.EnableModelMatrix(false);
+	// [Darkcrafter07]: GL1x/GL2x Legacy Brightmap Overlay
+	if (gl.legacyMode && gl_RenderState.IsBrightmapEnabled() && !(actor->renderflags & RF_FULLBRIGHT))
+	{
+		for (int i = 0; i < MAX_MODELS_PER_FRAME; i++)
+		{
+			if (smf->modelIDs[i] == -1) continue;
 
+			FTextureID skinID = smf->skinIDs[i];
+			FTexture *skin = skinID.isValid() ? TexMan[skinID] : nullptr;
+			FMaterial *baseMat = FMaterial::ValidateTexture(skin, false);
+
+			// Get your colorized/clipped brightmap from gl_material.cpp logic
+			FMaterial *bmMat = baseMat ? baseMat->GetBrightmapLegacy() : nullptr;
+
+			if (bmMat)
+			{
+				// 1. Force additive blending
+				gl_RenderState.EnableFog(false);
+				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+				gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
+
+				// 2. Calculate intensity (1.0 for dark sectors, decreasing for light ones)
+				int lightlevel = actor->Sector->lightlevel;
+				float lightFactor;
+				if (lightlevel < 128) lightFactor = 1.0f;
+				else {
+					lightFactor = 1.0f - (float)(lightlevel - 128) / 127.0f;
+					lightFactor = 0.15f + 0.85f * lightFactor;
+				}
+
+				// Apply intensity to the brightmap
+				gl_RenderState.SetColor(lightFactor, lightFactor, lightFactor, 1.0f);
+
+				// 3. Setup ONLY the brightmap material
+				int translation = (smf->flags & MDL_IGNORETRANSLATION) ? 0 : actor->Translation;
+
+				// IMPORTANT: Do NOT call SetMaterial for 'baseMat' here, 
+				// only for 'bmMat' to avoid drawing diffuse texture twice.
+				gl_RenderState.SetMaterial(bmMat, CLAMP_NONE, translation, -1, false);
+				gl_RenderState.Apply();
+
+				// 4. Redraw ONLY the geometry with the brightmap texture
+				this->RenderFrameModels(smf, actor->state, actor->tics, actor->GetClass(), translation);
+			}
+		}
+
+		// 5. Restore standard state
+		gl_RenderState.EnableFog(true);
+		gl_RenderState.SetTextureMode(TM_MODULATE);
+		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		gl_RenderState.ResetColor();
+	}
+
+	// Original cleanup code
+	gl_RenderState.EnableModelMatrix(false);
 	glDepthFunc(GL_LESS);
+
+	// Reset backface culling if it was enabled for translucency
 	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]) && !(smf->flags & MDL_DONTCULLBACKFACES))
 		glDisable(GL_CULL_FACE);
 }
@@ -109,13 +164,74 @@ void FGLModelRenderer::BeginDrawHUDModel(AActor *actor, const VSMatrix &objectTo
 
 void FGLModelRenderer::EndDrawHUDModel(AActor *actor)
 {
-	gl_RenderState.EnableModelMatrix(false);
+	// --- Darkcrafter07: Legacy Brightmap Overlay for HUD/Weapon Models ---
+	// We check if the actor is valid and if we are in legacy mode with brightmaps enabled
+	if (actor && actor->player && gl.legacyMode && gl_RenderState.IsBrightmapEnabled() && !(actor->renderflags & RF_FULLBRIGHT))
+	{
+		// We need to find the specific model frame being rendered for the player's weapon.
+		// We can get the current weapon class and the player's sprite state.
+		AActor *weapon = actor->player->ReadyWeapon;
+		if (weapon)
+		{
+			// Find the model frame associated with the current weapon state
+			// Note: We use the same parameters as in gl_weapon.cpp:212
+			FSpriteModelFrame *smf = FindModelFrame(weapon->GetClass(), actor->sprite, actor->frame, false);
 
+			if (smf)
+			{
+				for (int i = 0; i < MAX_MODELS_PER_FRAME; i++)
+				{
+					if (smf->modelIDs[i] == -1) continue;
+
+					// Get the brightmap using your custom colorization logic
+					FTextureID skinID = smf->skinIDs[i];
+					FTexture *skin = skinID.isValid() ? TexMan[skinID] : nullptr;
+					FMaterial *baseMat = FMaterial::ValidateTexture(skin, false);
+					FMaterial *bmMat = baseMat ? baseMat->GetBrightmapLegacy() : nullptr;
+
+					if (bmMat)
+					{
+						// 1. Setup Additive State
+						gl_RenderState.EnableFog(false);
+						gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+						gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
+
+						// 2. Calculate Intensity (Using weapon-specific lighting logic)
+						int lightlevel = actor->Sector ? actor->Sector->lightlevel : 128;
+						float lightFactor;
+						if (lightlevel < 128) lightFactor = 1.0f;
+						else {
+							lightFactor = 1.0f - (float)(lightlevel - 128) / 127.0f;
+							lightFactor = 0.15f + 0.85f * lightFactor;
+						}
+
+						gl_RenderState.SetColor(lightFactor, lightFactor, lightFactor, 1.0f);
+
+						// 3. Apply Brightmap and redraw
+						int translation = (smf->flags & MDL_IGNORETRANSLATION) ? 0 : actor->Translation;
+						gl_RenderState.SetMaterial(bmMat, CLAMP_NONE, translation, -1, false);
+						gl_RenderState.Apply();
+
+						// Redraw the weapon geometry as an additive layer
+						this->RenderFrameModels(smf, actor->state, actor->tics, weapon->GetClass(), translation);
+					}
+				}
+				// 4. Restore State
+				gl_RenderState.EnableFog(true);
+				gl_RenderState.SetTextureMode(TM_MODULATE);
+				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				gl_RenderState.ResetColor();
+			}
+		}
+	}
+
+	// --- Original Engine Cleanup ---
+	gl_RenderState.EnableModelMatrix(false);
 	glDepthFunc(GL_LESS);
+
 	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]))
 		glDisable(GL_CULL_FACE);
 }
-
 IModelVertexBuffer *FGLModelRenderer::CreateVertexBuffer(bool needindex, bool singleframe)
 {
 	return new FModelVertexBuffer(needindex, singleframe);
@@ -138,11 +254,24 @@ void FGLModelRenderer::SetInterpolation(double inter)
 
 void FGLModelRenderer::SetMaterial(FTexture *skin, bool clampNoFilter, int translation)
 {
-	FMaterial * tex = FMaterial::ValidateTexture(skin, false);
-	gl_RenderState.SetMaterial(tex, clampNoFilter ? CLAMP_NOFILTER : CLAMP_NONE, translation, -1, false);
+	// [Darkcrafter07]: Prevention of texture overwriting during brightmap pass ---
+	// If we are currently rendering a legacy brightmap overlay, skip the diffuse
+	// texture setup to prevent it from blending over our brightmap layer.
+	if (gl.legacyMode && gl_RenderState.GetTextureMode() == TM_BRIGHTMAP_LEGACY)
+	{
+		gl_RenderState.Apply();
+		return;
+	}
 
-	gl_RenderState.Apply();
-	if (modellightindex != -1) gl_RenderState.ApplyLightIndex(modellightindex);
+	// Default modulate rendering path
+	FMaterial * tex = FMaterial::ValidateTexture(skin, false);
+	if (tex != nullptr)
+	{
+		gl_RenderState.SetMaterial(tex, clampNoFilter ? CLAMP_NOFILTER : CLAMP_NONE, translation, -1, false);
+		gl_RenderState.Apply();
+
+		if (modellightindex != -1) gl_RenderState.ApplyLightIndex(modellightindex);
+	}
 }
 
 void FGLModelRenderer::DrawArrays(int start, int count)

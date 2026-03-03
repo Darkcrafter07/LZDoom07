@@ -83,8 +83,12 @@ public:
 	virtual void DrawArrays(int start, int count) = 0;
 	virtual void DrawElements(int numIndices, size_t offset) = 0;
 
-private:
+protected:
+	// [Darkcrafter07] - GL1x/GL2x brightmaps support for 3D models:
+	// place in "protected" instead of "private" so that it could get accessed from
+	// "gl_models.cpp" in "void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)".
 	void RenderFrameModels(const FSpriteModelFrame *smf, const FState *curState, const int curTics, const PClass *ti, int translation);
+
 };
 
 struct FModelVertex
@@ -442,6 +446,7 @@ struct FSpriteModelFrame
 	int modelIDs[MAX_MODELS_PER_FRAME];
 	FTextureID skinIDs[MAX_MODELS_PER_FRAME];
 	FTextureID surfaceskinIDs[MAX_MODELS_PER_FRAME][MD3_MAX_SURFACES];
+	FTextureID brightmapIDs[MAX_MODELS_PER_FRAME];
 	int modelframes[MAX_MODELS_PER_FRAME];
 	float xscale, yscale, zscale;
 	// [BB] Added zoffset, rotation parameters and flags.
