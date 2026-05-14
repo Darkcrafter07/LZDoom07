@@ -3281,7 +3281,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool isMediumSprite = (spriteSize > 18.0f && spriteSize < 38.0f);
 		bool isLargeSprite = (spriteSize > 38.0f);
 		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
-		bool isactorsmallbutnotcorpse = isSmallSprite && !isactoracorpse;
+		bool isactorsmallbutnotcorpse = (spriteSize >= 8.0f && spriteSize <= 18.0f) && !isactoracorpse;
 		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
 
 
@@ -3295,7 +3295,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
 		bool actorInVoid = IsActorInVoid(thing);
 
-		bool isSpriteObstructed = (!visible1sidesInfTallObstr || thingCrossed1sidedLine || !visible2sideTallEnoughObstr || !visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides);
+		bool isSpriteObstructed = (!visible1sidesInfTallObstr || 
+			thingCrossed1sidedLine || !visible2sideTallEnoughObstr || 
+			!visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides);
 
 		// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
 		// That's why get viewer from renderer context instead of function parameters
@@ -3334,10 +3336,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					spriteSize = 2.12f;
 				}
 			}
-			else if (isTinySprite) { spriteSize += 1.0f; }
-			else if (isSmallSprite) { spriteSize += 1.2f; }
+			else if (isTinySprite)   { spriteSize += 1.0f; }
+			else if (isSmallSprite)  { spriteSize += 1.2f; }
 			else if (isMediumSprite) { spriteSize += 2.4f; }
-			else { spriteSize *= 1.1f; }
+			else                     { spriteSize *= 1.1f; }
 		}
 		// -------------
 
@@ -3467,19 +3469,67 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float vtop = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
 
 
-			//			=== Dynamic anamorphosis occlusion based amount effect adjustment - START ===
+			//     === Dynamic anamorphosis occlusion based amount effect adjustment - START ===
+			// ---===============================================================================---
+			// Some HUGE leaks still occur through 2sided obstructions if we're too close. It's
+			//   because we set our anamorphosis radius amounts too big for them to penetrate flats
+			//   even as we step farther from them. But what to do when we're too close?
+			// Pay attention that even with huge anamorphosis radiuses these leaks go away.
+			// Conclusion: decrease anamorphosis radius when sprite is closer because when we close
+			//   even a smaller radius anamorphosis amount is enough to provide a good effect.
+			//   also pay attention we decrease radius only on viewer and sprite coplanar situtations!
+
+			float sprPrxFctr = 1.0f;
+			float sprPrxFctrProj = 1.0f; // Dedicated horizon stabilizer for legacy projectiles
+			float sprPrxDistThresh = 674.0f;
+
+			// High-performance optimization for Celeron (precalculated inverse constant to avoid slow division)
+			const float invSprPrxDistThresh = 1.0f / 674.0f;
+
+			// 1. Close-up coplanar mitigation loop
+			if ((dist < sprPrxDistThresh) && (fabs(btm - vbtm) <= Ztolerance2sided || fabs(btm - vtop) <= Ztolerance2sided))
+			{
+				float distProgress = dist * invSprPrxDistThresh; // Celeron-friendly fast multiplication!
+				sprPrxFctr = 0.075f + (0.25f - 0.075f) * distProgress;
+				sprPrxFctrProj = sprPrxFctr; // Sync close-up behavior
+			}
+
+			// 2. DISTANT HORIZON BLIND-ZONE INTERCEPTOR (Small Items)
+			if (dist >= sprPrxDistThresh && isactorsmallbutnotcorpse)
+			{
+				if (fabs(vpz - btm) < 128.0f)
+				{
+					sprPrxFctr = 0.15f; // Force-clamp the expansion hull for items on flat views
+				}
+			}
+
+			// 3. DISTANT HORIZON BLIND-ZONE INTERCEPTOR (Projectiles & Explosions)
+			// Projectiles carry a massive 224x amplification factor. When the line of sight is perfectly flat,
+			// we enforce a strict 0.08f dampener to permanently lock massive explosions behind distant 2-sided frames.
+			if (dist >= sprPrxDistThresh && islegacyversionprojectile)
+			{
+				if (fabs(vpz - btm) < 128.0f)
+				{
+					sprPrxFctrProj = 0.08f; // Compensates massive 224x multiplier inside the blind zone
+				}
+				else
+				{
+					sprPrxFctrProj = 1.0f; // Full force when looking from above/below (clipping goes away)
+				}
+			}
+
 			float extremeCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
 			float smallsprtncrps_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : 3.25f;
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : (3.25f * (sprPrxFctr * 2.8f));
 			float extremeCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
 			float projectiles_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : 14.0f;
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : (14.0f * (sprPrxFctrProj * 16.0f));
 			float extremeCull3 = !visible2sideMidTex ? 0.025f : 1.0f;
 			float regularsizmonster_factor1 =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : 3.25f;
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (3.25f * sprPrxFctr);
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
@@ -3491,15 +3541,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float extended_radius2 = (islegacyversionprojectile) ?
 				extended_radius1 * projectiles_factor :  // 16x for projectiles like rockets, explosions and 6x when occluded
 				extended_radius1;                        // 1x for all the rest sprites
-			//			=== Dynamic anamorphosis occlusion based amount effect adjustment - FINISH ===
+			// ---===============================================================================---
+			//     === Dynamic anamorphosis occlusion based amount effect adjustment - FINISH ===
 
 
 			//					=== Anamorphosis culling pass 1 - START ===
-			// This type of culling is adequate only to cover for very obvious leaks
-			// but keep some extra space for stuff that don't need even that much like big explosions
-
 			// Only apply extended radius bias for specific actor types
-			// float radius_for_bias = thing->radius;
 			float radius_for_bias = spriteSize;
 
 			if (isactorsmallbutnotcorpse || islegacyversionprojectile)
@@ -3509,17 +3556,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			if (!(r_debug_nolimitanamorphoses))
 			{
-				// this should help prevent clipping through walls ...
 				if (isaregularsizedmonster)
 				{
-					// this is the only place we can use to increase regular sized monster sprites anamorphic effect correctly
-					// 3.25x for regular sized sprites and 0.1x when occluded
 					float objradiusbias = 1.f - (radius_for_bias * regularsizmonster_factor2) / sqrt((vpx - tpx) * (vpx - tpx) + (vpy - tpy) * (vpy - tpy));
 					minbias = MAX(minbias, objradiusbias);
 				}
 				else
 				{
-					// keep original formula for small-noncorpse sprites and projectiles
 					float objradiusbias = 1.f - radius_for_bias / sqrt((vpx - tpx) * (vpx - tpx) + (vpy - tpy) * (vpy - tpy));
 					minbias = MAX(minbias, objradiusbias);
 				}
@@ -3527,38 +3570,24 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			//					=== Anamorphosis culling pass 1 - FINISH ===
 
 
-			//					=== Anamorphosis culling pass 2 - START ===
-			// Another approach to prevent more leaks
-			// This one culls agressively and prevents coplanar leaks but chops too much
-			// when we look at the sprite from above, in this case we don't do this cull at all
-			// Detect viewer middle ground is still higher than sprite bottom
-			bool anamorphCullPass2 = true; // disabled by default
+			//		=== The pass 2 agressive culling core process - START ===
+			bool anamorphCullPass2 = true;
 			if (anamorphCullPass2)
 			{
-				// Actual floor/ceiling heights are "btm" and "top"
 				const float planeProximThresh = 64.0f;
+				float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
+				float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);
 
-				// Adjusted viewer/sprite positions
-				float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);  // Mid-eye position
-				float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);   // Small leeway threshold
-
-
-				// Proximity detection
 				bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
 				bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
 
-				// Viewer angle detection
 				bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
 				bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
 
-				// Skip culling when:
-				// - Looking down on floor sprites OR
-				// - Looking up at ceiling sprites
 				if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
 				{
-					// Skip aggressive culling
 				}
-				else // Otherwise apply culling
+				else
 				{
 					if (!r_debug_nolimitanamorphoses)
 					{
@@ -3568,7 +3597,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					}
 				}
 			}
-			//		--- The pass 2 agressive culling core process - finish ---
+			//		=== The pass 2 agressive culling core process - FINISH ===
 
 			//					=== Anamorphosis final culling pass - START ===
 			float bintersect, tintersect;
@@ -3580,7 +3609,16 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
 
-			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f);
+			// Compute steep factor
+			bool isonsteepsurf;
+			const float STEEPNESS = 6.0f;  //detect only very steep surfaces
+			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
+			isonsteepsurf = steepnessfact > 0.0001f;
+
+			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
+			if (isonsteepsurf && !isSpriteObstructed) increaseAnam = 0.15f;
+
+			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 			float vpbias = 1.0 - spbias;
 			//					=== Anamorphosis final culling pass - FINISH ===
 
@@ -3689,14 +3727,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 		// Compute steep factor
 		bool isonsteepsurf;
-		const float STEEPNESS = 1.0f;  //detect only very steep surfaces
+		const float STEEPNESS = 6.0f;  //detect only very steep surfaces
 		float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 		isonsteepsurf = steepnessfact > 0.0001f;
 
 		float ANAMORPHIC_DARKEN;
 		if (isonsteepsurf && islittlesprite && !isactoracorpse && isactorclose)
 		{
-			ANAMORPHIC_DARKEN = 0.989f;
+			ANAMORPHIC_DARKEN = 0.9f; // useless
 		}
 		else
 		{
