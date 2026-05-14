@@ -1598,6 +1598,7 @@ struct ObstructionData2Sided
 	float maxCeiling = MINCOORD2SIDED;  // Start low, find highest
 
 	bool valid = false;
+	bool isTightSector = false;         // flat/closed sectors (gap <= 8 units)
 
 
 	void Update2sidedTallObstructions(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point)
@@ -1619,12 +1620,8 @@ struct ObstructionData2Sided
 		if (viewer->player && viewer->player->mo)
 		{
 			EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
-			//Printf("EyeHeight1: %.2f (ViewHeight: %.2f + crouchdelta: %.2f)\n", EyeHeight1, viewer->player->mo->FloatVar(NAME_ViewHeight), viewer->player->crouchviewdelta);
 		}
-		else
-		{
-			//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
-		}
+
 		float viewerBottom = viewer->Z();
 		float viewerTop = viewerBottom + EyeHeight;
 		float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
@@ -1636,8 +1633,6 @@ struct ObstructionData2Sided
 		const float cullsmallspriteslessthresh = 32.0f;
 		if (isSmallSprite)
 		{
-			//sprTopAdj -= cullsmallspriteslessthresh;
-			//sprBottomAdj -= cullsmallspriteslessthresh;
 			EyeHeight *= 2.0f;
 		}
 
@@ -1650,9 +1645,45 @@ struct ObstructionData2Sided
 		float ceilingHeightInitial = sector->ceilingplane.ZatPoint(clamped.X, clamped.Y);
 		float floorHeightInitial = sector->floorplane.ZatPoint(clamped.X, clamped.Y);
 
+		// ==========================================================================
+		// 3D-FLOOR LEDGE & CEILING BEAM OVERRIDE
+		// Fixes both vertical extremes:
+		// 1. When a 3D floor sits directly on the sector floor (solid steps).
+		// 2. When a 3D floor is flush with the sector ceiling (hanging architectural beams).
+		// ==========================================================================
+		if (sector->e && sector->e->XFloor.ffloors.Size() > 0)
+		{
+			for (auto& floor : sector->e->XFloor.ffloors)
+			{
+				if (!(floor->flags & FF_SOLID)) continue;
+				if (!floor->bottom.plane || !floor->top.plane) continue;
 
-		// we need to cull large sprites and projectiles with explosions a bit harder
-		// so we multiply by a larger number (large sprite expansion in anamorphosis projection)
+				float f3d_bottom = floor->bottom.plane->ZatPoint(clamped.X, clamped.Y);
+				float f3d_top = floor->top.plane->ZatPoint(clamped.X, clamped.Y);
+
+				// Case A: 3D floor is flush with the sector FLOOR (Solid step/ledge)
+				if (fabs(f3d_bottom - floorHeightInitial) <= 1.0f)
+				{
+					if (f3d_top > viewerTopAdj)
+					{
+						// Forcefully lift the mathematical floor obstruction to the top of the 3D slab
+						floorHeightInitial = MAX(floorHeightInitial, f3d_top);
+					}
+				}
+
+				// Case B: 3D floor is flush with the sector CEILING (Hanging solid beam/roof)
+				if (fabs(f3d_top - ceilingHeightInitial) <= 1.0f)
+				{
+					if (f3d_bottom < viewerBottomAdj)
+					{
+						// Forcefully push the mathematical ceiling obstruction down to the bottom of the 3D slab
+						ceilingHeightInitial = MIN(ceilingHeightInitial, f3d_bottom);
+					}
+				}
+			}
+		}
+		// ==========================================================================
+
 		float tallestGameStep = 24.0f;
 		float diffOftalleststepAndHorizon = EyeHeight - tallestGameStep;
 		bool isObstructionTallEnough = (sprTopAdj - diffOftalleststepAndHorizon + EPSILON2SIDED) <= floorHeightInitial ||
@@ -1730,6 +1761,9 @@ struct ObstructionData2Sided
 	{
 		if (!valid) return true;
 
+		// Instantly occlude if the line tracing hits a closed/clamped sector gap
+		if (isTightSector) return false;
+
 		// Determine sprite classification again
 		// Must be done via "AND" but "OR" works better
 		const bool isLegacyProjectile =
@@ -1772,6 +1806,7 @@ struct ObstructionData2Sided
 		float MoreTolerantInvCullAmountRestsized = (isViewerBottomHigherThanSpriteBottom) ? 1.0f : 0.15f;
 		float MoreTolerantInvCullAmountSmallSpr = (isViewerBottomHigherThanSpriteBottom) ? cullSmallSpritesAboveHarderCoeff : 0.15f;
 		float invCullAmount = (isSmallSprite) ? MoreTolerantInvCullAmountSmallSpr : MoreTolerantInvCullAmountRestsized;
+
 		float viewerTopAdjCulled = viewerTop * invCullAmount;
 
 		bool floorBlocks = false;
@@ -3226,8 +3261,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 
 		// Define distance constants properly
-		const float FP_CLOSER_LIMIT = 384.0f;            // Where Forced-Perspective coordinates without lift-up end (close-up)
-		const float SMART_START_DISTANCE = 1400.0f;      // Where Smart-clip starts coordinates start to lift-up (far-side)
+		const float FP_CLOSER_LIMIT = 128.0f;            // Where Forced-Perspective coordinates without lift-up end (close-up)
+		const float SMART_START_DISTANCE = 960.0f;      // Where Smart-clip starts coordinates start to lift-up (far-side)
 		const float TRANSITION_WIDTH = SMART_START_DISTANCE - FP_CLOSER_LIMIT;    // Length of transition
 
 		// Get the viewpoint from the current draw context that helped to reduce leaks
@@ -3484,7 +3519,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float sprPrxDistThresh = 674.0f;
 
 			// High-performance optimization for Celeron (precalculated inverse constant to avoid slow division)
-			const float invSprPrxDistThresh = 1.0f / 674.0f;
+			const float invSprPrxDistThresh = 1.0f / sprPrxDistThresh;
 
 			// 1. Close-up coplanar mitigation loop
 			if ((dist < sprPrxDistThresh) && (fabs(btm - vbtm) <= Ztolerance2sided || fabs(btm - vtop) <= Ztolerance2sided))
@@ -3525,11 +3560,11 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float extremeCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
 			float projectiles_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : (14.0f * (sprPrxFctrProj * 16.0f));
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : (14.0f * (sprPrxFctrProj * 12.0f));
 			float extremeCull3 = !visible2sideMidTex ? 0.025f : 1.0f;
 			float regularsizmonster_factor1 =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (3.25f * sprPrxFctr);
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (3.25f * (sprPrxFctr * 3.0f) );
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
@@ -3616,7 +3651,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			isonsteepsurf = steepnessfact > 0.0001f;
 
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
-			if (isonsteepsurf && !isSpriteObstructed) increaseAnam = 0.15f;
+			if ( (dist < 1200.0f) && isonsteepsurf && !isSpriteObstructed) increaseAnam = 0.25f;
 
 			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 			float vpbias = 1.0 - spbias;
