@@ -6,7 +6,7 @@
 // Anamorphic Forced-Perspective by Rachael Alexanderson, (C) 2025
 //
 // Anamorphic Forced-Perspective+ and Hybrid Forced-Perspective
-// with occlusion culling code by Vadim Taranov, (C) 2025-2026
+// with occlusion culling code by Vadim Taranov (Darkcrafter07), (C)2025-2026
 // All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -805,13 +805,21 @@ line_t* GetClosestLineInSector(const DVector3 &thingpos, sector_t* sector)
 // Frustum culling
 static bool CheckFrustumCulling(AActor* thing)
 {
+	return false; // Not culled by frustum
+}
+
+// Frustum culling - unused
+// Because if you turn around too fast you see sprites behind
+//   take too long to get their collision checked and unculled
+static bool CheckFrustumCullingUNUSED(AActor* thing)
+{
 	const DVector3 viewerPos = r_viewpoint.Pos;
 	const DVector3 thingPos = thing->Pos();
 
 	// Extract the ACTUAL current FOV from the viewpoint
 	// r_viewpoint.FOV is already in degrees, so we don't need to convert
 	float currentFOV = r_viewpoint.FieldOfView.Degrees;
-	float currentFOVenlarged = currentFOV * 3.0f;
+	float currentFOVenlarged = currentFOV * 2.0f;
 
 	// Calculate frustum based on tilt
 	float tilt = fabs(static_cast<float>(r_viewpoint.Angles.Pitch.Degrees));
@@ -1597,6 +1605,9 @@ struct ObstructionData2Sided
 	float minCeiling = MAXCOORD2SIDED;  // Start high, find lowest
 	float maxCeiling = MINCOORD2SIDED;  // Start low, find highest
 
+	// Min obstraction height to fully occlude a sprite behind it
+	const float LEDGE_THRESHOLD = 16.0f;
+
 	bool valid = false;
 	bool isTightSector = false;         // flat/closed sectors (gap <= 8 units)
 
@@ -1644,6 +1655,13 @@ struct ObstructionData2Sided
 
 		float ceilingHeightInitial = sector->ceilingplane.ZatPoint(clamped.X, clamped.Y);
 		float floorHeightInitial = sector->floorplane.ZatPoint(clamped.X, clamped.Y);
+
+		// If the sector clearance is tightly shut or restricted within LEDGE_THRESHOLD,
+		// we flag it to prevent extreme anamorphic scaling from breaching closed doors/lifts.
+		if ((ceilingHeightInitial - floorHeightInitial) <= LEDGE_THRESHOLD)
+		{
+			isTightSector = true;
+		}
 
 		// ==========================================================================
 		// 3D-FLOOR LEDGE & CEILING BEAM OVERRIDE
@@ -1716,31 +1734,33 @@ struct ObstructionData2Sided
 		float distance = sqrt(distanceSquared);
 
 		// Enhanced obstruction check for large sprites/projectiles
+		// We weakened these because the new 8-unit Ledge Killer logic is much more effective.
+		const float BASE_FLR_AMP = 1.5f;  // Was 2.5f
+		const float BASE_CEIL_AMP = 1.5f; // Was 2.75f
+		const float PROX_RANGE = 64.0f;
+		const float PROJ_Z_RANGE = 64.0f;
+
+		// Enhanced obstruction check for large sprites/projectiles
 		if (isLegacyProjectile || isLargeSprite)
 		{
-			// Calculate obstruction proximity factor (1.0 at 0 distance, 0.0 at 256 units)
-			float proximityFactor = clamp(1.0f - (distance / 256.0f), 0.0f, 1.0f);
+			// Calculate proximity factor (1.0 at 0 distance, 0.0 at PROX_RANGE)
+			float proximityFactor = clamp(1.0f - (distance / PROX_RANGE), 0.0f, 1.0f);
 
-			// Dynamic multipliers that increase as sprite gets closer to obstruction
-			float baseFloorMultiplier = 2.5f;
-			float baseCeilingMultiplier = 2.75f;
-
-			// Apply proximity-based scaling
-			floorHeightMultiplier1 = 1.0f + (baseFloorMultiplier - 1.0f) * proximityFactor;
-			ceilingHeightMultiplier1 = 1.0f + (baseCeilingMultiplier - 1.0f) * proximityFactor;
+			// Apply proximity-based scaling using new tweakable constants
+			floorHeightMultiplier1 = 1.0f + (BASE_FLR_AMP - 1.0f) * proximityFactor;
+			ceilingHeightMultiplier1 = 1.0f + (BASE_CEIL_AMP - 1.0f) * proximityFactor;
 
 			// Additional height-based adjustment for projectiles
 			if (isLegacyProjectile)
 			{
 				// Projectiles get extra culling when near floor/ceiling
-				// where 384.0f is a permittable view height range to allow culling
-				float heightFactor = 1.0f - fabs(thing->Z() - floorHeightInitial) / 384.0f;
-				floorHeightMultiplier1 *= 1.0f + (0.5f * heightFactor);
+				float heightFactor = 1.0f - fabs(thing->Z() - floorHeightInitial) / PROJ_Z_RANGE;
+				// Weakened the height boost as well (from 0.5f to 0.25f)
+				floorHeightMultiplier1 *= 1.0f + (0.25f * clamp(heightFactor, 0.0f, 1.0f));
 			}
 		}
 		else
 		{
-			// Default behavior for regular sprites
 			floorHeightMultiplier1 = 1.0f;
 			ceilingHeightMultiplier1 = 1.0f;
 		}
@@ -1760,70 +1780,36 @@ struct ObstructionData2Sided
 	bool IsSpriteVisible2sided(AActor* viewer, AActor* thing, const FVector3& pos, float height) const
 	{
 		if (!valid) return true;
-
-		// Instantly occlude if the line tracing hits a closed/clamped sector gap
 		if (isTightSector) return false;
 
-		// Determine sprite classification again
-		// Must be done via "AND" but "OR" works better
-		const bool isLegacyProjectile =
-			(thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
-			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
-			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
+		float spriteBottom = (float)thing->Z();
+		float spriteTop = spriteBottom + (float)thing->Height;
+		float viewerBottom = (float)viewer->Z();
+		float viewerTop = viewerBottom + 41.0f; // Default eye height fallback
 
-		const float spriteSize = (thing->radius + thing->Height) * 0.5f;
-		const bool isSmallSprite = (spriteSize <= 24.0f);
-		const bool isMediumSprite = (spriteSize > 24.0f && spriteSize <= 40.0f);
-		const bool isLargeSprite = (spriteSize > 40.0f);
-		const bool isRegularMonster = !isSmallSprite && !isLegacyProjectile;
-
-		// Default doom view height
-		float EyeHeight = 41.0f;
-		if (viewer->player && viewer->player->mo)
+		// 1. Floor/Ledge occlusion
+		// Trigger ONLY if the ledge is higher than the sprite's feet AND higher than your feet.
+		if (maxFloor >= (spriteBottom + LEDGE_THRESHOLD))
 		{
-			EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
-		}
-		float viewerBottom = viewer->Z();
-		float viewerTop = viewerBottom + EyeHeight;
-		float viewerBottomAdj = viewerBottom - Ztolerance2sided;
-		float viewerTopAdj = viewerTop - Ztolerance2sided;
-		// large sprites have height 16 times than usual, so we must divide 1 by 16 for them
-		float spriteBottom = thing->Z();
-		float spriteTop = (thing->Z()) + (thing->Height);
-		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
-		float sprTopAdj = spriteTop + Ztolerance2sided;
-
-		bool isViewerTopHigerThanSpriteTop = viewerTop >= spriteTop;
-		if (isViewerTopHigerThanSpriteTop && !isSmallSprite)
-		{
-			EyeHeight += 16.0f;
+			if (maxFloor > (viewerBottom + Ztolerance2sided))
+			{
+				// This is a real obstacle in front of you, not the floor you're standing on.
+				return false;
+			}
 		}
 
-		bool isViewerBottomLowerThanSpriteBottom = viewerBottomAdj < sprBottomAdj;
-		float cullSmallSpritesAboveHarderCoeff = (isViewerBottomLowerThanSpriteBottom) ? 0.15f : 1.0f;
-
-		bool isViewerBottomHigherThanSpriteBottom = viewerBottom >= spriteBottom;
-		float MoreTolerantInvCullAmountRestsized = (isViewerBottomHigherThanSpriteBottom) ? 1.0f : 0.15f;
-		float MoreTolerantInvCullAmountSmallSpr = (isViewerBottomHigherThanSpriteBottom) ? cullSmallSpritesAboveHarderCoeff : 0.15f;
-		float invCullAmount = (isSmallSprite) ? MoreTolerantInvCullAmountSmallSpr : MoreTolerantInvCullAmountRestsized;
-
-		float viewerTopAdjCulled = viewerTop * invCullAmount;
-
-		bool floorBlocks = false;
-		float floorVariation = maxFloor - minFloor;
-		if (floorVariation >= viewerTopAdjCulled)
+		// 2. Ceiling/Lintel occlusion
+		// Trigger ONLY if the hanging wall is lower than the sprite's head AND lower than your head.
+		if (minCeiling <= (spriteTop - LEDGE_THRESHOLD))
 		{
-			floorBlocks = (sprBottomAdj <= maxFloor + EPSILON2SIDED);
+			if (minCeiling < (viewerTop - Ztolerance2sided))
+			{
+				// This is a real hanging beam, not the high ceiling above your head.
+				return false;
+			}
 		}
 
-		bool ceilingBlocks = false;
-		float ceilingVariation = maxCeiling - minCeiling;
-		if (ceilingVariation >= viewerTopAdjCulled)
-		{
-			ceilingBlocks = (sprTopAdj >= minCeiling - EPSILON2SIDED);
-		}
-
-		return !floorBlocks && !ceilingBlocks;
+		return true;
 	}
 };
 
@@ -1946,8 +1932,8 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	// ==================================================================================================
 	// THIS IS THE PLACE WHERE YOU CONFIGURE SPRITES CULLING AMOUNT PER TYPE FOR 2SIDED TALL OBSTRUCTIONS
 	// 1st val is large spr, 2nd is small sprites, third is all the rest sprites, higher vals cull more
-	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 8.5f : 1.75f) : 6.0f;
-	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 12.0f : 4.0f) : 1.64f;
+	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 8.5f : 1.2f) : 6.0f;
+	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 12.0f : 1.0f) : 1.64f;
 
 	// Core sprite positions (using expansion factors)
 	FVector2 viewerPos = GetActorPosition(viewer);
@@ -2213,7 +2199,9 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	const float ZtoleranceMidTxt = 16.0f; // ensures a much better detection
 
 	// 3. Actor classification flags and thresholds
-	const bool isLegacyVersionProjectile = thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY) || thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS);
+	const bool isLegacyVersionProjectile = thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY) || 
+		                                   thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS);
+
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
 	const bool isLargeSprite = (spriteSize > 40.0f);
 
@@ -2240,14 +2228,6 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	float sprBottomAdj = spriteBottom + ZtoleranceMidTxt;
 	float sprTopAdj = spriteTop - ZtoleranceMidTxt;
 
-	// pretty useless
-	//bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) <= EyeHeight;
-	//bool viewerFeetHigherThanSpriteHeadAndStillSeen = viewerBottomAdj <= sprTopAdj >= EyeHeight;
-	// pretty useless and safer for compilation - how to remove leaking through mid tex when we're below it? I don't know yet
-	bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) && ((sprBottomAdj - viewerBottomAdj) <= EyeHeight);
-	bool viewerFeetHigherThanSpriteHeadAndStillSeen = (viewerBottomAdj >= sprTopAdj) && ((viewerBottomAdj - sprTopAdj) <= EyeHeight);
-
-
 	//Printf("  Actor type: %s%s (size: %.1f)\n", isLegacyProjectile ? "Projectile " : "", isLargeSprite ? "Large" : "Standard", spriteSize);
 
 	// 4. Proximity thresholds where occlusion is disabled (to prevent popping)
@@ -2256,13 +2236,11 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 
 	// 5. Measured distance from camera to thing
 	float distToCamSq = (thingpos - TVector3<double>(viewer->X(), viewer->Y(), viewer->Z())).LengthSquared();
-
-	bool isViewerVerticallyAligned = (viewerBottomAdj <= spriteBottom) || (viewerBottom >= spriteTop);
 	float minDist = (isLegacyVersionProjectile || isLargeSprite) ? CLOSE_DIST_LARGE : CLOSE_DIST_SMALL;
 
 	// 6. If very close and vertically aligned - full visibility (disable occlusion)
 	// because sprites don't override walls depth that hard when close and viewer is not under or above the sprite
-	if (isViewerVerticallyAligned && distToCamSq <= minDist * minDist)
+	if (distToCamSq <= minDist * minDist)
 	{
 		//Printf("Close proximity (%.1f units): Full visibility (factor=1.0)\n", sqrt(distToCamSq));
 		return 1.0f;
@@ -2331,7 +2309,7 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 			continue;
 		}
 
-		// 11. PRECISION OCCLUSION DETECTION
+		// 11. PRECISE OCCLUSION DETECTION
 		TVector2<float> viewerPos(viewer->X(), viewer->Y());
 		TVector2<float> thingPos2D(thingpos.X, thingpos.Y);
 
@@ -2384,19 +2362,21 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		//Printf("Valid intersection at (%.1f,%.1f), %.1f units from thing\n", hitPoint.X, hitPoint.Y, distToIntersect);
 
 		// 12. VERTICAL MIDTEXTURE RANGE CHECK
-		double textop_d, texbot_d; // Doubles to call the function
+		double textop_d, texbot_d;
 		if (P_GetMidTexturePosition(line, 0, &textop_d, &texbot_d))
 		{
 			// Convert results to floats immediately after the call
-			const float textop = static_cast<float>(textop_d);
-			const float texbot = static_cast<float>(texbot_d);
+			float textop = static_cast<float>(textop_d);
+			float texbot = static_cast<float>(texbot_d);
 
-			//Printf("Vertical check: thingZ=%.1f-%.1f, tex=%.1f-%.1f\n", thingpos.Z, thingTopZ, texbot, textop);
+			// Expand the active mid-texture solid zone vertically to catch perspective leakage
+			texbot -= 64.0f;  // Pushes the blocking threshold lower under the floor
+			textop += 64.0f;  // Lifts the blocking threshold higher into the ceiling
 
+			// Proxemic range check using expanded virtual boundaries
 			if (viewerBottomAdj <= texbot || sprTopAdj >= textop)
 			{
-				//Printf("Skipped: Sprite outside midtexture vertical range\n");
-				continue;
+				continue; // Now skips ONLY when genuinely out of the expanded 64-unit danger zone
 			}
 		}
 		//else
@@ -2460,11 +2440,6 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	//Printf("===== FINAL PROXIMITY FACTOR: %.2f =====\n", proximity_factor);
 
 	return proximity_factor;
-	// if our feet are lower than sprite feet behind a mid-tex mirror for elevated case - cull it
-	if (viewerFeetLowerThanSpriteFeetAndStillSeen || viewerFeetHigherThanSpriteHeadAndStillSeen)
-	{
-		return proximity_factor = 1.0f; // cull sprite
-	}
 }
 
 struct MidTextureProximityCacheEntry
@@ -3261,8 +3236,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 
 		// Define distance constants properly
-		const float FP_CLOSER_LIMIT = 128.0f;            // Where Forced-Perspective coordinates without lift-up end (close-up)
-		const float SMART_START_DISTANCE = 960.0f;      // Where Smart-clip starts coordinates start to lift-up (far-side)
+		const float FP_CLOSER_LIMIT = 384.0f;            // Where Forced-Perspective coordinates without lift-up end (close-up)
+		const float SMART_START_DISTANCE = 1200.0f;       // Where Smart-clip starts coordinates start to lift-up (far-side)
 		const float TRANSITION_WIDTH = SMART_START_DISTANCE - FP_CLOSER_LIMIT;    // Length of transition
 
 		// Get the viewpoint from the current draw context that helped to reduce leaks
@@ -3406,6 +3381,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		{   spriteSize *= 0.5f;  }
 		// -------------
 
+		// -------------
+		// Some sprites like torches can still leak through
+		// thin 2sided walls, especially, if they cross those linedefs
+		if (!visible2sideTallEnoughObstr && thingCrossed2sidedLine)
+		{
+			spriteSize *= 0.64f;
+		}
+		// -------------
+
 		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
 		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
 
@@ -3547,24 +3531,20 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				{
 					sprPrxFctrProj = 0.08f; // Compensates massive 224x multiplier inside the blind zone
 				}
-				else
-				{
-					sprPrxFctrProj = 1.0f; // Full force when looking from above/below (clipping goes away)
-				}
 			}
 
 			float extremeCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
 			float smallsprtncrps_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : (3.25f * (sprPrxFctr * 2.8f));
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : (3.4f * (sprPrxFctr * 3.2f));
 			float extremeCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
 			float projectiles_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : (14.0f * (sprPrxFctrProj * 12.0f));
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : (16.0f * (sprPrxFctrProj * 16.0f));
 			float extremeCull3 = !visible2sideMidTex ? 0.025f : 1.0f;
 			float regularsizmonster_factor1 =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (3.25f * (sprPrxFctr * 3.0f) );
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (3.64f * (sprPrxFctr * 3.0f) );
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
@@ -3646,12 +3626,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			// Compute steep factor
 			bool isonsteepsurf;
-			const float STEEPNESS = 6.0f;  //detect only very steep surfaces
+			const float STEEPNESS = 5.25f;  //detect only very steep surfaces
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 			isonsteepsurf = steepnessfact > 0.0001f;
 
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
-			if ( (dist < 1200.0f) && isonsteepsurf && !isSpriteObstructed) increaseAnam = 0.25f;
+			// can't really advise anyone to crank up "increaseAnam" higher than 0.14f
+			if ( (dist < 1200.0f) && isonsteepsurf && !isSpriteObstructed) increaseAnam = 0.14f;
 
 			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 			float vpbias = 1.0 - spbias;
@@ -3762,7 +3743,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 		// Compute steep factor
 		bool isonsteepsurf;
-		const float STEEPNESS = 6.0f;  //detect only very steep surfaces
+		const float STEEPNESS = 5.25f;  //detect only very steep surfaces
 		float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 		isonsteepsurf = steepnessfact > 0.0001f;
 
