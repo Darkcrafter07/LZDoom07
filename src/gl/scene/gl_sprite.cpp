@@ -1593,24 +1593,32 @@ bool SpriteCrossed2sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 	}
 }
 
-
-
 struct ObstructionData2Sided
 {
 	// Floor - track both lowest and highest
-	float minFloor = MAXCOORD2SIDED;    // Start high, find lowest
-	float maxFloor = MINCOORD2SIDED;    // Start low, find highest
-
+	float minFloor;
+	float maxFloor;
 	// Ceiling - track both lowest and highest
-	float minCeiling = MAXCOORD2SIDED;  // Start high, find lowest
-	float maxCeiling = MINCOORD2SIDED;  // Start low, find highest
+	float minCeiling;
+	float maxCeiling;
 
-	// Min obstraction height to fully occlude a sprite behind it
-	const float LEDGE_THRESHOLD = 16.0f;
+	bool valid;
+	bool isTightSector;           // flat/closed sectors (gap <= 8 units)
+	bool isProjecileBehindDoor;   // persistent flag for projectile door occlusion
+	int tightCheckDepth;          // sectors iterations counter
 
-	bool valid = false;
-	bool isTightSector = false;         // flat/closed sectors (gap <= 8 units)
-
+	// Constructor to initialize all persistent flags
+	ObstructionData2Sided()
+	{
+		minFloor = MAXCOORD2SIDED;
+		maxFloor = MINCOORD2SIDED;
+		minCeiling = MAXCOORD2SIDED;
+		maxCeiling = MINCOORD2SIDED;
+		valid = false;
+		isTightSector = false;
+		isProjecileBehindDoor = false;
+		tightCheckDepth = 0;
+	}
 
 	void Update2sidedTallObstructions(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point)
 	{
@@ -1656,9 +1664,9 @@ struct ObstructionData2Sided
 		float ceilingHeightInitial = sector->ceilingplane.ZatPoint(clamped.X, clamped.Y);
 		float floorHeightInitial = sector->floorplane.ZatPoint(clamped.X, clamped.Y);
 
-		// If the sector clearance is tightly shut or restricted within LEDGE_THRESHOLD,
+		// If the sector clearance is tightly shut or restricted within 8 units,
 		// we flag it to prevent extreme anamorphic scaling from breaching closed doors/lifts.
-		if ((ceilingHeightInitial - floorHeightInitial) <= LEDGE_THRESHOLD)
+		if ((ceilingHeightInitial - floorHeightInitial) <= 8.0f)
 		{
 			isTightSector = true;
 		}
@@ -1702,11 +1710,36 @@ struct ObstructionData2Sided
 		}
 		// ==========================================================================
 
+		if (isLegacyProjectile)
+		{
+			// 1. Update MAXFLOOR/MINCEIL early so debug and logic see them
+			this->maxFloor = MAX(this->maxFloor, floorHeightInitial);
+			this->minCeiling = MIN(this->minCeiling, ceilingHeightInitial);
+
+			// 2. Z-Horizon Snapping
+			// We check if the projectile is within the "Ledge Danger Zone" (32 units).
+			// If we are close to the line, even a 21-unit gap (like in your debug) 
+			// will cause a massive anamorphic leak. We force occlusion.
+			float diffToFloor = (float)fabs(sprBottomAdj - floorHeightInitial);
+			float diffToCeil = (float)fabs(sprTopAdj - ceilingHeightInitial);
+
+			FVector2 tPos = { (float)thing->X(), (float)thing->Y() };
+			float distToLine = (tPos - clamped).Length();
+
+			// If distance to line is less than 128 AND Z-gap is less than 32 units
+			if (distToLine < 24.0f)
+			{
+				if (diffToFloor <= 32.0f || diffToCeil <= 32.0f)
+				{
+					isProjecileBehindDoor = true;
+				}
+			}
+		}
+
 		float tallestGameStep = 24.0f;
 		float diffOftalleststepAndHorizon = EyeHeight - tallestGameStep;
 		bool isObstructionTallEnough = (sprTopAdj - diffOftalleststepAndHorizon + EPSILON2SIDED) <= floorHeightInitial ||
-			(sprBottomAdj + diffOftalleststepAndHorizon + EPSILON2SIDED) >= ceilingHeightInitial;
-
+			                           (sprBottomAdj + diffOftalleststepAndHorizon + EPSILON2SIDED) >= ceilingHeightInitial;
 
 		// determine which sprites are located slightly above on elevated platforms
 		bool isViewerBottomLowerThanSpriteBottom = viewerBottomAdj <= sprBottomAdj;  // we need some Z tolerance here
@@ -1723,56 +1756,10 @@ struct ObstructionData2Sided
 		float ceilingHeightAdj1 = ceilingHeightInitial * spritesHigherThanViewerOnElevPlatf;
 		float floorHeightAdj1 = floorHeightInitial * spritesLowerThanViewerObservedFromElevPlatf;
 
-
-		// let's now try to occlude large sprites and projectiles behind tall enough obstructions
-		float floorHeightMultiplier1 = ((isLegacyProjectile || isLargeSprite) && isObstructionTallEnough) ? 2.5f : 1.0f;
-		float ceilingHeightMultiplier1 = ((isLegacyProjectile || isLargeSprite) && isObstructionTallEnough) ? 2.75f : 1.0f;
-		// Calculate distance between viewer and sprite
-		FVector2 viewerPos = GetActorPosition(viewer);
-		FVector2 thingPos = GetActorPosition(thing);
-		float distanceSquared = (viewerPos - thingPos).LengthSquared();
-		float distance = sqrt(distanceSquared);
-
-		// Enhanced obstruction check for large sprites/projectiles
-		// We weakened these because the new 8-unit Ledge Killer logic is much more effective.
-		const float BASE_FLR_AMP = 1.5f;  // Was 2.5f
-		const float BASE_CEIL_AMP = 1.5f; // Was 2.75f
-		const float PROX_RANGE = 64.0f;
-		const float PROJ_Z_RANGE = 64.0f;
-
-		// Enhanced obstruction check for large sprites/projectiles
-		if (isLegacyProjectile || isLargeSprite)
-		{
-			// Calculate proximity factor (1.0 at 0 distance, 0.0 at PROX_RANGE)
-			float proximityFactor = clamp(1.0f - (distance / PROX_RANGE), 0.0f, 1.0f);
-
-			// Apply proximity-based scaling using new tweakable constants
-			floorHeightMultiplier1 = 1.0f + (BASE_FLR_AMP - 1.0f) * proximityFactor;
-			ceilingHeightMultiplier1 = 1.0f + (BASE_CEIL_AMP - 1.0f) * proximityFactor;
-
-			// Additional height-based adjustment for projectiles
-			if (isLegacyProjectile)
-			{
-				// Projectiles get extra culling when near floor/ceiling
-				float heightFactor = 1.0f - fabs(thing->Z() - floorHeightInitial) / PROJ_Z_RANGE;
-				// Weakened the height boost as well (from 0.5f to 0.25f)
-				floorHeightMultiplier1 *= 1.0f + (0.25f * clamp(heightFactor, 0.0f, 1.0f));
-			}
-		}
-		else
-		{
-			floorHeightMultiplier1 = 1.0f;
-			ceilingHeightMultiplier1 = 1.0f;
-		}
-
-		// Apply the calculated multipliers
-		float ceilingHeightAdj2 = ceilingHeightAdj1 * ceilingHeightMultiplier1;
-		float floorHeightAdj2 = floorHeightAdj1 * floorHeightMultiplier1;
-
-		minCeiling = MIN(minCeiling, ceilingHeightAdj2);
-		maxCeiling = MAX(maxCeiling, ceilingHeightAdj2);
-		minFloor = MIN(minFloor, floorHeightAdj2);
-		maxFloor = MAX(maxFloor, floorHeightAdj2);
+		minCeiling = MIN(minCeiling, ceilingHeightAdj1);
+		maxCeiling = MAX(maxCeiling, ceilingHeightAdj1);
+		minFloor = MIN(minFloor, floorHeightAdj1);
+		maxFloor = MAX(maxFloor, floorHeightAdj1);
 
 		valid = true;
 	}
@@ -1781,11 +1768,24 @@ struct ObstructionData2Sided
 	{
 		if (!valid) return true;
 		if (isTightSector) return false;
+		if (isProjecileBehindDoor) return false;
 
 		float spriteBottom = (float)thing->Z();
 		float spriteTop = spriteBottom + (float)thing->Height;
 		float viewerBottom = (float)viewer->Z();
 		float viewerTop = viewerBottom + 41.0f; // Default eye height fallback
+
+		const bool isLegacyProjectile =
+			(thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
+			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
+			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
+		const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+		const bool isSmallSprite = (spriteSize <= 22.0f);
+
+		// Min obstraction height to fully occlude a sprite behind it
+		float LEDGE_THRESHOLD = 0.0f;               // initialize the variable
+		if (isSmallSprite) LEDGE_THRESHOLD = 12.0f; // needs taller obsructions to cull small sprites
+		else               LEDGE_THRESHOLD = 4.0f;  // shorter obstructions for bigger sprites not to leak through ledges
 
 		// 1. Floor/Ledge occlusion
 		// Trigger ONLY if the ledge is higher than the sprite's feet AND higher than your feet.
@@ -3384,7 +3384,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// -------------
 		// Some sprites like torches can still leak through
 		// thin 2sided walls, especially, if they cross those linedefs
-		if (!visible2sideTallEnoughObstr && thingCrossed2sidedLine)
+		if ( (!visible2sideTallEnoughObstr || !visible3dfloorSides) && thingCrossed2sidedLine )
 		{
 			spriteSize *= 0.64f;
 		}
@@ -3522,26 +3522,17 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				}
 			}
 
-			// 3. DISTANT HORIZON BLIND-ZONE INTERCEPTOR (Projectiles & Explosions)
-			// Projectiles carry a massive 224x amplification factor. When the line of sight is perfectly flat,
-			// we enforce a strict 0.08f dampener to permanently lock massive explosions behind distant 2-sided frames.
-			if (dist >= sprPrxDistThresh && islegacyversionprojectile)
-			{
-				if (fabs(vpz - btm) < 128.0f)
-				{
-					sprPrxFctrProj = 0.08f; // Compensates massive 224x multiplier inside the blind zone
-				}
-			}
-
-			float extremeCull1 = !visible2sideMidTex ? 0.025f : 1.0f;
+			float extremeCull1 = !visible2sideMidTex ? 0.25f : 1.0f;
 			float smallsprtncrps_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
 					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : (3.4f * (sprPrxFctr * 3.2f));
-			float extremeCull2 = !visible2sideMidTex ? 2.0f : 6.0f;
+
+			float extremeCull2 = !visible2sideMidTex ? 0.05f : 0.25f;
 			float projectiles_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : (16.0f * (sprPrxFctrProj * 16.0f));
-			float extremeCull3 = !visible2sideMidTex ? 0.025f : 1.0f;
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : 8.0f;
+
+			float extremeCull3 = !visible2sideMidTex ? 0.25f : 1.0f;
 			float regularsizmonster_factor1 =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
 					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (3.64f * (sprPrxFctr * 3.0f) );
