@@ -1078,42 +1078,6 @@ bool spriteIntersectsLineCachedWrapper(line_t* line, float x1, float y1, float x
 }
 // === CACHED version of SpriteIntersectsLinedef - finish === UNUSED ===
 
-// Helper function to check for void space
-static bool IsActorInVoid(AActor* actor)
-{
-	if (!actor) return true;
-
-	// Get the actor's current sector
-	subsector_t* sub = R_PointInSubsector(actor->X(), actor->Y());
-	if (!sub || !sub->sector) return true;
-
-	sector_t* sector = sub->sector;
-
-	// Calculate sector floor and ceiling heights at actor position
-	double floorZ = sector->floorplane.ZatPoint(actor->X(), actor->Y());
-	double ceilingZ = sector->ceilingplane.ZatPoint(actor->X(), actor->Y());
-
-	// Calculate actor's top and bottom positions
-	double actorBottom = actor->Z();
-	double actorTop = actorBottom + actor->Height;
-
-	// Define epsilon for floating-point comparison
-	const double epsilon = 0.1;
-
-	// Check if actor is completely above ceiling or below floor
-	bool isBelowFloor = (actorTop < floorZ - epsilon);
-	bool isAboveCeiling = (actorBottom > ceilingZ + epsilon);
-
-	// If above ceiling or below floor = In void space
-	if (isBelowFloor || isAboveCeiling)
-	{
-		return true;
-	}
-
-	return false;
-}
-
-
 // ******* Anamorphic "Forced-Pespective" common early exit checks - finish *******
 //         ---===      ***************************************        ===---
 
@@ -1129,79 +1093,101 @@ bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
 	if (CheckFrustumCulling(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
-	// ONLY check sprite's sector, never viewer's sector
-	sector_t* thingSector = thing->Sector;
-	if (!thingSector || thingSector->Lines.Size() == 0) return false;
+	// --- 1. SPATIAL POOLING SETUP ---
+	// Cache for 1-sided line intersections within a 64x64 unit grid
+	static TMap<uint64_t, bool> spatial1sPool;
+	static int last1sPoolTick = -1;
 
-	// Calculate viewer->thing line geometry
-	float viewerX = (float)viewer->X();
-	float viewerY = (float)viewer->Y();
+	// Reset pool once per frame
+	if (last1sPoolTick != level.maptime)
+	{
+		spatial1sPool.Clear();
+		last1sPoolTick = level.maptime;
+	}
+
 	float thingX = (float)thing->X();
 	float thingY = (float)thing->Y();
 
-	// Calculate sprite size with YOUR original classification logic
+	// Calculate grid coordinates for the 64-unit spatial key
+	int gridX = (int)(thingX / 64.0f);
+	int gridY = (int)(thingY / 64.0f);
+	uint64_t spatialKey = ((uint64_t)gridX << 32) | (uint32_t)gridY;
+
+	// --- 2. SPATIAL CACHE CHECK ---
+	if (spatial1sPool.CheckKey(spatialKey))
+	{
+		return spatial1sPool[spatialKey];
+	}
+
+	// --- 3. SIZE ADAPTATION AND PARTICLE PROTECTION ---
+	float viewerX = (float)viewer->X();
+	float viewerY = (float)viewer->Y();
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
 
-	// Sprite size thresholds
-	const bool isMicroSprite = (spriteSize <= 8.0f);
-	const bool isTinySprite = (spriteSize <= 12.0f);
-	const bool isSmallSprite = (spriteSize <= 18.0f);
-	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
-	const bool isLargeSprite = (spriteSize > 38.0f && spriteSize < 39.0f);
-	const bool isHugeSprite = (spriteSize >= 39.0f);
+	const bool isMicroSprite = (spriteSize <= 12.0f); // Combine micro/tiny
+	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
 
-	// Scale adjustments
-	float spriteScale = 0.7f;  // Default: micro/tiny/small sprites
-	if (isMediumSprite) { spriteScale = 0.5f; }
-	else if (isLargeSprite) { spriteScale = 0.15f; }
-	else if (isHugeSprite) { spriteScale = 0.1f; }
+	float                     spriteScale = 0.7f;
+	if      (isMicroSprite) { spriteScale = 2.5f; }
+	else if (isSmallSprite) { spriteScale = 0.5f; }
 
-	// Calculate scaled test points based on radius + size
-	float adjustedRadius = thing->radius * spriteScale;
+	float effectiveRadius = thing->radius;
+	if (effectiveRadius < 1.0f) effectiveRadius = 4.0f;
+	float adjustedRadius = effectiveRadius * spriteScale;
 
-	// Generate 4 orthogonal test points around the sprite center
-	float testPoints[4][2] =
+	float testPts[5][2] =
 	{
-		{thingX + adjustedRadius, thingY},           // Right
-		{thingX - adjustedRadius, thingY},           // Left  
-		{thingX, thingY + adjustedRadius},           // Up
-		{thingX, thingY - adjustedRadius}            // Down
+		{thingX, thingY},
+		{thingX + adjustedRadius, thingY},
+		{thingX - adjustedRadius, thingY},
+		{thingX, thingY + adjustedRadius},
+		{thingX, thingY - adjustedRadius}
 	};
 
-	for (auto testLine : thingSector->Lines)
+	// --- 4. LOCAL BLOCKMAP SCANNING ---
+	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0f);
+	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0f);
+	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0f);
+	int maxBY = level.blockmap.GetBlockY(thingY + adjustedRadius + 16.0f);
+
+	bool result = false;
+
+	for (int bx = minBX; bx <= maxBX && !result; bx++)
 	{
-		if (!testLine->sidedef[0] || testLine->sidedef[1])
-			continue; // Skip non-1-sided lines
-
-		float lineX1 = (float)testLine->v1->fX();
-		float lineY1 = (float)testLine->v1->fY();
-		float lineX2 = (float)testLine->v2->fX();
-		float lineY2 = (float)testLine->v2->fY();
-
-		// Check each test point against the viewer line
-		for (int i = 0; i < 4; i++)
+		for (int by = minBY; by <= maxBY && !result; by++)
 		{
-			float ix, iy;
-			if (SpriteIntersectsLinedef
-			(
-				viewerX, viewerY,
-				testPoints[i][0], testPoints[i][1],
-				lineX1, lineY1,
-				lineX2, lineY2,
-				ix, iy))
+			if (!level.blockmap.isValidBlock(bx, by)) continue;
+
+			int* list = level.blockmap.GetLines(bx, by);
+			for (int i = 0; list[i] != -1; i++)
 			{
-				return true; // Sprite crosses a 1-sided line visible to viewer
+				line_t* line = &level.lines[list[i]];
+
+				// Only 1-sided walls
+				if (line->backsector != nullptr) continue;
+
+				float l1x = (float)line->v1->fX();
+				float l1y = (float)line->v1->fY();
+				float l2x = (float)line->v2->fX();
+				float l2y = (float)line->v2->fY();
+
+				for (int j = 0; j < 5; j++)
+				{
+					float ix, iy;
+					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], l1x, l1y, l2x, l2y, ix, iy))
+					{
+						result = true;
+						break;
+					}
+				}
+				if (result) break;
 			}
 		}
-
-		// Also check the core viewer->sprite line itself
-		float ix, iy;
-		if (SpriteIntersectsLinedef(viewerX, viewerY, thingX, thingY, lineX1, lineY1, lineX2, lineY2, ix, iy))
-		{
-			return true;
-		}
 	}
-	return false;
+
+	// --- 5. STORE AND RETURN ---
+	spatial1sPool[spatialKey] = result;
+	return result;
 }
 
 struct SpriteCrossed1SidedLineCacheEntry
@@ -3510,7 +3496,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			//	tex->Name.GetChars(),spriteRasterYdimen, spriteFileOffset,visibleSpriteHeight,hasSignificantNegativeOffset ? "YES" : "NO");
 		}
 
-
 		float spriteSize = (thing->radius + thing->Height) * 0.5f;
 		bool isMicroSprite = (spriteSize <= 8.0f && spriteSize < 12.0f);
 		bool isTinySprite = (spriteSize <= 12.0f && spriteSize < 18.0f);
@@ -3523,14 +3508,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
-		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
 		bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
 		bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, thing);
 		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
-		bool actorInVoid = IsActorInVoid(thing);
+
+		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera); // unused
 
 		// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
 		// That's why get viewer from renderer context instead of function parameters
@@ -3584,18 +3569,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 		// -------------
 
-
-		// -------------
-		// sprites that are located slightly above on an elevated platform might cut too much
-		// determine which sprites are located slightly above on elevated platforms
-		// bool isViewerBottomLowerThanSpriteBottom = viewerBottomAdj <= sprBottomAdj;  // we need some Z tolerance here
-		// bool isThatElevatedSpriteStillSeen = isViewerBottomLowerThanSpriteBottom && (viewerTopAdj <= sprLowerMidAdj);
-		//if (spriteSize <= 40.0f)
-		//{
-		//	spriteSize = 72.0f;
-		//}
-		// -------------
-
 		// -------------
 		// Too many leaks through 2sided obstructions because even default sprite sizes
 		// are too big and cross the linedefs, making them invisible to detection systems.
@@ -3615,10 +3588,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
 		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
-
-		//bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
-		//float forceTinySpriteSize = (thingCrossed2sidedLine) ? spriteSize : (spriteSize * 0.32f);
-		//float spriteSize = forceTinySpriteSize;
 
 		DVector3 thingpos3D(thingpos.X, thingpos.Y, z);
 		float distSq = (thingpos3D - r_viewpoint.Pos).LengthSquared();
@@ -3747,18 +3716,18 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			float extremeCull1 = !visible2sideMidTex ? 0.25f : 1.0f;
 			float smallsprtncrps_factor =
-				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : (3.4f * (sprPrxFctr * 15.0f));
+				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || 
+					!visible3dfloorSides) ? extremeCull1 : (3.4f * (sprPrxFctr * 15.0f));
 
 			float extremeCull2 = !visible2sideMidTex ? 0.05f : 0.25f;
 			float projectiles_factor =
-				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : 8.0f;
+				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || 
+					!visible3dfloorSides) ? extremeCull2 : 8.0f;
 
 			float extremeCull3 = !visible2sideMidTex ? 0.25f : 1.0f;
 			float regularsizmonster_factor1 =
-				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (3.64f * (sprPrxFctr * 3.0f) );
+				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || 
+					!visible3dfloorSides) ? extremeCull3 : (3.64f * (sprPrxFctr * 3.0f) );
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
@@ -3844,13 +3813,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 			isonsteepsurf = steepnessfact > 0.0001f;
 
+			bool CrossedAnyWall = thingCrossed1sidedLine || thingCrossed2sidedLine;
 			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
 			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
 			// can't really advise anyone to crank up "increaseAnam" higher than 0.14f
 			// "!thingCrossed2sidedLine" check here because that way we can suppress coplanar leaks
 			// could have another check for whether sprite is spawned too close to a 3d-floor plane bottom like a ceiling mounted lamp but maybe later...
-			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !thingCrossed2sidedLine) increaseAnam = 0.125f;
+			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall) increaseAnam = 0.125f;
 
 			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 			float vpbias = 1.0 - spbias;
