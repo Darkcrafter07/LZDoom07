@@ -809,8 +809,8 @@ static bool CheckFrustumCulling(AActor* thing)
 }
 
 // Frustum culling - unused
-// Because if you turn around too fast you see sprites behind
-//   take too long to get their collision checked and unculled
+// If you turn around too fast you see sprites behind
+//   take too long to get their collision checked and unculled and it's slower
 static bool CheckFrustumCullingUNUSED(AActor* thing)
 {
 	const DVector3 viewerPos = r_viewpoint.Pos;
@@ -2096,42 +2096,87 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	// Direction checks setup
 	unsigned int directionMask = isProjectileLargeSprite ? 0xF : 0x0;
 	int numDirectionChecks = CountBits2sidedObstr(directionMask);
-	bool potentialObstructionFound = false;
+
+	// --- SPATIAL POOLING SETUP ---
+	// Grid-based cache for nearby actors to share calculations during the same frame
+	static TMap<uint64_t, ObstructionData2Sided> spatialPool;
+	static int lastPoolTick = -1;
+
+	// Reset spatial pool only once per frame (1 tick)
+	if (lastPoolTick != level.maptime)
+	{
+		spatialPool.Clear();
+		lastPoolTick = level.maptime;
+	}
+
+	// Calculate a spatial key based on a 64x64 unit world grid.
+	// This allows sprites within ~64 units of each other to reuse tunnel data.
+	int gridX = (int)(thingCenterPos.X / 64.0f);
+	int gridY = (int)(thingCenterPos.Y / 64.0f);
 
 	// Loop through which end of the viewer's eye line to test
 	for (int EyeLevel = 0; EyeLevel < 2; EyeLevel++)
 	{
 		const float camHeight = (EyeLevel == 0) ? viewerBottomAdj : viewerTopAdj;
-
-		// Initialize the test point to the sprite's center.
 		FVector2 testPoint = thingCenterPos;
 
 		for (int testIdx = 0; testIdx <= numDirectionChecks; ++testIdx)
 		{
-			// INITIALIZE DATA HERE: Accumulate ALL intersections along this single ray
 			ObstructionData2Sided obsData;
+
+			// Generate a unique key per grid cell and per ray direction.
+			// Generate a unique 64-bit key by packing GridX, GridY, and TestIdx.
+			// We use large bit shifts (32 and 8) to act as "data containers" that never overlap.
+			// This prevents "hash collisions" where sprites in different locations 
+			// might accidentally share the same cache entry.
+			// [64-bit Key Structure: 32 bits for X | 24 bits for Y | 8 bits for Ray Index]
+			uint64_t spatialKey = ((uint64_t)gridX << 32) | ((uint32_t)gridY << 8) | (uint8_t)testIdx;
 
 			if (testIdx > 0)
 			{
 				int shift = testIdx - 1;
 				unsigned int currentDir = (1 << shift);
 				if (!(directionMask & currentDir)) continue;
-
-				testPoint = thingCenterPos + directionVectors[shift] * ((thing->radius) * RadiusExpansionFactor);
+				testPoint = thingCenterPos + directionVectors[shift] * ((thing->radius) * RadiusExpansionFactor + 32.0f);
 			}
 
-			// USE BLOCKMAP: Find ALL lines between viewer and testPoint, not just sector lines
-			// This catches "transit" sectors like water drains/trenches
-			int minBX = level.blockmap.GetBlockX(std::min(viewerPos.X, testPoint.X) - 16.0f);
-			int maxBX = level.blockmap.GetBlockX(std::max(viewerPos.X, testPoint.X) + 16.0f);
-			int minBY = level.blockmap.GetBlockY(std::min(viewerPos.Y, testPoint.Y) - 16.0f);
-			int maxBY = level.blockmap.GetBlockY(std::max(viewerPos.Y, testPoint.Y) + 16.0f);
+			// --- 1. FACING CHECK (Dot Product) ---
+			// Skip calculations for sprites behind the player's field of view
+			FVector2 viewDir = { (float)cos(viewer->Angles.Yaw.Radians()), (float)sin(viewer->Angles.Yaw.Radians()) };
+			FVector2 toSprite = (testPoint - viewerPos);
+			float rayDist = toSprite.Length();
 
-			for (int bx = minBX; bx <= maxBX; bx++)
+			if (rayDist > 0.1f)
 			{
-				for (int by = minBY; by <= maxBY; by++)
+				FVector2 normToSprite = toSprite / rayDist;
+				// If dot product < 0, sprite is behind the viewer
+				if ((viewDir.X * normToSprite.X + viewDir.Y * normToSprite.Y) < 0.0f) continue;
+			}
+
+			// --- 2. SPATIAL CACHE CHECK ---
+			// Reuse tunnel scan data if a nearby sprite already calculated this path
+			if (spatialPool.CheckKey(spatialKey))
+			{
+				obsData = spatialPool[spatialKey];
+			}
+			else
+			{
+				// --- 3. TUNNEL BLOCKMAP SCAN ---
+				// Step along the sight line to find all transit sectors (trenches, steps, etc.)
+				FVector2 dir = toSprite / rayDist;
+				const float stepSize = 128.0f; // Step by block-map units
+				FVector2 currentPos = viewerPos;
+				int lastBX = -1, lastBY = -1;
+
+				for (float d = 0; d <= rayDist + stepSize; d += stepSize)
 				{
+					int bx = level.blockmap.GetBlockX(currentPos.X);
+					int by = level.blockmap.GetBlockY(currentPos.Y);
+					currentPos += dir * stepSize;
+
 					if (!level.blockmap.isValidBlock(bx, by)) continue;
+					if (bx == lastBX && by == lastBY) continue; // Skip already processed blocks
+					lastBX = bx; lastBY = by;
 
 					int* list = level.blockmap.GetLines(bx, by);
 					for (int i = 0; list[i] != -1; i++)
@@ -2141,11 +2186,8 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 						const FVector2 lineEnd = GetVertexPosition(line->v2);
 						FVector2 intersectionPoint;
 
-						// Check if our specific ray actually hits this line
 						if (!LineIntersectsSegment2sided(viewerPos, testPoint, lineStart, lineEnd, intersectionPoint))
-						{
 							continue;
-						}
 
 						// When we're on top of elevation and shoot a rocket from above to below
 						// We can observe it culls too much because our elevation cuts it, thus
@@ -2205,34 +2247,35 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 							clamp<float>(intersectionPoint.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
 						};
 
-						// UPDATE DATA: Accumulate min/max profile from all hit lines
-						// This effectively "sews" different segments (drain + floor) into one obstruction
+						// Gather vertical obstruction data from the intersected lines
 						if (line->flags & ML_TWOSIDED)
 						{
 							if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
 							if (line->backsector)  obsData.Update2sidedTallObstructions(thing, viewer, line->backsector, clamped);
 						}
-						else
+						else if (line->frontsector)
 						{
-							if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+							obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
 						}
 					}
 				}
+				// Store the result in the spatial pool for other sprites in this 64x64 grid cell
+				spatialPool[spatialKey] = obsData;
 			}
 
-			// FINAL CHECK PER RAY: Check visibility against the combined silhouette of all intercepted geometry
+			// --- 4. FINAL VISIBILITY CHECK ---
 			if (obsData.valid)
 			{
-				// If any part of the path was a tight gap, or the combined height blocks the view
+				// Block visibility if path is tight or accumulated height covers the sprite
 				if (obsData.isTightSector || !obsData.IsSpriteVisible2sided(viewer, thing, FVector3{ testPoint.X, testPoint.Y, spriteMidHeight }, spriteTop))
 				{
-					return false; // Occluded by the sum of all parts
+					return false;
 				}
 			}
 		}
 	}
 
-	return true; // Ray reached the sprite without being fully blocked
+	return true; // Clear line of sight
 }
 
 
@@ -3702,25 +3745,20 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				}
 			}
 
-			// initial sprite sizes based on 2sided occlusion
-			float Cull2sLineSmall = !visible2sideTallEnoughObstr ? 1.0f : 3.4f;
-			float Cull2sLineProj = !visible2sideTallEnoughObstr ? 4.0f : 8.0f;
-			float Cull2sLineMonst = !visible2sideTallEnoughObstr ? 1.0f : 3.64f;
-
 			float extremeCull1 = !visible2sideMidTex ? 0.25f : 1.0f;
 			float smallsprtncrps_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : (Cull2sLineSmall * (sprPrxFctr * 15.0f));
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull1 : (3.4f * (sprPrxFctr * 15.0f));
 
 			float extremeCull2 = !visible2sideMidTex ? 0.05f : 0.25f;
 			float projectiles_factor =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : Cull2sLineProj;
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull2 : 8.0f;
 
 			float extremeCull3 = !visible2sideMidTex ? 0.25f : 1.0f;
 			float regularsizmonster_factor1 =
 				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex ||
-					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (Cull2sLineMonst * (sprPrxFctr * 3.0f) );
+					thingFacingBboxCrossed1sided || !visible3dfloorSides) ? extremeCull3 : (3.64f * (sprPrxFctr * 3.0f) );
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
