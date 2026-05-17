@@ -1555,6 +1555,114 @@ bool SpriteCrossed2sidedLinedef(AActor* thing, AActor* viewer)
 	return false;
 }
 
+bool SpriteBboxFacingCameraCrossed2sLine(AActor* thing, AActor* viewer)
+{
+	if (!thing || !viewer) return false;
+
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+
+	bool checkBboxCameraFace = false; // disabled by default
+
+	sector_t* thingSector = thing->Sector;
+	if (!thingSector || thingSector->Lines.Size() == 0) return false;
+
+	float viewerX = (float)viewer->X();
+	float viewerY = (float)viewer->Y();
+	float thingX = (float)thing->X();
+	float thingY = (float)thing->Y();
+
+	// === 1. UNIVERSAL SIZE ADAPTATION ===
+	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
+	const bool isLargeSprite = (spriteSize > 38.0f && spriteSize < 39.0f);
+	const bool isHugeSprite = (spriteSize >= 39.0f);
+
+	// Scale for test point offsets (how far we look around the center)
+	float                     spriteScale = 0.8f;
+	if (isMediumSprite)     { spriteScale = 1.2f;  }
+	else if (isLargeSprite) { spriteScale = 0.3f;  }
+	else if (isHugeSprite)  { spriteScale = 0.15f; }
+
+	float adjustedRadius = thing->radius * spriteScale;
+
+	// Scale for the "Kill Zone" (how close the portal must be to block anamorphosis)
+	// We use 1.5x radius as a baseline for all sizes
+	float strictZoneSq = (thing->radius * 1.5f) * (thing->radius * 1.5f);
+
+	// === 2. SETUP TEST POINTS (Both modes use the same adjustedRadius) ===
+	float testPts[5][2];
+	int numPoints = 0;
+
+	if (checkBboxCameraFace)
+	{
+		// MODE A: FACING SIDE + CENTER
+		float dx = viewerX - thingX;
+		float dy = viewerY - thingY;
+		float dist = sqrt(dx * dx + dy * dy);
+		if (dist > 0.0f) { dx /= dist; dy /= dist; }
+
+		// Center
+		testPts[0][0] = thingX; testPts[0][1] = thingY;
+
+		// Determine the most facing point using adjustedRadius
+		if (fabs(dx) > fabs(dy))
+		{
+			testPts[1][0] = (dx > 0) ? thingX + adjustedRadius : thingX - adjustedRadius;
+			testPts[1][1] = thingY;
+		}
+		else
+		{
+			testPts[1][0] = thingX;
+			testPts[1][1] = (dy > 0) ? thingY + adjustedRadius : thingY - adjustedRadius;
+		}
+		numPoints = 2;
+	}
+	else
+	{
+		// MODE B: FULL STAR (CENTER + 4 SIDES)
+		testPts[0][0] = thingX;                  testPts[0][1] = thingY;
+		testPts[1][0] = thingX + adjustedRadius; testPts[1][1] = thingY;
+		testPts[2][0] = thingX - adjustedRadius; testPts[2][1] = thingY;
+		testPts[3][0] = thingX;                  testPts[3][1] = thingY + adjustedRadius;
+		testPts[4][0] = thingX;                  testPts[4][1] = thingY - adjustedRadius;
+		numPoints = 5;
+	}
+
+	// === 3. PORTAL SCANNING ===
+	for (unsigned i = 0; i < thingSector->Lines.Size(); i++)
+	{
+		line_t* testLine = thingSector->Lines[i];
+
+		// Proximity check only applies to 2-sided portals (columns, steps, etc.)
+		if (testLine->flags & ML_TWOSIDED)
+		{
+			float l1x = (float)testLine->v1->fX();
+			float l1y = (float)testLine->v1->fY();
+			float l2x = (float)testLine->v2->fX();
+			float l2y = (float)testLine->v2->fY();
+
+			for (int j = 0; j < numPoints; j++)
+			{
+				float ix, iy;
+				if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], l1x, l1y, l2x, l2y, ix, iy))
+				{
+					// Calculate distance from intersection point to sprite center
+					float dx_int = ix - thingX;
+					float dy_int = iy - thingY;
+
+					// Block effect only if portal is within the sprite's personal strictZone
+					if ((dx_int * dx_int + dy_int * dy_int) < strictZoneSq)
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
+
 struct SpriteCrossed2SidedLineCacheEntry
 {
 	int lastMapTimeUpdateTick = -1;
@@ -1581,15 +1689,15 @@ bool SpriteCrossed2sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 		}
 
 		// Compute and cache fresh result from non-cached function
-		bool result = SpriteCrossed2sidedLinedef(thing, viewer);
-		entry.cached2sidedSpriteCrossedResult = result;
+		bool resultSprX2sLine = SpriteBboxFacingCameraCrossed2sLine(thing, viewer);
+		entry.cached2sidedSpriteCrossedResult = resultSprX2sLine;
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
-		return result;
+		return resultSprX2sLine;
 	}
 	else
 	{
 		// Original uncached behavior
-		return SpriteCrossed2sidedLinedef(thing, viewer);
+		return SpriteBboxFacingCameraCrossed2sLine(thing, viewer);
 	}
 }
 
@@ -1605,19 +1713,17 @@ struct ObstructionData2Sided
 	bool valid;
 	bool isTightSector;           // flat/closed sectors (gap <= 8 units)
 	bool isProjecileBehindDoor;   // persistent flag for projectile door occlusion
-	int tightCheckDepth;          // sectors iterations counter
 
 	// Constructor to initialize all persistent flags
 	ObstructionData2Sided()
 	{
-		minFloor = MAXCOORD2SIDED;
-		maxFloor = MINCOORD2SIDED;
-		minCeiling = MAXCOORD2SIDED;
-		maxCeiling = MINCOORD2SIDED;
+		minFloor = MAXCOORD2SIDED;    // Start high, find lowest
+		maxFloor = MINCOORD2SIDED;    // Start low, find highest
+		minCeiling = MAXCOORD2SIDED;  // Start high, find lowest
+		maxCeiling = MINCOORD2SIDED;  // Start low, find highest
 		valid = false;
 		isTightSector = false;
 		isProjecileBehindDoor = false;
-		tightCheckDepth = 0;
 	}
 
 	void Update2sidedTallObstructions(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point)
@@ -1645,8 +1751,18 @@ struct ObstructionData2Sided
 		float viewerTop = viewerBottom + EyeHeight;
 		float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
 		float viewerTopAdj = viewerTop + Ztolerance2sided;
-		float spriteBottom = thing->Z();
-		float spriteTop = (thing->Z()) + (thing->Height);
+
+		float spriteBottom, spriteTop;
+		if (thing->flags & MF_SPAWNCEILING)
+		{
+			spriteTop = (float)thing->Z();
+			spriteBottom = spriteTop - (float)thing->Height;
+		}
+		else
+		{
+			spriteBottom = (float)thing->Z();
+			spriteTop = spriteBottom + (float)thing->Height;
+		}
 		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
 		float sprTopAdj = spriteTop + Ztolerance2sided;
 		const float cullsmallspriteslessthresh = 32.0f;
@@ -1726,7 +1842,7 @@ struct ObstructionData2Sided
 			FVector2 tPos = { (float)thing->X(), (float)thing->Y() };
 			float distToLine = (tPos - clamped).Length();
 
-			// If distance to line is less than 128 AND Z-gap is less than 32 units
+			// If distance to line is less than 24 AND Z-gap is less than 32 units
 			if (distToLine < 24.0f)
 			{
 				if (diffToFloor <= 32.0f || diffToCeil <= 32.0f)
@@ -1770,8 +1886,20 @@ struct ObstructionData2Sided
 		if (isTightSector) return false;
 		if (isProjecileBehindDoor) return false;
 
-		float spriteBottom = (float)thing->Z();
-		float spriteTop = spriteBottom + (float)thing->Height;
+		// In Doom, ceiling sprites (MF_SPAWNCEILING) have their Z at the top (anchor).
+		// Their "height" grows DOWNWARDS. We must flip the bounds to avoid leaks.
+		float spriteBottom, spriteTop;
+		if (thing->flags & MF_SPAWNCEILING)
+		{
+			spriteTop = (float)thing->Z();                   // Anchor is at the top
+			spriteBottom = spriteTop - (float)thing->Height; // Body grows downwards
+		}
+		else
+		{
+			spriteBottom = (float)thing->Z();                // Anchor is at the bottom
+			spriteTop = spriteBottom + (float)thing->Height; // Body grows upwards
+		}
+
 		float viewerBottom = (float)viewer->Z();
 		float viewerTop = viewerBottom + 41.0f; // Default eye height fallback
 
@@ -1782,10 +1910,15 @@ struct ObstructionData2Sided
 		const float spriteSize = (thing->radius + thing->Height) * 0.5f;
 		const bool isSmallSprite = (spriteSize <= 22.0f);
 
-		// Min obstraction height to fully occlude a sprite behind it
-		float LEDGE_THRESHOLD = 0.0f;               // initialize the variable
-		if (isSmallSprite) LEDGE_THRESHOLD = 12.0f; // needs taller obsructions to cull small sprites
-		else               LEDGE_THRESHOLD = 4.0f;  // shorter obstructions for bigger sprites not to leak through ledges
+		float distToCeil = fabs(spriteTop - minCeiling);   // For doors extruded from ceilings to floor
+		float distToFloor = fabs(spriteBottom - maxFloor); // For doors extruded from floor to ceilings
+
+		// Min obstruction height to fully occlude a sprite behind it
+		float LEDGE_THRESHOLD = 0.0f;               // Initialize the variable
+		if (isSmallSprite) LEDGE_THRESHOLD = 12.0f; // Needs taller obstructions to cull small sprites
+		else               LEDGE_THRESHOLD = 4.0f;  // Shorter obstructions for bigger sprites not to leak through ledges
+
+
 
 		// 1. Floor/Ledge occlusion
 		// Trigger ONLY if the ledge is higher than the sprite's feet AND higher than your feet.
@@ -1811,12 +1944,12 @@ struct ObstructionData2Sided
 
 		return true;
 	}
+
 };
 
 // Line-intersection test
 static bool LineIntersectsSegment2sided(const FVector2& seg1Start, const FVector2& seg1End, const FVector2& seg2Start, const FVector2& seg2End, FVector2& intersectionPoint)
 {
-	// Cross product helper - same as LineSegmentCommon implementation
 	const auto cross = [](const FVector2& a, const FVector2& b)
 	{
 		return a.X*b.Y - a.Y*b.X;
@@ -1825,32 +1958,29 @@ static bool LineIntersectsSegment2sided(const FVector2& seg1Start, const FVector
 	const FVector2 d1 = seg1End - seg1Start;
 	const FVector2 d2 = seg2End - seg2Start;
 
-	// Relative vectors (vectors from seg1Start to seg2 points)
 	const FVector2 relA = seg2Start - seg1Start;
 	const FVector2 relB = seg2End - seg1Start;
 
-	// Cross products for segment 1 straddle check
 	const float cross1 = cross(d1, relA);
 	const float cross2 = cross(d1, relB);
 
-	// If same sign (not straddling) - no intersection
-	if (cross1 * cross2 > EPSILON2SIDED) return false;
+	// THE SEAM FIX - actually no difference but let it be here.
+	// We use a tiny negative epsilon to ensure that if a ray hits a vertex (cross ~ 0), 
+	// it's counted as a hit. 2.0f was creating a gap at every joint.
+	if (cross1 * cross2 > 0.0001f) return false;
 
-	// Relative vectors (vectors from seg2Start to seg1 points)
 	const FVector2 relC = seg1Start - seg2Start;
 	const FVector2 relD = seg1End - seg2Start;
 
-	// Cross products for segment 2 straddle check
 	const float cross3 = cross(d2, relC);
 	const float cross4 = cross(d2, relD);
 
-	// If same sign (not straddling) - no intersection
-	if (cross3 * cross4 > EPSILON2SIDED) return false;
+	if (cross3 * cross4 > 0.0001f) return false;
 
-	// Calculate intersection point (now that we know they intersect)
-	// Division happens only once per intersection
 	const float det = cross(d1, d2);
-	if (fabs(det) < EPSILON2SIDED) return false; // Parallel case
+
+	// Keep the epsilon for parallel lines check only
+	if (fabs(det) < 0.0001f) return false;
 
 	const float t = cross(relA, d2) / det;
 	intersectionPoint = seg1Start + d1 * t;
@@ -2160,6 +2290,10 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 
 // ******* 2-sided-linedef tall enough sector obstructions culling block finish *******
 //         ---===      ***************************************        ===---
+
+
+
+
 
 
 
@@ -3305,10 +3439,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
 		bool actorInVoid = IsActorInVoid(thing);
 
-		bool isSpriteObstructed = (!visible1sidesInfTallObstr || 
-			thingCrossed1sidedLine || !visible2sideTallEnoughObstr || 
-			!visible2sideMidTex || thingFacingBboxCrossed1sided || !visible3dfloorSides);
-
 		// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
 		// That's why get viewer from renderer context instead of function parameters
 		AActor* viewer = r_viewpoint.camera;
@@ -3621,9 +3751,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 			isonsteepsurf = steepnessfact > 0.0001f;
 
+			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
+			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
 			// can't really advise anyone to crank up "increaseAnam" higher than 0.14f
-			if ( (dist < 1200.0f) && isonsteepsurf && !isSpriteObstructed) increaseAnam = 0.14f;
+			// "!thingCrossed2sidedLine" check here because that way we can suppress coplanar leaks
+			// could have another check for whether sprite is spawned too close to a 3d-floor plane bottom like a ceiling mounted lamp but maybe later...
+			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !thingCrossed2sidedLine) increaseAnam = 0.125f;
 
 			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 			float vpbias = 1.0 - spbias;
