@@ -1237,108 +1237,106 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
 	if (CheckFrustumCulling(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
-	sector_t* thingSector = thing->Sector;
-	if (!thingSector || thingSector->Lines.Size() == 0) return false;
+	// --- 1. SPATIAL POOLING ---
+	static TMap<uint64_t, bool> spatial1sPool;
+	static int last1sPoolTick = -1;
+	if (last1sPoolTick != level.maptime) { spatial1sPool.Clear(); last1sPoolTick = level.maptime; }
 
-	// Calculate viewer->thing line geometry
-	float viewerX = (float)viewer->X();
-	float viewerY = (float)viewer->Y();
 	float thingX = (float)thing->X();
 	float thingY = (float)thing->Y();
+	float viewerX = (float)viewer->X();
+	float viewerY = (float)viewer->Y();
 
-	// Calculate sprite size with YOUR original classification logic
+	// KEY: Using 16-unit grid. 
+	// Added coarse angle (90 deg steps) to key so results change when you orbit the sprite
+	int gridX = (int)(thingX / 16.0f);
+	int gridY = (int)(thingY / 16.0f);
+	int angleKey = (int)(viewer->Angles.Yaw.Degrees / 90.0f);
+	uint64_t spatialKey = ((uint64_t)gridX << 32) | ((uint32_t)gridY << 8) | (uint8_t)angleKey;
+
+	if (spatial1sPool.CheckKey(spatialKey)) return spatial1sPool[spatialKey];
+
+	// --- 2. FACING DIRECTION CALCULATION ---
+	// Vector from sprite to viewer
+	float dx = viewerX - thingX;
+	float dy = viewerY - thingY;
+	float vDist = sqrt(dx * dx + dy * dy);
+	if (vDist > 0.0f) { dx /= vDist; dy /= vDist; }
+
+	// --- 3. SIZE ADAPTATION ---
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	const bool isTinySprite = (spriteSize < 18.0f);
+	const bool isLargeSprite = (spriteSize >= 45.0f);
 
-	// Sprite size thresholds
-	const bool isMicroSprite = (spriteSize <= 8.0f);
-	const bool isTinySprite = (spriteSize <= 12.0f);
-	const bool isSmallSprite = (spriteSize <= 18.0f);
-	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
-	const bool isLargeSprite = (spriteSize > 38.0f && spriteSize < 39.0f);
-	const bool isHugeSprite = (spriteSize >= 39.0f);
-
-	float                     spriteScale = 8.0f;
-	if (isMediumSprite)     { spriteScale = 4.5f;  }
-	else if (isLargeSprite) { spriteScale = 1.15f; }
-	else if (isHugeSprite)  { spriteScale = 0.5f;  }
+	float spriteScale = 10.5f;
+	if (isTinySprite) spriteScale = 5.5f;
+	else if (isLargeSprite) spriteScale = 6.5f;
+	else spriteScale = 7.5f;
 
 	float adjustedRadius = thing->radius * spriteScale;
 
-	// Calculate viewer direction relative to sprite
-	float dx = viewerX - thingX;
-	float dy = viewerY - thingY;
-	float viewerDist = sqrt(dx * dx + dy * dy);
+	float strictZoneScale = 10.5f;
+	if (isTinySprite) strictZoneScale = 8.5f;
+	else if (isLargeSprite) strictZoneScale = 12.5f;
+	else strictZoneScale = 5.0f;
 
-	if (viewerDist > 0.0f)
+	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
+
+	// --- 4. SELECTIVE TEST POINTS (Facing Only) ---
+	// We only test the center and the side most facing the camera
+	float testPts[2][2];
+	testPts[0][0] = thingX; testPts[0][1] = thingY; // Always test center
+
+	// Pick the point on the bbox radius that is closest to the viewer
+	testPts[1][0] = thingX + (dx * adjustedRadius);
+	testPts[1][1] = thingY + (dy * adjustedRadius);
+
+	// --- 5. LOCAL SCANNING ---
+	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0f);
+	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0f);
+	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0f);
+	int maxBY = level.blockmap.GetBlockY(thingY + adjustedRadius + 16.0f);
+
+	bool result = false;
+	int linesCount = 0;
+
+	for (int bx = minBX; bx <= maxBX && !result; bx++)
 	{
-		dx /= viewerDist;
-		dy /= viewerDist;
-	}
-
-	// Determine which side of the bbox faces the viewer most directly
-	float rightDot = dx;      // Right side normal
-	float leftDot = -dx;      // Left side normal
-	float upDot = dy;         // Up side normal
-	float downDot = -dy;      // Down side normal
-
-	// Find the side with the highest dot product (most facing)
-	float maxDot = MAX(MAX(rightDot, leftDot), MAX(upDot, downDot));
-
-	// Determine test point based on most-facing side
-	float testX, testY;
-	if (maxDot == rightDot)
-	{
-		testX = thingX + adjustedRadius;
-		testY = thingY;
-	}
-	else if (maxDot == leftDot)
-	{
-		testX = thingX - adjustedRadius;
-		testY = thingY;
-	}
-	else if (maxDot == upDot)
-	{
-		testX = thingX;
-		testY = thingY + adjustedRadius;
-	}
-	else // maxDot == downDot
-	{
-		testX = thingX;
-		testY = thingY - adjustedRadius;
-	}
-
-	// Check only the single most-facing test point against 1-sided lines
-	for (auto testLine : thingSector->Lines)
-	{
-		if (!testLine->sidedef[0] || testLine->sidedef[1])
-			continue; // Skip non-1-sided lines
-
-		float lineX1 = (float)testLine->v1->fX();
-		float lineY1 = (float)testLine->v1->fY();
-		float lineX2 = (float)testLine->v2->fX();
-		float lineY2 = (float)testLine->v2->fY();
-
-		// Check the most-facing test point
-		float ix, iy;
-		if (SpriteIntersectsLinedef
-		(
-			viewerX, viewerY,
-			testX, testY,
-			lineX1, lineY1,
-			lineX2, lineY2,
-			ix, iy))
+		for (int by = minBY; by <= maxBY && !result; by++)
 		{
-			return true; // Sprite crosses a 1-sided line visible to viewer
-		}
+			if (!level.blockmap.isValidBlock(bx, by)) continue;
+			int* list = level.blockmap.GetLines(bx, by);
+			for (int i = 0; list[i] != -1 && linesCount < 64; i++)
+			{
+				line_t* line = &level.lines[list[i]];
+				linesCount++;
+				if (line->backsector != nullptr) continue;
 
-		// Also check the core viewer->sprite line itself
-		ix, iy;
-		if (SpriteIntersectsLinedef(viewerX, viewerY, thingX, thingY, lineX1, lineY1, lineX2, lineY2, ix, iy))
-		{
-			return true;
+				float l1x = (float)line->v1->fX();
+				float l1y = (float)line->v1->fY();
+				float l2x = (float)line->v2->fX();
+				float l2y = (float)line->v2->fY();
+
+				for (int j = 0; j < 2; j++) // Only 2 points: center and facing edge
+				{
+					float ix, iy;
+					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], l1x, l1y, l2x, l2y, ix, iy))
+					{
+						float dx_int = ix - thingX;
+						float dy_int = iy - thingY;
+						if ((dx_int * dx_int + dy_int * dy_int) < strictZoneSq)
+						{
+							result = true;
+							break;
+						}
+					}
+				}
+			}
 		}
 	}
-	return false;
+
+	spatial1sPool[spatialKey] = result;
+	return result;
 }
 
 struct SpriteBboxFacingCameraCrossed1sLineCacheEntry
@@ -1722,7 +1720,7 @@ struct ObstructionData2Sided
 
 	bool valid;
 	bool isTightSector;           // flat/closed sectors (gap <= 8 units)
-	bool isProjecileBehindDoor;   // persistent flag for projectile door occlusion
+	bool isProjectileBehindObstacle;   // persistent flag for projectile door occlusion
 
 	// Constructor to initialize all persistent flags
 	ObstructionData2Sided()
@@ -1733,7 +1731,7 @@ struct ObstructionData2Sided
 		maxCeiling = MINCOORD2SIDED;  // Start low, find highest
 		valid = false;
 		isTightSector = false;
-		isProjecileBehindDoor = false;
+		isProjectileBehindObstacle = false;
 	}
 
 	void Update2sidedTallObstructions(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point)
@@ -1852,7 +1850,7 @@ struct ObstructionData2Sided
 			{
 				if (diffToFloor <= 32.0f || diffToCeil <= 32.0f)
 				{
-					isProjecileBehindDoor = true;
+					isProjectileBehindObstacle = true;
 				}
 			}
 		}
@@ -1889,7 +1887,7 @@ struct ObstructionData2Sided
 	{
 		if (!valid) return true;
 		if (isTightSector) return false;
-		if (isProjecileBehindDoor) return false;
+		if (isProjectileBehindObstacle) return false;
 
 		// In Doom, ceiling sprites (MF_SPAWNCEILING) have their Z at the top (anchor).
 		// Their "height" grows DOWNWARDS. We must flip the bounds to avoid leaks.
@@ -2333,270 +2331,116 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 //							I'd recommed to call the function like this:
 //		float behindFacingMidTxtProximity = CheckFacingMidTextureProximity(thing, r_viewpoint.camera, thingpos);
 //		bool visbible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
-static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer, TVector3<double>& thingpos)
+static float CheckFacingMidTextureProximity(AActor* thing, AActor* viewer, TVector3<double>& thingpos)
 {
-	//Printf("===== TEXTURE PROXIMITY CHECK START =====\n");
-	//Printf("Thing: %s at (%.1f, %.1f, %.1f)\n", thing->GetClass()->TypeName.GetChars(), thingpos.X, thingpos.Y, thingpos.Z);
-	//Printf("Camera: (%.1f, %.1f, %.1f) facing %.1f degrees\n", camera->X(), camera->Y(), camera->Z(), camera->Angles.Yaw.Degrees());
+	// --- 1. PRELIMINARY CHECKS ---
+	if (!thing || !viewer) return 1.0f;
+	if (CheckFrustumCulling(thing)) return 1.0f;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return 1.0f;
 
-	// 1. Quick out: Frustum culling
-	if (CheckFrustumCulling(thing))
+	// --- 2. SPATIAL POOLING (Grid Cache) ---
+	// Mid-textures are static, so nearby sprites should share the same occlusion results.
+	static TMap<uint64_t, float> midTexPool;
+	static int lastMidTick = -1;
+	if (lastMidTick != level.maptime) { midTexPool.Clear(); lastMidTick = level.maptime; }
+
+	int gridX = (int)(thingpos.X / 32.0);
+	int gridY = (int)(thingpos.Y / 32.0);
+	uint64_t spatialKey = ((uint64_t)gridX << 32) | (uint32_t)gridY;
+
+	if (midTexPool.CheckKey(spatialKey)) return midTexPool[spatialKey];
+
+	// --- 3. VERTICAL BOUNDS SETUP ---
+	float sprBot, sprTop;
+	if (thing->flags & MF_SPAWNCEILING)
 	{
-		//Printf("Skipped: Frustum culled\n");
-		return 0.0f;
-	}
-
-	// 2. Distance culling (far planes)
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f))
-	{
-		//Printf("Skipped: Distance culled (2048+ units away)\n");
-		return 0.0f;
-	}
-
-	const float ZtoleranceMidTxt = 16.0f; // ensures a much better detection
-
-	// 3. Actor classification flags and thresholds
-	const bool isLegacyVersionProjectile = thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY) || 
-		                                   thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS);
-
-	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
-	const bool isLargeSprite = (spriteSize > 40.0f);
-
-	// Get vertical positioning info
-	float EyeHeight = 41.0f;
-	if (viewer->player && viewer->player->mo)
-	{
-		EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
-		//Printf("EyeHeight1: %.2f (ViewHeight: %.2f + crouchdelta: %.2f)\n", EyeHeight1, viewer->player->mo->FloatVar(NAME_ViewHeight), viewer->player->crouchviewdelta);
+		sprTop = (float)thing->Z();
+		sprBot = sprTop - (float)thing->Height;
 	}
 	else
 	{
-		//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
+		sprBot = (float)thing->Z();
+		sprTop = sprBot + (float)thing->Height;
 	}
 
-	// --- Who knows why but it works better this way ---
-	// For midtexture detection, we add ztol to bottom and subtract from top
-	float viewerBottom = viewer->Z();
-	float viewerTop = viewerBottom + EyeHeight;
-	float viewerBottomAdj = viewerBottom + ZtoleranceMidTxt;
-	float viewerTopAdj = viewerTop - ZtoleranceMidTxt;
-	float spriteBottom = thing->Z();
-	float spriteTop = (thing->Z()) + (thing->Height);
-	float sprBottomAdj = spriteBottom + ZtoleranceMidTxt;
-	float sprTopAdj = spriteTop - ZtoleranceMidTxt;
+	float viewZ = (float)viewer->Z() + (viewer->player ? viewer->player->viewheight : 41.0f);
+	FVector2 vPos = { (float)viewer->X(), (float)viewer->Y() };
+	FVector2 sPos = { (float)thingpos.X, (float)thingpos.Y };
+	FVector2 rayVec = sPos - vPos;
+	float rayLen = rayVec.Length();
+	if (rayLen < 0.1f) return 1.0f;
 
-	//Printf("  Actor type: %s%s (size: %.1f)\n", isLegacyProjectile ? "Projectile " : "", isLargeSprite ? "Large" : "Standard", spriteSize);
+	float minProximity = 1.0f;
 
-	// 4. Proximity thresholds where occlusion is disabled (to prevent popping)
-	const float CLOSE_DIST_SMALL = 64.0f;        // Standard avoidance distance
-	const float CLOSE_DIST_LARGE = 96.0f;        // Extended for large entities
+	// --- 4. TUNNEL SCAN VIA BLOCKMAP ---
+	// We use a tunnel to catch mid-textures in ANY sector between eye and sprite
+	FVector2 dir = rayVec / rayLen;
+	const float stepSize = 128.0f;
+	FVector2 currentPos = vPos;
+	int lastBX = -1, lastBY = -1;
 
-	// 5. Measured distance from camera to thing
-	float distToCamSq = (thingpos - TVector3<double>(viewer->X(), viewer->Y(), viewer->Z())).LengthSquared();
-	float minDist = (isLegacyVersionProjectile || isLargeSprite) ? CLOSE_DIST_LARGE : CLOSE_DIST_SMALL;
-
-	// 6. If very close and vertically aligned - full visibility (disable occlusion)
-	// because sprites don't override walls depth that hard when close and viewer is not under or above the sprite
-	if (distToCamSq <= minDist * minDist)
+	for (float d = 0; d <= rayLen + stepSize; d += stepSize)
 	{
-		//Printf("Close proximity (%.1f units): Full visibility (factor=1.0)\n", sqrt(distToCamSq));
-		return 1.0f;
-	}
-	//Printf("Distance to camera: %.1f units\n", sqrt(distToCamSq));
+		int bx = level.blockmap.GetBlockX(currentPos.X);
+		int by = level.blockmap.GetBlockY(currentPos.Y);
+		currentPos += dir * stepSize;
 
-	// 7. Set detection radii based on actor type
-	float MAX_DIST_SOLID = 64.0f;    // Standard solid wall max distance
-	float MAX_DIST_MASKED = 96.0f;   // Masked textures have see-through parts
-	const float EDGE_BUFFER = 32.0f; // Safety margin from texture edges
+		if (!level.blockmap.isValidBlock(bx, by)) continue;
+		if (bx == lastBX && by == lastBY) continue;
+		lastBX = bx; lastBY = by;
 
-	// Adaptive adjustments for special actor types
-	if (isLegacyVersionProjectile)
-	{
-		MAX_DIST_SOLID = 80.0f;
-		MAX_DIST_MASKED = 112.0f;
-		//Printf("  Using projectile detection ranges: SOLID=%.1f, MASKED=%.1f\n", MAX_DIST_SOLID, MAX_DIST_MASKED);
-	}
-	else if (isLargeSprite)
-	{
-		MAX_DIST_SOLID = 96.0f;
-		MAX_DIST_MASKED = 128.0f;
-		//Printf("Using large sprite detection ranges: SOLID=%.1f, MASKED=%.1f\n", MAX_DIST_SOLID, MAX_DIST_MASKED);
-	}
-	//else
-	//{
-	//    Printf("Using standard detection ranges: SOLID=%.1f, MASKED=%.1f\n", MAX_DIST_SOLID, MAX_DIST_MASKED);
-	//}
-
-	float proximity_factor = 1.0f;
-
-	// 8. Calculate view direction vector
-	float yawRadians = viewer->Angles.Yaw.Radians();
-	TVector2<float> viewDir(cos(yawRadians), sin(yawRadians));
-	//Printf("  View direction: (%.3f, %.3f)\n", viewDir.X, viewDir.Y);
-
-	// 9. Iterate sector lines (with comprehensive checks)
-	sector_t* sector = thing->Sector;
-	//Printf("Checking %u lines in sector %d\n", sector->Lines.Size(), sector->Index());
-	for (auto line : sector->Lines)
-	{
-		//Printf("\n  --- Checking Line %d (flags: %04X) ---\n", line->Index(), line->flags);
-
-		// Minimal line validation - must be two-sided (game logic requirement)
-		if (!line->sidedef[0] || !line->sidedef[1])
+		int* list = level.blockmap.GetLines(bx, by);
+		for (int i = 0; list[i] != -1; i++)
 		{
-			//Printf("Skipped: Missing front/back sidedef\n");
-			continue;
-		}
+			line_t* line = &level.lines[list[i]];
 
-		// 10. MIDTEXTURE EXISTENCE CHECK
-		bool hasValidMidTexture = false;
-		for (int sideno = 0; sideno < 2; sideno++)
-		{
-			FTextureID midtex = line->sidedef[sideno]->GetTexture(side_t::mid);
-			if (midtex.isValid() && TexMan[midtex])
+			// Only 2-sided lines can have mid-textures
+			if (!line->sidedef[0] || !line->sidedef[1]) continue;
+
+			FVector2 intersect;
+			if (!LineIntersectsSegment2sided(vPos, sPos, GetVertexPosition(line->v1), GetVertexPosition(line->v2), intersect))
+				continue;
+
+			// How far along the ray is the wall? (0.0 to 1.0)
+			float t = (intersect - vPos).Length() / rayLen;
+
+			// Get vertical texture bounds
+			double tTop_d, tBot_d;
+			if (P_GetMidTexturePosition(line, 0, &tTop_d, &tBot_d))
 			{
-				hasValidMidTexture = true;
-				//Printf("Side %d has valid MID texture: %s\n", sideno, TexMan[midtex]->Name.GetChars());
-				break;
+				float texTop = (float)tTop_d;
+				float texBot = (float)tBot_d;
+
+				// --- THE CORE FIX: Vertical Projection ---
+				// Where the sprite's silhouette appears ON the wall from player's eyes
+				float projTop = viewZ + t * (sprTop - viewZ);
+				float projBot = viewZ + t * (sprBot - viewZ);
+
+				// Find overlap between Projected Sprite and Physical Texture
+				float overlapMin = MAX(MIN(projTop, projBot), texBot);
+				float overlapMax = MIN(MAX(projTop, projBot), texTop);
+				float overlapHeight = MAX(0.0f, overlapMax - overlapMin);
+
+				// If the texture covers more than 8 units of the visual silhouette:
+				if (overlapHeight > 8.0f)
+				{
+					// Check distance to the line for the proximity factor
+					float distToLine = (sPos - intersect).Length();
+
+					// If very close to wall, start occlusion
+					float maxOccludeDist = 64.0f;
+					if (distToLine < maxOccludeDist)
+					{
+						float factor = distToLine / maxOccludeDist; // 0.0 (at wall) to 1.0 (far)
+						minProximity = MIN(minProximity, factor);
+					}
+				}
 			}
 		}
-		if (!hasValidMidTexture)
-		{
-			//Printf("Skipped: No valid MID textures on either side\n");
-			continue;
-		}
-
-		// 11. PRECISE OCCLUSION DETECTION
-		TVector2<float> viewerPos(viewer->X(), viewer->Y());
-		TVector2<float> thingPos2D(thingpos.X, thingpos.Y);
-
-		// Create camera->thing visibility ray
-		TVector2<float> rayVec = thingPos2D - viewerPos;
-		float rayLen = rayVec.Length();
-		TVector2<float> rayDir = rayVec.Unit();
-
-		//Printf("Ray: from (%.1f,%.1f) to (%.1f,%.1f) len=%.1f dir(%.3f,%.3f)\n", cameraPos.X, cameraPos.Y, thingPos2D.X, thingPos2D.Y, rayLen, rayDir.X, rayDir.Y);
-
-		// Line geometry data
-		TVector2<float> lineA(line->v1->fX(), line->v1->fY());
-		TVector2<float> lineB(line->v2->fX(), line->v2->fY());
-		TVector2<float> lineV = lineB - lineA;
-
-		//Printf("Line: (%.1f,%.1f)->(%.1f,%.1f) vec(%.1f,%.1f)\n",lineA.X, lineA.Y, lineB.X, lineB.Y, lineV.X, lineV.Y);
-
-		// Ray-line intersection math
-		float denom = rayDir.X * lineV.Y - rayDir.Y * lineV.X;
-		if (fabs(denom) < 1e-10)
-		{
-			//Printf("Skipped: Ray parallel to line (denom=%.4f)\n", denom);
-			continue;
-		}
-
-		TVector2<float> delta = lineA - viewerPos;
-		float t = (delta.X * lineV.Y - delta.Y * lineV.X) / denom;
-		float u = (delta.X * rayDir.Y - delta.Y * rayDir.X) / denom;
-
-		//Printf("Intersection params: t=%.4f, u=%.4f\n", t, u);
-
-		// Validate segment intersection
-		if (t < 0.0 || t > rayLen || u < -1e-5 || u > 1.00001)
-		{
-			//Printf("Skipped: Intersection outside segments (t=%.1f on ray, u=%.1f on line)\n", t, u);
-			continue;
-		}
-
-		// Surface orientation check
-		TVector2<float> lineNormal(-lineV.Y, lineV.X);
-		lineNormal = lineNormal.Unit();
-		if ((rayDir | lineNormal) < 0)
-		{
-			//Printf("Skipped: Facing back side of line (normal dot=%.2f)\n", rayDir | lineNormal);
-			continue;
-		}
-
-		TVector2<float> hitPoint = viewerPos + rayDir * t;
-		float distToIntersect = (thingPos2D - hitPoint).Length();
-		//Printf("Valid intersection at (%.1f,%.1f), %.1f units from thing\n", hitPoint.X, hitPoint.Y, distToIntersect);
-
-		// 12. VERTICAL MIDTEXTURE RANGE CHECK
-		double textop_d, texbot_d;
-		if (P_GetMidTexturePosition(line, 0, &textop_d, &texbot_d))
-		{
-			// Convert results to floats immediately after the call
-			float textop = static_cast<float>(textop_d);
-			float texbot = static_cast<float>(texbot_d);
-
-			// Expand the active mid-texture solid zone vertically to catch perspective leakage
-			texbot -= 64.0f;  // Pushes the blocking threshold lower under the floor
-			textop += 64.0f;  // Lifts the blocking threshold higher into the ceiling
-
-			// Proxemic range check using expanded virtual boundaries
-			if (viewerBottomAdj <= texbot || sprTopAdj >= textop)
-			{
-				continue; // Now skips ONLY when genuinely out of the expanded 64-unit danger zone
-			}
-		}
-		//else
-		//{
-		//    Printf("No vertical midtexture position data\n");
-		//}
-
-		// 13. DISTANCE TO LINE SEGMENT CALCULATION
-		DVector2 v1(line->v1->fX(), line->v1->fY());
-		DVector2 v2(line->v2->fX(), line->v2->fY());
-		DVector2 lineVec = v2 - v1;
-		double lineLenSq = lineVec.LengthSquared();
-		if (lineLenSq < 1e-6)
-		{
-			//Printf("Skipped: Degenerate line (length squared=%.4f)\n", lineLenSq);
-			continue;
-		}
-
-		DVector2 toSprite(thingpos.X - v1.X, thingpos.Y - v1.Y);
-		double dot = lineVec.X * toSprite.X + lineVec.Y * toSprite.Y;
-		float t_segment = clamp(float(dot / lineLenSq), 0.0f, 1.0f);
-
-		DVector2 closest(v1.X + t_segment * lineVec.X, v1.Y + t_segment * lineVec.Y);
-		float dist = float((thingpos - DVector3(closest, 0)).XY().Length());
-
-		//Printf("Closest point on line: (%.1f,%.1f), distance=%.1f\n", closest.X, closest.Y, dist);
-
-		// 14. ADAPTIVE TEXTURE TYPE HANDLING
-		bool isSolid = false;
-		for (int sideno = 0; !isSolid && sideno < 2; sideno++)
-		{
-			FTexture* tex = TexMan[line->sidedef[sideno]->GetTexture(side_t::mid)];
-			if (tex && !tex->bMasked)
-			{
-				isSolid = true;
-				//Printf("Found solid texture on side %d: %s\n", sideno, tex->Name.GetChars());
-			}
-		}
-
-		float maxDist = isSolid ? MAX_DIST_SOLID : MAX_DIST_MASKED;
-		float threshold = maxDist + EDGE_BUFFER;
-
-		//Printf("Texture type: %s, maxDist=%.1f, threshold=%.1f\n",
-		//       isSolid ? "SOLID" : "MASKED", maxDist, threshold);
-
-		if (dist > threshold)
-		{
-			//Printf("Skipped: Too far from line (%.1f > %.1f)\n", dist, threshold);
-			continue;
-		}
-
-		// 15. PROXIMITY FACTOR CALCULATION
-		float distFromEdge = MAX(0.0f, dist - EDGE_BUFFER);
-		float factor = lerp(0.25f, 1.0f, distFromEdge / maxDist);
-		factor = clamp(factor, 0.25f, 1.0f);
-		proximity_factor = MIN(proximity_factor, factor);
-
-		//Printf("Proximity factor: %.2f (current min: %.2f)\n", factor, proximity_factor);
 	}
 
-	//Printf("===== FINAL PROXIMITY FACTOR: %.2f =====\n", proximity_factor);
-
-	return proximity_factor;
+	midTexPool[spatialKey] = minProximity;
+	return minProximity;
 }
 
 struct MidTextureProximityCacheEntry
@@ -3506,7 +3350,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool isactorsmallbutnotcorpse = (spriteSize >= 8.0f && spriteSize <= 18.0f) && !isactoracorpse;
 		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
 
-
+		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
@@ -3514,8 +3358,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, thing);
 		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
-
-		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera); // unused
 
 		// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
 		// That's why get viewer from renderer context instead of function parameters
@@ -3813,7 +3655,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 			isonsteepsurf = steepnessfact > 0.0001f;
 
-			bool CrossedAnyWall = thingCrossed1sidedLine || thingCrossed2sidedLine;
+			bool CrossedAnyWall = thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
 			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
 			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
