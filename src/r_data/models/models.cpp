@@ -1,5 +1,5 @@
 //
-//---------------------------------------------------------------------------
+//--- models.cpp -----------------------------------------------------------
 //
 // Copyright(C) 2005-2016 Christoph Oelckers
 // All rights reserved.
@@ -20,7 +20,7 @@
 //--------------------------------------------------------------------------
 //
 /*
-** gl_models.cpp
+** models.cpp
 **
 ** General model handling code
 **
@@ -802,6 +802,10 @@ static void ParseModelDefLump(int Lump)
 							}
 						}
 					}
+				}
+				else if (sc.Compare("meshcollide")) // enable 3D models mesh collision
+				{
+					smf.flags |= MDL_MESHCOLLISION;
 				}
 				else if (sc.Compare("surfaceskin"))
 				{

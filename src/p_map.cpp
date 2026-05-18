@@ -1,3 +1,4 @@
+// p_map.cpp
 //-----------------------------------------------------------------------------
 //
 // Copyright 1993-1996 id Software
@@ -27,35 +28,35 @@
 //
 //-----------------------------------------------------------------------------
 
-/* For code that originates from ZDoom the following applies:
-**
-**---------------------------------------------------------------------------
-**
-** Redistribution and use in source and binary forms, with or without
-** modification, are permitted provided that the following conditions
-** are met:
-**
-** 1. Redistributions of source code must retain the above copyright
-**    notice, this list of conditions and the following disclaimer.
-** 2. Redistributions in binary form must reproduce the above copyright
-**    notice, this list of conditions and the following disclaimer in the
-**    documentation and/or other materials provided with the distribution.
-** 3. The name of the author may not be used to endorse or promote products
-**    derived from this software without specific prior written permission.
-**
-** THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-** IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-** OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-** IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
-** INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
-** NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
-** THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-**---------------------------------------------------------------------------
-**
-*/
+// For code that originates from ZDoom the following applies:
+//
+//---------------------------------------------------------------------------
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// 1. Redistributions of source code must retain the above copyright
+//    notice, this list of conditions and the following disclaimer.
+// 2. Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimer in the
+//    documentation and/or other materials provided with the distribution.
+// 3. The name of the author may not be used to endorse or promote products
+//    derived from this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+// IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+// NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+// THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//---------------------------------------------------------------------------
+//
+//
 
 #include <stdlib.h>
 #include <math.h>
@@ -101,6 +102,9 @@
 #include "r_sky.h"
 #include "g_levellocals.h"
 #include "actorinlines.h"
+
+// mesh collision requisites
+#include "r_data\models\models.h"
 
 CVAR(Bool, cl_bloodsplats, true, CVAR_ARCHIVE)
 CVAR(Int, sv_smartaim, 0, CVAR_ARCHIVE | CVAR_SERVERINFO)
@@ -202,6 +206,255 @@ static DVector2 FindRefPoint(line_t *ld, const DVector2 &pos)
 
 //==========================================================================
 //
+// P_CheckMeshCollision
+//
+//==========================================================================
+
+// speed-up by calculating only per % amount of map level time ticks
+bool enableMeshColCache = true;
+
+
+
+inline void P_RotatePoint(float &x, float &y, float angle)
+{
+	float s = sinf(angle); float c = cosf(angle);
+	float nx = x * c - y * s; float ny = x * s + y * c;
+	x = nx; y = ny;
+}
+
+// Simple 2D Point-in-Triangle test (optimized for float)
+bool P_PointInTriangle2D(float px, float py, float x1, float y1, float x2, float y2, float x3, float y3)
+{
+	float d1 = (px - x2) * (y1 - y2) - (x1 - x2) * (py - y2);
+	float d2 = (px - x3) * (y2 - y3) - (x2 - x3) * (py - y3);
+	float d3 = (px - x1) * (y3 - y1) - (x3 - x1) * (py - y1);
+
+	bool has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+	bool has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+	return !(has_neg && has_pos);
+}
+
+// 2D Point-in-Triangle test (Fast cross-product method)
+inline bool P_IsPointInTri(float px, float py, float x1, float y1, float x2, float y2, float x3, float y3)
+{
+	float d1 = (px - x2) * (y1 - y2) - (x1 - x2) * (py - y2);
+	float d2 = (px - x3) * (y2 - y3) - (x2 - x3) * (py - y3);
+	float d3 = (px - x1) * (y3 - y1) - (x3 - x1) * (py - y1);
+	// Check wheter all signs are on the same side
+	return !(((d1 < 0) || (d2 < 0) || (d3 < 0)) && ((d1 > 0) || (d2 > 0) || (d3 > 0)));
+}
+
+inline float P_GetTriZ_WithNormal(float x, float y, float x1, float y1, float z1, float x2, float y2, float z2, 
+	                                    float x3, float y3, float z3, float &outNx, float &outNy, float &outNz)
+{
+	// Triangle edge vectors
+	float e1x = x2 - x1; float e1y = y2 - y1; float e1z = z2 - z1;
+	float e2x = x3 - x1; float e2y = y3 - y1; float e2z = z3 - z1;
+
+	// Cross-product (Normal Nx, Ny, Nz)
+	float nx = e1y * e2z - e1z * e2y;
+	float ny = e1z * e2x - e1x * e2z;
+	float nz = e1x * e2y - e1y * e2x;
+
+	float length = sqrtf(nx * nx + ny * ny + nz * nz);
+	if (length > 0.00001f)
+	{
+		float invLen = 1.0f / length;
+		outNx = nx * invLen; outNy = ny * invLen; outNz = nz * invLen;
+	}
+	else return -FLT_MAX;
+
+	// If nz is almost zero then it's a vertical wall
+	if (fabsf(outNz) < 0.0001f) return -FLT_MAX;
+
+	// Plane equation: Nx(x-x1) + Ny(y-y1) + Nz(z-z1) = 0
+	// Solve relatively z:
+	return z1 - ((outNx * (x - x1) + outNy * (y - y1)) / outNz);
+}
+
+// Rotate point by Pitch, Yaw, Roll
+void P_TransformVertex(float &x, float &y, float &z, float pitch, float yaw, float roll)
+{
+	// Radians
+	float pr = pitch * (3.14159265f / 180.0f);
+	float yr = yaw * (3.14159265f / 180.0f);
+	float rr = roll * (3.14159265f / 180.0f);
+
+	float sp = sinf(pr); float cp = cosf(pr);
+	float sy = sinf(yr); float cy = cosf(yr);
+	float sr = sinf(rr); float cr = cosf(rr);
+
+	// Temp variables for rotation steps
+	float nx, ny, nz;
+
+	// 1. Roll (X-axis)
+	ny = y * cr - z * sr;
+	nz = y * sr + z * cr;
+	y = ny; z = nz;
+
+	// 2. Pitch (Y-axis)
+	nx = x * cp + z * sp;
+	nz = -x * sp + z * cp;
+	x = nx; z = nz;
+
+	// 3. Yaw (Z-axis)
+	nx = x * cy - y * sy;
+	ny = x * sy + y * cy;
+	x = nx; y = ny;
+}
+
+// this is a highly experimental attempt to add mesh collision to 3D models and
+// the work has just began, thus it's not gonna work like your AAA game at all, sorry.
+// for the mesh collision to work, you must comment out a line in "models_md3.cpp",
+// "void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)" method,
+// "surf->UnloadGeometry();"
+bool P_CheckMeshCollision(AActor *mover, AActor *meshActor, const DVector2 &pos, FMeshCollisionResult &outResult)
+{
+	outResult.passable = true;
+	outResult.floorz = -FLT_MAX;
+	outResult.ceilingz = FLT_MAX;
+
+	FSpriteModelFrame *smf = FindModelFrame(meshActor->GetClass(), meshActor->sprite, meshActor->frame, false);
+	if (!smf || !(smf->flags & MDL_MESHCOLLISION)) return false;
+
+	float fx = smf->xscale * (float)meshActor->Scale.X;
+	float fy = smf->yscale * (float)meshActor->Scale.Y;
+	float fz = smf->zscale * (float)meshActor->Scale.Y;
+
+	float tx = (float)pos.X;
+	float ty = (float)pos.Y;
+	float mz = (float)mover->Z();
+	float mtop = mz + (float)mover->Height;
+
+	// detect sector floor height in which model is placed
+	double sectorFloor = meshActor->Sector->floorplane.ZatPoint(meshActor->X(), meshActor->Y());
+	float baseZ = (float)(sectorFloor + meshActor->Z() + smf->zoffset);
+
+	for (int m = 0; m < MAX_MODELS_PER_FRAME; m++)
+	{
+		int mid = smf->modelIDs[m];
+		if (mid < 0 || mid >= (int)Models.Size()) continue;
+		FMD3Model *md3 = (FMD3Model*)Models[mid];
+		if (!md3) continue;
+
+		if (md3->Surfaces.Size() > 0 && md3->Surfaces[0].Tris.Size() == 0) md3->LoadGeometry();
+
+		for (unsigned int s = 0; s < md3->Surfaces.Size(); s++)
+		{
+			FMD3Model::MD3Surface &surf = md3->Surfaces[s];
+			int off = smf->modelframes[m] * surf.numVertices;
+
+			for (unsigned int i = 0; i < surf.Tris.Size(); i++)
+			{
+				FMD3Model::MD3Vertex &v1 = surf.Vertices[off + surf.Tris[i].VertIndex[0]];
+				FMD3Model::MD3Vertex &v2 = surf.Vertices[off + surf.Tris[i].VertIndex[1]];
+				FMD3Model::MD3Vertex &v3 = surf.Vertices[off + surf.Tris[i].VertIndex[2]];
+
+				// Inverted coordinates
+				float x1 = (v1.x * fx) + (float)meshActor->X() + smf->xoffset;
+				float y1 = (v1.y * fy) + (float)meshActor->Y() + smf->yoffset;
+				float x2 = (v2.x * fx) + (float)meshActor->X() + smf->xoffset;
+				float y2 = (v2.y * fy) + (float)meshActor->Y() + smf->yoffset;
+				float x3 = (v3.x * fx) + (float)meshActor->X() + smf->xoffset;
+				float y3 = (v3.y * fy) + (float)meshActor->Y() + smf->yoffset;
+
+				// Inversion: use fabsf for the coordinate to always go UP from baseZ
+				float z1 = baseZ + fabsf(v1.z * fz);
+				float z2 = baseZ + fabsf(v2.z * fz);
+				float z3 = baseZ + fabsf(v3.z * fz);
+
+				// Thickness
+				float ty1 = y1 - 10.0f; float ty2 = y2 + 10.0f; float ty3 = y3 + 10.0f;
+
+				if (P_IsPointInTri(tx, ty, x1, ty1, x2, ty2, x3, ty3))
+				{
+					float triMinZ = z1;
+					float triMaxZ = z1;
+					if (z2 < triMinZ) triMinZ = z2; if (z2 > triMaxZ) triMaxZ = z2;
+					if (z3 < triMinZ) triMinZ = z3; if (z3 > triMaxZ) triMaxZ = z3;
+
+					// If wall is thin by Z, give it a height (like 32 units)
+					if (fabsf(triMaxZ - triMinZ) < 1.0f) triMaxZ = triMinZ + 32.0f;
+
+					Printf("HIT! PlayerZ: %.1f WallZ: %.1f to %.1f\n", mz, triMinZ, triMaxZ);
+
+					// Intersection check
+					if (mz < triMaxZ && mtop > triMinZ)
+					{
+						outResult.passable = false; // block it
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
+
+struct FMeshCollisionCacheEntry
+{
+	int lastMeshColUpdateTick = -1;
+	float cachedMeshColFloorZ = -FLT_MAX;
+	float cachedMeshColCeilingZ = FLT_MAX;
+	bool cachedMeshColHit = false;
+	bool cachedMeshColPassable = true;
+};
+static TMap<AActor*, FMeshCollisionCacheEntry> MeshCollisionCache;
+
+static int meshCacheResetCounter = 0;
+void ResetMeshCollisionCache()
+{
+	// Clear meshes cache. Use Clear(0), not to realloc memory for TMap inner structures
+	MeshCollisionCache.Clear(0);
+	meshCacheResetCounter++;
+}
+
+bool P_CheckMeshCollisionCachedWrapper(AActor* mover, AActor* meshActor, const DVector2& pos, FMeshCollisionResult& outResult)
+{
+	if (!mover || !meshActor) return false;
+
+	// Global check for level tick change
+	static int lastMeshColTick = -1;
+	if (level.maptime != lastMeshColTick)
+	{
+		ResetMeshCollisionCache();
+		lastMeshColTick = level.maptime;
+	}
+
+	if (enableMeshColCache)
+	{
+		// TMap will create an entry if it doesn't exist
+		FMeshCollisionCacheEntry &entry = MeshCollisionCache[meshActor];
+
+		// If we already calculated collision for this actor in the current tick, return cached result
+		if (entry.lastMeshColUpdateTick == level.maptime)
+		{
+			outResult.floorz = entry.cachedMeshColFloorZ;
+			outResult.ceilingz = entry.cachedMeshColCeilingZ;
+			outResult.passable = entry.cachedMeshColPassable;
+			return entry.cachedMeshColHit;
+		}
+
+		// If cache is empty or outdated, perform heavy math calculations
+		bool meshColHitResult = P_CheckMeshCollision(mover, meshActor, pos, outResult);
+
+		// Update cache entry
+		entry.cachedMeshColFloorZ = outResult.floorz;
+		entry.cachedMeshColCeilingZ = outResult.ceilingz;
+		entry.cachedMeshColPassable = outResult.passable;
+		entry.cachedMeshColHit = meshColHitResult;
+		entry.lastMeshColUpdateTick = level.maptime;
+
+		return meshColHitResult;
+	}
+
+	// If cache is disabled by flag, always run heavy math
+	return P_CheckMeshCollision(mover, meshActor, pos, outResult);
+}
+
+//==========================================================================
+//
 // PIT_FindFloorCeiling
 //
 // only3d set means to only check against 3D floors and midtexes.
@@ -231,6 +484,16 @@ static bool PIT_FindFloorCeiling(FMultiBlockLinesIterator &mit, FMultiBlockLines
 
 	DVector2 refpoint = FindRefPoint(ld, cres.Position);
 	FLineOpening open;
+
+	FMeshCollisionResult meshData;
+	if (P_CheckMeshCollisionCachedWrapper(tmf.thing, ld->frontsector->thinglist, tmf.pos, meshData))
+	{
+		if (meshData.floorz > tmf.floorz)
+		{
+			tmf.floorz = meshData.floorz;
+			if (ffcf_verbose) Printf(" Adjust floorz by Mesh to %f\n", meshData.floorz);
+		}
+	}
 
 	P_LineOpening(open, tmf.thing, ld, refpoint, &cres.Position, flags);
 
@@ -448,6 +711,39 @@ bool	P_TeleportMove(AActor* thing, const DVector3 &pos, bool telefrag, bool modi
 	while (mit2.Next(&cres2))
 	{
 		AActor *th = cres2.thing;
+
+		// [Darkcrafter07] Mesh Collision check via MODELDEF
+		FSpriteModelFrame *smf = FindModelFrame(th->GetClass(), th->sprite, th->frame, false);
+		if (smf && (smf->flags & MDL_MESHCOLLISION))
+		{
+			FMeshCollisionResult meshData;
+			// Pass the destination coordinates (pos.X, pos.Y)
+			if (P_CheckMeshCollisionCachedWrapper(tmf.thing, th, { pos.X, pos.Y }, meshData))
+			{
+				// If the teleport destination has a mesh floor, update tmf.floorz
+				if (meshData.floorz > tmf.floorz)
+				{
+					tmf.floorz = meshData.floorz;
+				}
+				if (meshData.ceilingz < tmf.ceilingz)
+				{
+					tmf.ceilingz = meshData.ceilingz;
+				}
+
+				// Check for "teleport into wall" - if mesh says it's not passable
+				// and the teleport Z is below the mesh surface or inside the mesh body
+				if (!meshData.passable)
+				{
+					// If the actor would end up inside the mesh geometry, block the teleport
+					if (pos.Z < meshData.floorz || pos.Z + thing->Height > meshData.ceilingz)
+						return false;
+				}
+
+				// If we successfully hit the mesh, we skip the standard cylinder check
+				// because the mesh math is more accurate.
+				continue;
+			}
+		}
 
 		if (!(th->flags & MF_SHOOTABLE))
 			continue;
@@ -1287,6 +1583,7 @@ DEFINE_ACTION_FUNCTION(AActor, DoMissileDamage)
 	P_DoMissileDamage(self, target);
 	return 0;
 }
+
 //==========================================================================
 //
 // PIT_CheckThing
@@ -1298,11 +1595,16 @@ bool PIT_CheckThing(FMultiBlockThingsIterator &it, FMultiBlockThingsIterator::Ch
 	AActor *thing = cres.thing;
 	double topz;
 	bool 	solid;
+	bool    isMeshHit = false;
+	bool    isMeshBlocked = false;
 	int 	damage;
 
 	// don't clip against self
 	if (thing == tm.thing)
 		return true;
+
+	FSpriteModelFrame *smf = FindModelFrame(thing->GetClass(), thing->sprite, thing->frame, false);
+
 
 	if ((thing->flags2 | tm.thing->flags2) & MF2_THRUACTORS)
 		return true;
@@ -1317,14 +1619,37 @@ bool PIT_CheckThing(FMultiBlockThingsIterator &it, FMultiBlockThingsIterator::Ch
 	if (fabs(thing->X() - cres.Position.X) >= blockdist || fabs(thing->Y() - cres.Position.Y) >= blockdist)
 		return true;
 
+	// Both things overlap in x or y direction
+	bool unblocking = false;
+
+	// [Darkcrafter07] Mesh Collision Logic
+	if (smf && (smf->flags & MDL_MESHCOLLISION))
+	{
+		FMeshCollisionResult mres;
+		// Init struct so no garbage
+		mres.passable = true;
+		mres.floorz = -FLT_MAX;
+		mres.ceilingz = FLT_MAX;
+
+		if (P_CheckMeshCollisionCachedWrapper(tm.thing, thing, cres.Position, mres))
+		{
+			if (!mres.passable)
+			{
+				// The main hack: Squash player between floor and ceiling to stop
+				tm.floorz = 1000000.0f;
+				tm.ceilingz = -1000000.0f;
+
+				tm.thing->BlockingMobj = thing;
+				return false; // block movement directly
+			}
+		}
+	}
+
 	if ((tm.thing->flags6 & MF6_THRUSPECIES) && (tm.thing->GetSpecies() == thing->GetSpecies()))
 		return true;
 
 	tm.thing->BlockingMobj = thing;
 	topz = thing->Top();
-
-	// Both things overlap in x or y direction
-	bool unblocking = false;
 
 	// walking on other actors and unblocking is too messy through restricted portal types so disable it.
 	if (!(cres.portalflags & FFCF_RESTRICTEDPORTAL))
@@ -1459,6 +1784,11 @@ bool PIT_CheckThing(FMultiBlockThingsIterator &it, FMultiBlockThingsIterator::Ch
 			!(thing->flags & MF_NOCLIP) &&
 			((tm.thing->flags & MF_SOLID) || (tm.thing->flags6 & MF6_BLOCKEDBYSOLIDACTORS));
 
+		// If we are blocked by a mesh wall specifically:
+		if (isMeshBlocked) return false;
+
+		// If we found a passable mesh part (unblocking == true), 
+		// we ignore the 'solid' status of the actor's cylinder.
 		return !solid || unblocking;
 	}
 
@@ -1656,6 +1986,13 @@ bool PIT_CheckThing(FMultiBlockThingsIterator &it, FMultiBlockThingsIterator::Ch
 	// despite another solid thing being in the way.
 	// killough 4/11/98: Treat no-clipping things as not blocking
 
+	// [Darkcrafter07] If we hit a mesh wall - stay tight
+	if (isMeshBlocked) return false;
+
+	// [Darkcrafter07] If we hit a mesh floor (passable) - ignore bbox model collision
+	if (isMeshHit && unblocking) return true;
+
+	// Regular return for everything else
 	return !solid || unblocking;
 
 	// return !(thing->flags & MF_SOLID);	// old code -- killough

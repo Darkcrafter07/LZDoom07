@@ -288,6 +288,9 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 					indxptr[iindex++] = surf->Tris[k].VertIndex[l];
 				}
 			}
+
+			// for the mesh collision to work you must comment out the line like that!
+			//surf->UnloadGeometry();
 			surf->UnloadGeometry();
 		}
 		vbuf->UnlockVertexBuffer();

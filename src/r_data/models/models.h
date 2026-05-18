@@ -1,4 +1,4 @@
-// 
+// models.h (NOT gl_models.h ffs!)
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2005-2016 Christoph Oelckers
@@ -293,6 +293,7 @@ public:
 
 class FMD3Model : public FModel
 {
+public:
 	struct MD3Tag
 	{
 		// Currently I have no use for this
@@ -347,9 +348,6 @@ class FMD3Model : public FModel
 	int numTags;
 	int mLumpNum;
 
-	TArray<MD3Frame> Frames;
-	TArray<MD3Surface> Surfaces;
-
 public:
 	FMD3Model() = default;
 
@@ -359,6 +357,9 @@ public:
 	void LoadGeometry();
 	void BuildVertexBuffer(FModelRenderer *renderer);
 	virtual void AddSkins(uint8_t *hitlist);
+
+	TArray<MD3Frame> Frames;
+	TArray<MD3Surface> Surfaces;
 };
 
 struct FVoxelVertexHash
@@ -439,6 +440,7 @@ enum
 	MDL_DONTCULLBACKFACES			= 256,
 	MDL_USEROTATIONCENTER			= 512,
 	MDL_NOPERPIXELLIGHTING			= 1024, // forces a model to not use per-pixel lighting. useful for voxel-converted-to-model objects.
+	MDL_MESHCOLLISION               = 2048, // [Darkcrafter07] enable 3D mesh collision
 };
 
 struct FSpriteModelFrame
