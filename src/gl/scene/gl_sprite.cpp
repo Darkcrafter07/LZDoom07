@@ -764,6 +764,17 @@ inline bool IsDistanceCulled(AActor* thing)
 
 bool enableAnamorphCache = true; // gives it a really considerable speed-up
 
+// In case you don't have a "floorf" function
+//_Check_return_ __inline float __CRTDECL floorf(_In_ float _X)
+//{
+//	return (float)floor(_X);
+//}
+//
+//_Check_return_ inline float floor(_In_ float _Xx) _NOEXCEPT
+//{
+//	return (_CSTD floorf(_Xx));
+//}
+
 //         ---===      ***************************************        ===---
 // ******* Anamorphic "Forced-Pespective" common early exit checks - start *******
 // Distance cull checks on big maps with lots of 3D-floors to speed up
@@ -777,29 +788,6 @@ bool IsAnamorphicDistanceCulled(AActor* thing, float gl_anamorphic_spriteclip_di
 	const float cullDistSq = cullDist * cullDist;
 
 	return (thing->Pos() - r_viewpoint.Pos).LengthSquared() > cullDistSq;
-}
-
-line_t* GetClosestLineInSector(const DVector3 &thingpos, sector_t* sector)
-{
-	if (!sector || sector->Lines.Size() == 0) return nullptr;
-
-	line_t* closestLine = nullptr;
-	float minDistSq = FLT_MAX;
-
-	for (unsigned i = 0; i < sector->Lines.Size(); i++)
-	{
-		line_t* testLine = sector->Lines[i];
-		float distSq1 = (testLine->v1->fPos() - thingpos.XY()).LengthSquared();
-		float distSq2 = (testLine->v2->fPos() - thingpos.XY()).LengthSquared();
-		float avgDistSq = (distSq1 + distSq2) * 0.5f;
-
-		if (avgDistSq < minDistSq)
-		{
-			minDistSq = avgDistSq;
-			closestLine = testLine;
-		}
-	}
-	return closestLine;
 }
 
 // Frustum culling
@@ -987,21 +975,16 @@ static bool SpriteIntersectsLinedef(float x1, float y1, float x2, float y2, floa
 // === CACHED version of SpriteIntersectsLinedef - start === UNUSED
 struct SpriteIntersectsLinedefCacheKey
 {
-	float segmentX;
-	float segmentY;
-
+	float segmentX; float segmentY;
 	SpriteIntersectsLinedefCacheKey(float sx, float sy) : segmentX(sx), segmentY(sy) {}
-
 	bool operator==(const SpriteIntersectsLinedefCacheKey& other) const
 	{
 		return segmentX == other.segmentX && segmentY == other.segmentY;
 	}
-
 	bool operator!=(const SpriteIntersectsLinedefCacheKey& other) const
 	{
 		return !(*this == other);
 	}
-
 	bool operator<(const SpriteIntersectsLinedefCacheKey& other) const
 	{
 		if (segmentX != other.segmentX)
@@ -1036,7 +1019,6 @@ struct spriteIntersectsLineCacheEntry
 	bool cachedSpriteIntersectsLineValid = false;
 	float cached_ix = 0.0f, cached_iy = 0.0f;
 };
-
 static TMap<line_t*, TMap<SpriteIntersectsLinedefCacheKey, spriteIntersectsLineCacheEntry>> spriteIntersectsLineCache;
 
 bool spriteIntersectsLineCachedWrapper(line_t* line, float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4, float& ix, float& iy)
@@ -1045,28 +1027,21 @@ bool spriteIntersectsLineCachedWrapper(line_t* line, float x1, float y1, float x
 	if (enableAnamorphCache)
 	{
 		const int currentMapTimeTick = level.maptime;
-
 		// Generate a unique key for this segment (using start and end points)
 		SpriteIntersectsLinedefCacheKey key(x1 * 1000.0f + x2, y1 * 1000.0f + y2);
-
 		spriteIntersectsLineCacheEntry& entry = spriteIntersectsLineCache[line][key];
-
 		// Return cached result if valid (updated within last 3 ticks)
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7 && entry.cachedSpriteIntersectsLineValid)
 		{
-			ix = entry.cached_ix;
-			iy = entry.cached_iy;
+			ix = entry.cached_ix; iy = entry.cached_iy;
 			return entry.cachedSpriteIntersectsLine;
 		}
-
 		// Compute fresh result and cache it
 		entry.cachedSpriteIntersectsLine = SpriteIntersectsLinedef(x1, y1, x2, y2, x3, y3, x4, y4, entry.cached_ix, entry.cached_iy);
 		entry.cachedSpriteIntersectsLineValid = true;
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
-
 		// Set output values
-		ix = entry.cached_ix;
-		iy = entry.cached_iy;
+		ix = entry.cached_ix; iy = entry.cached_iy;
 
 		return entry.cachedSpriteIntersectsLine;
 	}
@@ -1083,9 +1058,15 @@ bool spriteIntersectsLineCachedWrapper(line_t* line, float x1, float y1, float x
 
 
 
+
+
+
+
 //         ---===      ***************************************        ===---
 // ******* 1-sided-linedef culling block start *******
 
+// Regular 1side line crossing check, may not cull void sprites
+// Culls coplanar leaks the best but does it pretty roughly
 bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
@@ -1093,101 +1074,74 @@ bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
 	if (CheckFrustumCulling(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
-	// --- 1. SPATIAL POOLING SETUP ---
-	// Cache for 1-sided line intersections within a 64x64 unit grid
-	static TMap<uint64_t, bool> spatial1sPool;
-	static int last1sPoolTick = -1;
+	// ONLY check sprite's sector, never viewer's sector
+	sector_t* thingSector = thing->Sector;
+	if (!thingSector || thingSector->Lines.Size() == 0) return false;
 
-	// Reset pool once per frame
-	if (last1sPoolTick != level.maptime)
-	{
-		spatial1sPool.Clear();
-		last1sPoolTick = level.maptime;
-	}
-
+	// Calculate viewer->thing line geometry
+	float viewerX = (float)viewer->X();
+	float viewerY = (float)viewer->Y();
 	float thingX = (float)thing->X();
 	float thingY = (float)thing->Y();
 
-	// Calculate grid coordinates for the 64-unit spatial key
-	int gridX = (int)(thingX / 64.0f);
-	int gridY = (int)(thingY / 64.0f);
-	uint64_t spatialKey = ((uint64_t)gridX << 32) | (uint32_t)gridY;
-
-	// --- 2. SPATIAL CACHE CHECK ---
-	if (spatial1sPool.CheckKey(spatialKey))
-	{
-		return spatial1sPool[spatialKey];
-	}
-
-	// --- 3. SIZE ADAPTATION AND PARTICLE PROTECTION ---
-	float viewerX = (float)viewer->X();
-	float viewerY = (float)viewer->Y();
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
 
-	const bool isMicroSprite = (spriteSize <= 12.0f); // Combine micro/tiny
-	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
+	// Sprite size thresholds
+	const bool isMicroSprite = (spriteSize <= 8.0f);
+	const bool isTinySprite = (spriteSize <= 12.0f);
+	const bool isSmallSprite = (spriteSize <= 18.0f);
+	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
+	const bool isLargeSprite = (spriteSize > 38.0f && spriteSize < 39.0f);
+	const bool isHugeSprite = (spriteSize >= 39.0f);
 
-	float                     spriteScale = 0.7f;
-	if      (isMicroSprite) { spriteScale = 2.5f; }
-	else if (isSmallSprite) { spriteScale = 0.5f; }
+	// Scale adjustments
+	float                     spriteScale = 0.44f;  // Default: micro/tiny/small sprites
+	if (isMediumSprite)     { spriteScale = 0.5f;  }
+	else if (isLargeSprite) { spriteScale = 0.15f; }
+	else if (isHugeSprite)  { spriteScale = 0.1f;  }
 
-	float effectiveRadius = thing->radius;
-	if (effectiveRadius < 1.0f) effectiveRadius = 4.0f;
-	float adjustedRadius = effectiveRadius * spriteScale;
+	// Calculate scaled test points based on radius + size
+	float adjustedRadius = thing->radius * spriteScale;
 
-	float testPts[5][2] =
+	// Generate 4 orthogonal test points around the sprite center
+	float testPoints[4][2] =
 	{
-		{thingX, thingY},
-		{thingX + adjustedRadius, thingY},
-		{thingX - adjustedRadius, thingY},
-		{thingX, thingY + adjustedRadius},
-		{thingX, thingY - adjustedRadius}
+		{thingX + adjustedRadius, thingY},           // Right
+		{thingX - adjustedRadius, thingY},           // Left  
+		{thingX, thingY + adjustedRadius},           // Up
+		{thingX, thingY - adjustedRadius}            // Down
 	};
 
-	// --- 4. LOCAL BLOCKMAP SCANNING ---
-	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0f);
-	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0f);
-	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0f);
-	int maxBY = level.blockmap.GetBlockY(thingY + adjustedRadius + 16.0f);
-
-	bool result = false;
-
-	for (int bx = minBX; bx <= maxBX && !result; bx++)
+	for (auto testLine : thingSector->Lines)
 	{
-		for (int by = minBY; by <= maxBY && !result; by++)
+		if (!testLine->sidedef[0] || testLine->sidedef[1])
+			continue; // Skip non-1-sided lines
+
+		float lineX1 = (float)testLine->v1->fX();
+		float lineY1 = (float)testLine->v1->fY();
+		float lineX2 = (float)testLine->v2->fX();
+		float lineY2 = (float)testLine->v2->fY();
+
+		// Check each test point against the viewer line
+		for (int i = 0; i < 4; i++)
 		{
-			if (!level.blockmap.isValidBlock(bx, by)) continue;
-
-			int* list = level.blockmap.GetLines(bx, by);
-			for (int i = 0; list[i] != -1; i++)
+			float ix, iy;
+			if (SpriteIntersectsLinedef(viewerX, viewerY, testPoints[i][0], testPoints[i][1],
+				                                     lineX1, lineY1, lineX2, lineY2, ix, iy))
 			{
-				line_t* line = &level.lines[list[i]];
-
-				// Only 1-sided walls
-				if (line->backsector != nullptr) continue;
-
-				float l1x = (float)line->v1->fX();
-				float l1y = (float)line->v1->fY();
-				float l2x = (float)line->v2->fX();
-				float l2y = (float)line->v2->fY();
-
-				for (int j = 0; j < 5; j++)
-				{
-					float ix, iy;
-					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], l1x, l1y, l2x, l2y, ix, iy))
-					{
-						result = true;
-						break;
-					}
-				}
-				if (result) break;
+				return true; // Sprite crosses a 1-sided line visible to viewer
 			}
 		}
-	}
 
-	// --- 5. STORE AND RETURN ---
-	spatial1sPool[spatialKey] = result;
-	return result;
+		// Also check the core viewer->sprite line itself
+		float ix, iy;
+		if (SpriteIntersectsLinedef(viewerX, viewerY, thingX, thingY, 
+			                 lineX1, lineY1, lineX2, lineY2, ix, iy))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 struct SpriteCrossed1SidedLineCacheEntry
@@ -1195,7 +1149,6 @@ struct SpriteCrossed1SidedLineCacheEntry
 	int lastMapTimeUpdateTick = -1;
 	bool cached1sidedCrossResult = false;  // Default: assume NO 1-sided crossing
 };
-
 static TMap<AActor*, SpriteCrossed1SidedLineCacheEntry> SpriteCrossed1sidedLineCache;
 
 bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
@@ -1228,8 +1181,9 @@ bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 	}
 }
 
+
+
 // If only one side of a sprite bbox closest to and facing the viewer crossed a 1sided line
-// Prevent coplanar leaks of sprites so close to walls that cross them and off 1sided obstruction radar
 bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
@@ -1237,7 +1191,7 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
 	if (CheckFrustumCulling(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
-	// --- 1. SPATIAL POOLING ---
+	// 1. SPATIAL POOLING
 	static TMap<uint64_t, bool> spatial1sPool;
 	static int last1sPoolTick = -1;
 	if (last1sPoolTick != level.maptime) { spatial1sPool.Clear(); last1sPoolTick = level.maptime; }
@@ -1247,42 +1201,45 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
 	float viewerX = (float)viewer->X();
 	float viewerY = (float)viewer->Y();
 
+	const float fovInv = 1.0f / 90.0f;             // for 90 degrees FOV
+	const float blockmapGridSizInv = 1.0f / 16.0f; // for 16x16 grid size
+
 	// KEY: Using 16-unit grid. 
 	// Added coarse angle (90 deg steps) to key so results change when you orbit the sprite
-	int gridX = (int)(thingX / 16.0f);
-	int gridY = (int)(thingY / 16.0f);
-	int angleKey = (int)(viewer->Angles.Yaw.Degrees / 90.0f);
+	int gridX = (int)floorf(thingX * blockmapGridSizInv);
+	int gridY = (int)floorf(thingY * blockmapGridSizInv);
+	int angleKey = (int)(viewer->Angles.Yaw.Degrees * fovInv);
 	uint64_t spatialKey = ((uint64_t)gridX << 32) | ((uint32_t)gridY << 8) | (uint8_t)angleKey;
 
 	if (spatial1sPool.CheckKey(spatialKey)) return spatial1sPool[spatialKey];
 
-	// --- 2. FACING DIRECTION CALCULATION ---
+	// 2. FACING DIRECTION CALCULATION
 	// Vector from sprite to viewer
 	float dx = viewerX - thingX;
 	float dy = viewerY - thingY;
 	float vDist = sqrt(dx * dx + dy * dy);
 	if (vDist > 0.0f) { dx /= vDist; dy /= vDist; }
 
-	// --- 3. SIZE ADAPTATION ---
+	// 3. SIZE ADAPTATION
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
 	const bool isTinySprite = (spriteSize < 18.0f);
 	const bool isLargeSprite = (spriteSize >= 45.0f);
 
-	float spriteScale = 10.5f;
-	if (isTinySprite) spriteScale = 5.5f;
-	else if (isLargeSprite) spriteScale = 6.5f;
-	else spriteScale = 7.5f;
+	float                   spriteScale = 7.5f;
+	if      (isTinySprite)  spriteScale = 3.5f;
+	else if (isLargeSprite) spriteScale = 2.5f;
+	else                    spriteScale = 3.5f;
 
 	float adjustedRadius = thing->radius * spriteScale;
 
-	float strictZoneScale = 10.5f;
-	if (isTinySprite) strictZoneScale = 8.5f;
-	else if (isLargeSprite) strictZoneScale = 12.5f;
-	else strictZoneScale = 5.0f;
+	float                   strictZoneScale = 7.5f;
+	if (isTinySprite)       strictZoneScale = 3.5f;
+	else if (isLargeSprite) strictZoneScale = 5.5f;
+	else                    strictZoneScale = 4.0f;
 
 	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
 
-	// --- 4. SELECTIVE TEST POINTS (Facing Only) ---
+	// 4. SELECTIVE TEST POINTS (Facing Only)
 	// We only test the center and the side most facing the camera
 	float testPts[2][2];
 	testPts[0][0] = thingX; testPts[0][1] = thingY; // Always test center
@@ -1291,7 +1248,7 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
 	testPts[1][0] = thingX + (dx * adjustedRadius);
 	testPts[1][1] = thingY + (dy * adjustedRadius);
 
-	// --- 5. LOCAL SCANNING ---
+	// 5. LOCAL SCANNING
 	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0f);
 	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0f);
 	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0f);
@@ -1379,7 +1336,154 @@ bool SpriteBboxFacingCameraCrossed1sLineCachedWrapper(AActor* thing, AActor* vie
 
 
 
+// this one culls sprites that are located in the void
+bool SpriteCrossed1sidedVoidLinedef(AActor* thing, AActor* viewer)
+{
+	if (!thing || !viewer) return false;
 
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+
+	// 1. SPATIAL POOLING SETUP
+	// Cache for 1-sided line intersections within a 64x64 unit grid
+	static TMap<uint64_t, bool> spatial1sPool;
+	static int last1sPoolTick = -1;
+
+	// Reset pool once per frame
+	if (last1sPoolTick != level.maptime)
+	{
+		spatial1sPool.Clear();
+		last1sPoolTick = level.maptime;
+	}
+
+	float thingX = (float)thing->X();
+	float thingY = (float)thing->Y();
+
+	const float fovInv = 1.0f / 90.0f;             // for 90 degrees FOV
+	const float blockmapGridSizInv = 1.0f / 64.0f; // for 64x64 grid size
+
+	// Calculate grid coordinates for the 64-unit spatial key
+	int gridX = (int)floorf(thingX * blockmapGridSizInv);
+	int gridY = (int)floorf(thingY * blockmapGridSizInv);
+	uint64_t spatialKey = ((uint64_t)gridX << 32) | (uint32_t)gridY;
+
+	// 2. SPATIAL CACHE CHECK
+	if (spatial1sPool.CheckKey(spatialKey))
+	{
+		return spatial1sPool[spatialKey];
+	}
+
+	// 3. SIZE ADAPTATION AND PARTICLE PROTECTION
+	float viewerX = (float)viewer->X();
+	float viewerY = (float)viewer->Y();
+	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+
+	const bool isMicroSprite = (spriteSize <= 12.0f); // Combine micro/tiny
+	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
+
+	float                     spriteScale = 0.7f;
+	if (isMicroSprite)      { spriteScale = 2.5f; }
+	else if (isSmallSprite) { spriteScale = 0.5f; }
+
+	float effectiveRadius = thing->radius;
+	if (effectiveRadius < 1.0f) effectiveRadius = 4.0f;
+	float adjustedRadius = effectiveRadius * spriteScale;
+
+	float testPts[5][2] =
+	{
+		{thingX, thingY},
+		{thingX + adjustedRadius, thingY},
+		{thingX - adjustedRadius, thingY},
+		{thingX, thingY + adjustedRadius},
+		{thingX, thingY - adjustedRadius}
+	};
+
+	// 4. LOCAL BLOCKMAP SCANNING
+	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0f);
+	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0f);
+	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0f);
+	int maxBY = level.blockmap.GetBlockY(thingY + adjustedRadius + 16.0f);
+
+	bool result = false;
+
+	for (int bx = minBX; bx <= maxBX && !result; bx++)
+	{
+		for (int by = minBY; by <= maxBY && !result; by++)
+		{
+			if (!level.blockmap.isValidBlock(bx, by)) continue;
+
+			int* list = level.blockmap.GetLines(bx, by);
+			for (int i = 0; list[i] != -1; i++)
+			{
+				line_t* line = &level.lines[list[i]];
+
+				// Only 1-sided walls
+				if (line->backsector != nullptr) continue;
+
+				float l1x = (float)line->v1->fX();
+				float l1y = (float)line->v1->fY();
+				float l2x = (float)line->v2->fX();
+				float l2y = (float)line->v2->fY();
+
+				for (int j = 0; j < 5; j++)
+				{
+					float ix, iy;
+					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], l1x, l1y, l2x, l2y, ix, iy))
+					{
+						result = true;
+						break;
+					}
+				}
+				if (result) break;
+			}
+		}
+	}
+
+	// 5. STORE AND RETURN
+	spatial1sPool[spatialKey] = result;
+	return result;
+}
+
+// Cache structure for Void 1-sided line crossing checks
+struct SpriteCrossed1sidedVoidCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached1sVoidCrossResult = false;
+};
+static TMap<AActor*, SpriteCrossed1sidedVoidCacheEntry> SpriteCrossed1sidedVoidCache;
+
+bool SpriteCrossed1sidedVoidLinedefCachedWrapper(AActor* thing, AActor* viewer)
+{
+	if (!thing || !viewer) return false;
+
+	if (enableAnamorphCache)
+	{
+		const int currentMapTimeTick = level.maptime;
+		SpriteCrossed1sidedVoidCacheEntry& entry = SpriteCrossed1sidedVoidCache[thing];
+
+		// Return cached result if valid each 7 ticks
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
+		{
+			return entry.cached1sVoidCrossResult;
+		}
+
+		// Perform the heavy blockmap/intersection scan
+		bool result = SpriteCrossed1sidedVoidLinedef(thing, viewer);
+
+		// Update cache entry
+		entry.cached1sVoidCrossResult = result;
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return result;
+	}
+	else
+	{
+		// Cache disabled: direct calculation
+		return SpriteCrossed1sidedVoidLinedef(thing, viewer);
+	}
+}
+
+
+// Here comes the asset for regular 1sided wall obstructions check
 static bool CheckLineOfSight1sided(AActor* viewer, const DVector3& thingpos, float spriteRadius)
 {
 	DVector3 viewerPos = viewer->Pos();
@@ -1472,8 +1576,14 @@ static bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor*
 		// Original uncached behavior
 		return CheckLineOfSight1sided(viewer, thingpos, ((thing->radius) * spriteScale));
 	}
-}// ******* 1-sided-linedef culling block finish *******
+}
+
+// ******* 1-sided-linedef culling block finish *******
 //         ---===      ***************************************        ===---
+
+
+
+
 
 
 
@@ -1501,8 +1611,7 @@ static FVector3 GetActorPosition3D(const AActor* actor)
 	return FVector3(static_cast<float>(actor->X()), static_cast<float>(actor->Y()), static_cast<float>(actor->Z()));
 }
 
-
-
+// Unused because doesn't look too good, use with BBOX camera facing one instead
 bool SpriteCrossed2sidedLinedef(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
@@ -1539,6 +1648,10 @@ bool SpriteCrossed2sidedLinedef(AActor* thing, AActor* viewer)
 	return false;
 }
 
+// This one is nice for taming "increaseAnam" leaks
+// This one culls sprites if they crossed 2sided lines
+// but if a side of the sprite bounding box facing the viewer - uncull
+// I know the facing check is disabled but it's still better than nonfacing 1sideXser
 bool SpriteBboxFacingCameraCrossed2sLine(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
@@ -1676,7 +1789,6 @@ struct SpriteCrossed2SidedLineCacheEntry
 	int lastMapTimeUpdateTick = -1;
 	bool cached2sidedSpriteCrossedResult = false;  // Default: assume NO 1-sided crossing
 };
-
 static TMap<AActor*, SpriteCrossed2SidedLineCacheEntry> SpriteCrossed2sidedLineCache;
 
 bool SpriteCrossed2sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
@@ -1709,6 +1821,9 @@ bool SpriteCrossed2sidedLinedefCachedWrapper(AActor* thing, AActor* viewer)
 	}
 }
 
+
+
+// Here comes regular 2sided obstructions check
 struct ObstructionData2Sided
 {
 	// Floor - track both lowest and highest
@@ -2331,116 +2446,237 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 //							I'd recommed to call the function like this:
 //		float behindFacingMidTxtProximity = CheckFacingMidTextureProximity(thing, r_viewpoint.camera, thingpos);
 //		bool visbible2sideMidTex = (behindFacingMidTxtProximity <= 0.55f) ? false : true;
-static float CheckFacingMidTextureProximity(AActor* thing, AActor* viewer, TVector3<double>& thingpos)
+static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer, TVector3<double>& thingpos)
 {
-	// --- 1. PRELIMINARY CHECKS ---
-	if (!thing || !viewer) return 1.0f;
-	if (CheckFrustumCulling(thing)) return 1.0f;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return 1.0f;
+	//Printf("===== TEXTURE PROXIMITY CHECK START =====\n");
+	//Printf("Thing: %s at (%.1f, %.1f, %.1f)\n", thing->GetClass()->TypeName.GetChars(), thingpos.X, thingpos.Y, thingpos.Z);
+	//Printf("Camera: (%.1f, %.1f, %.1f) facing %.1f degrees\n", camera->X(), camera->Y(), camera->Z(), camera->Angles.Yaw.Degrees());
 
-	// --- 2. SPATIAL POOLING (Grid Cache) ---
-	// Mid-textures are static, so nearby sprites should share the same occlusion results.
-	static TMap<uint64_t, float> midTexPool;
-	static int lastMidTick = -1;
-	if (lastMidTick != level.maptime) { midTexPool.Clear(); lastMidTick = level.maptime; }
-
-	int gridX = (int)(thingpos.X / 32.0);
-	int gridY = (int)(thingpos.Y / 32.0);
-	uint64_t spatialKey = ((uint64_t)gridX << 32) | (uint32_t)gridY;
-
-	if (midTexPool.CheckKey(spatialKey)) return midTexPool[spatialKey];
-
-	// --- 3. VERTICAL BOUNDS SETUP ---
-	float sprBot, sprTop;
-	if (thing->flags & MF_SPAWNCEILING)
+	// 1. Quick out: Frustum culling
+	if (CheckFrustumCulling(thing))
 	{
-		sprTop = (float)thing->Z();
-		sprBot = sprTop - (float)thing->Height;
+		//Printf("Skipped: Frustum culled\n");
+		return 0.0f;
+	}
+
+	// 2. Distance culling (far planes)
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f))
+	{
+		//Printf("Skipped: Distance culled (2048+ units away)\n");
+		return 0.0f;
+	}
+
+	// 3. Actor classification flags and thresholds
+	const bool isLegacyVersionProjectile = thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY) || thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS);
+	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	const bool isLargeSprite = (spriteSize > 40.0f);
+
+	// Get vertical positioning info
+	float EyeHeight = 41.0f;
+	if (viewer->player && viewer->player->mo)
+	{
+		EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+		//Printf("EyeHeight1: %.2f (ViewHeight: %.2f + crouchdelta: %.2f)\n", EyeHeight1, viewer->player->mo->FloatVar(NAME_ViewHeight), viewer->player->crouchviewdelta);
 	}
 	else
 	{
-		sprBot = (float)thing->Z();
-		sprTop = sprBot + (float)thing->Height;
+		//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
 	}
+	float viewerBottom = viewer->Z();
+	float viewerTop = viewerBottom + EyeHeight;
+	float viewerBottomAdj = viewerBottom + Ztolerance2sided;
+	float viewerTopAdj = viewerTop + Ztolerance2sided;
+	float spriteBottom = thing->Z();
+	float spriteTop = (thing->Z()) + (thing->Height);
+	float sprBottomAdj = spriteBottom + Ztolerance2sided;
+	float sprTopAdj = spriteTop + Ztolerance2sided;
 
-	float viewZ = (float)viewer->Z() + (viewer->player ? viewer->player->viewheight : 41.0f);
-	FVector2 vPos = { (float)viewer->X(), (float)viewer->Y() };
-	FVector2 sPos = { (float)thingpos.X, (float)thingpos.Y };
-	FVector2 rayVec = sPos - vPos;
-	float rayLen = rayVec.Length();
-	if (rayLen < 0.1f) return 1.0f;
+	// pretty useless
+	//bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) <= EyeHeight;
+	//bool viewerFeetHigherThanSpriteHeadAndStillSeen = viewerBottomAdj <= sprTopAdj >= EyeHeight;
+	// pretty useless and safer for compilation - how to remove leaking through mid tex when we're below it? I don't know yet
+	bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) && ((sprBottomAdj - viewerBottomAdj) <= EyeHeight);
+	bool viewerFeetHigherThanSpriteHeadAndStillSeen = (viewerBottomAdj >= sprTopAdj) && ((viewerBottomAdj - sprTopAdj) <= EyeHeight);
 
-	float minProximity = 1.0f;
 
-	// --- 4. TUNNEL SCAN VIA BLOCKMAP ---
-	// We use a tunnel to catch mid-textures in ANY sector between eye and sprite
-	FVector2 dir = rayVec / rayLen;
-	const float stepSize = 128.0f;
-	FVector2 currentPos = vPos;
-	int lastBX = -1, lastBY = -1;
+	//Printf("  Actor type: %s%s (size: %.1f)\n", isLegacyProjectile ? "Projectile " : "", isLargeSprite ? "Large" : "Standard", spriteSize);
 
-	for (float d = 0; d <= rayLen + stepSize; d += stepSize)
+	// 4. Proximity thresholds where occlusion is disabled (to prevent popping)
+	const float CLOSE_DIST_SMALL = 64.0f;        // Standard avoidance distance
+	const float CLOSE_DIST_LARGE = 96.0f;        // Extended for large entities
+
+	// 5. Measured distance from camera to thing
+	float distToCamSq = (thingpos - TVector3<double>(viewer->X(), viewer->Y(), viewer->Z())).LengthSquared();
+
+	bool isViewerVerticallyAligned = (viewerBottomAdj <= spriteBottom) || (viewerBottom >= spriteTop);
+	float minDist = (isLegacyVersionProjectile || isLargeSprite) ? CLOSE_DIST_LARGE : CLOSE_DIST_SMALL;
+
+	// 6. If very close and vertically aligned - full visibility (disable occlusion)
+	// because sprites don't override walls depth that hard when close and viewer is not under or above the sprite
+	if (isViewerVerticallyAligned && distToCamSq <= minDist * minDist)
 	{
-		int bx = level.blockmap.GetBlockX(currentPos.X);
-		int by = level.blockmap.GetBlockY(currentPos.Y);
-		currentPos += dir * stepSize;
+		//Printf("Close proximity (%.1f units): Full visibility (factor=1.0)\n", sqrt(distToCamSq));
+		return 1.0f;
+	}
+	//Printf("Distance to camera: %.1f units\n", sqrt(distToCamSq));
 
-		if (!level.blockmap.isValidBlock(bx, by)) continue;
-		if (bx == lastBX && by == lastBY) continue;
-		lastBX = bx; lastBY = by;
+	// 7. Set detection radii based on actor type
+	float MAX_DIST_SOLID = 64.0f;    // Standard solid wall max distance
+	float MAX_DIST_MASKED = 96.0f;   // Masked textures have see-through parts
+	const float EDGE_BUFFER = 32.0f; // Safety margin from texture edges
 
-		int* list = level.blockmap.GetLines(bx, by);
-		for (int i = 0; list[i] != -1; i++)
+	// Adaptive adjustments for special actor types
+	if (isLegacyVersionProjectile)
+	{
+		MAX_DIST_SOLID = 80.0f;
+		MAX_DIST_MASKED = 112.0f;
+		//Printf("  Using projectile detection ranges: SOLID=%.1f, MASKED=%.1f\n", MAX_DIST_SOLID, MAX_DIST_MASKED);
+	}
+	else if (isLargeSprite)
+	{
+		MAX_DIST_SOLID = 96.0f;
+		MAX_DIST_MASKED = 128.0f;
+		//Printf("Using large sprite detection ranges: SOLID=%.1f, MASKED=%.1f\n", MAX_DIST_SOLID, MAX_DIST_MASKED);
+	}
+	//else
+	//{
+	//    Printf("Using standard detection ranges: SOLID=%.1f, MASKED=%.1f\n", MAX_DIST_SOLID, MAX_DIST_MASKED);
+	//}
+
+	float proximity_factor = 1.0f;
+
+	// 8. Calculate view direction vector
+	float yawRadians = viewer->Angles.Yaw.Radians();
+	TVector2<float> viewDir(cos(yawRadians), sin(yawRadians));
+	//Printf("  View direction: (%.3f, %.3f)\n", viewDir.X, viewDir.Y);
+
+	// 9. Iterate sector lines (with comprehensive checks)
+	sector_t* sector = thing->Sector;
+	//Printf("Checking %u lines in sector %d\n", sector->Lines.Size(), sector->Index());
+	for (auto line : sector->Lines)
+	{
+		//Printf("\n  --- Checking Line %d (flags: %04X) ---\n", line->Index(), line->flags);
+
+		// Minimal line validation - must be two-sided (game logic requirement)
+		if (!line->sidedef[0] || !line->sidedef[1])
 		{
-			line_t* line = &level.lines[list[i]];
+			//Printf("Skipped: Missing front/back sidedef\n");
+			continue;
+		}
 
-			// Only 2-sided lines can have mid-textures
-			if (!line->sidedef[0] || !line->sidedef[1]) continue;
-
-			FVector2 intersect;
-			if (!LineIntersectsSegment2sided(vPos, sPos, GetVertexPosition(line->v1), GetVertexPosition(line->v2), intersect))
-				continue;
-
-			// How far along the ray is the wall? (0.0 to 1.0)
-			float t = (intersect - vPos).Length() / rayLen;
-
-			// Get vertical texture bounds
-			double tTop_d, tBot_d;
-			if (P_GetMidTexturePosition(line, 0, &tTop_d, &tBot_d))
+		// 10. MIDTEXTURE EXISTENCE CHECK
+		bool hasValidMidTexture = false;
+		for (int sideno = 0; sideno < 2; sideno++)
+		{
+			FTextureID midtex = line->sidedef[sideno]->GetTexture(side_t::mid);
+			if (midtex.isValid() && TexMan[midtex])
 			{
-				float texTop = (float)tTop_d;
-				float texBot = (float)tBot_d;
-
-				// --- THE CORE FIX: Vertical Projection ---
-				// Where the sprite's silhouette appears ON the wall from player's eyes
-				float projTop = viewZ + t * (sprTop - viewZ);
-				float projBot = viewZ + t * (sprBot - viewZ);
-
-				// Find overlap between Projected Sprite and Physical Texture
-				float overlapMin = MAX(MIN(projTop, projBot), texBot);
-				float overlapMax = MIN(MAX(projTop, projBot), texTop);
-				float overlapHeight = MAX(0.0f, overlapMax - overlapMin);
-
-				// If the texture covers more than 8 units of the visual silhouette:
-				if (overlapHeight > 8.0f)
-				{
-					// Check distance to the line for the proximity factor
-					float distToLine = (sPos - intersect).Length();
-
-					// If very close to wall, start occlusion
-					float maxOccludeDist = 64.0f;
-					if (distToLine < maxOccludeDist)
-					{
-						float factor = distToLine / maxOccludeDist; // 0.0 (at wall) to 1.0 (far)
-						minProximity = MIN(minProximity, factor);
-					}
-				}
+				hasValidMidTexture = true;
+				//Printf("Side %d has valid MID texture: %s\n", sideno, TexMan[midtex]->Name.GetChars());
+				break;
 			}
 		}
+		if (!hasValidMidTexture)
+		{
+			//Printf("Skipped: No valid MID textures on either side\n");
+			continue;
+		}
+
+		// 11. PRECISION OCCLUSION DETECTION
+		TVector2<float> viewerPos(viewer->X(), viewer->Y());
+		TVector2<float> thingPos2D(thingpos.X, thingpos.Y);
+
+		// Create camera->thing visibility ray
+		TVector2<float> rayVec = thingPos2D - viewerPos;
+		float rayLen = rayVec.Length();
+		TVector2<float> rayDir = rayVec.Unit();
+
+		//Printf("Ray: from (%.1f,%.1f) to (%.1f,%.1f) len=%.1f dir(%.3f,%.3f)\n", cameraPos.X, cameraPos.Y, thingPos2D.X, thingPos2D.Y, rayLen, rayDir.X, rayDir.Y);
+
+		// Line geometry data
+		TVector2<float> lineA(line->v1->fX(), line->v1->fY());
+		TVector2<float> lineB(line->v2->fX(), line->v2->fY());
+		TVector2<float> lineV = lineB - lineA;
+
+		//Printf("Line: (%.1f,%.1f)->(%.1f,%.1f) vec(%.1f,%.1f)\n",lineA.X, lineA.Y, lineB.X, lineB.Y, lineV.X, lineV.Y);
+
+		// Ray-line intersection math
+		float denom = rayDir.X * lineV.Y - rayDir.Y * lineV.X;
+		if (fabs(denom) < 1e-10)
+		{
+			//Printf("Skipped: Ray parallel to line (denom=%.4f)\n", denom);
+			continue;
+		}
+
+		TVector2<float> delta = lineA - viewerPos;
+		float t = (delta.X * lineV.Y - delta.Y * lineV.X) / denom;
+		float u = (delta.X * rayDir.Y - delta.Y * rayDir.X) / denom;
+
+		//Printf("Intersection params: t=%.4f, u=%.4f\n", t, u);
+
+		// Validate segment intersection
+		if (t < 0.0 || t > rayLen || u < -1e-5 || u > 1.00001)
+		{
+			//Printf("Skipped: Intersection outside segments (t=%.1f on ray, u=%.1f on line)\n", t, u);
+			continue;
+		}
+
+		// 12. DISTANCE TO LINE SEGMENT CALCULATION
+		DVector2 v1(line->v1->fX(), line->v1->fY());
+		DVector2 v2(line->v2->fX(), line->v2->fY());
+		DVector2 lineVec = v2 - v1;
+		double lineLenSq = lineVec.LengthSquared();
+		if (lineLenSq < 1e-6)
+		{
+			//Printf("Skipped: Degenerate line (length squared=%.4f)\n", lineLenSq);
+			continue;
+		}
+
+		DVector2 toSprite(thingpos.X - v1.X, thingpos.Y - v1.Y);
+		double dot = lineVec.X * toSprite.X + lineVec.Y * toSprite.Y;
+		float t_segment = clamp(float(dot / lineLenSq), 0.0f, 1.0f);
+
+		DVector2 closest(v1.X + t_segment * lineVec.X, v1.Y + t_segment * lineVec.Y);
+		float dist = float((thingpos - DVector3(closest, 0)).XY().Length());
+
+		//Printf("Closest point on line: (%.1f,%.1f), distance=%.1f\n", closest.X, closest.Y, dist);
+
+		// 13. ADAPTIVE TEXTURE TYPE HANDLING
+		bool isSolid = false;
+		for (int sideno = 0; !isSolid && sideno < 2; sideno++)
+		{
+			FTexture* tex = TexMan[line->sidedef[sideno]->GetTexture(side_t::mid)];
+			if (tex && !tex->bMasked)
+			{
+				isSolid = true;
+				//Printf("Found solid texture on side %d: %s\n", sideno, tex->Name.GetChars());
+			}
+		}
+
+		float maxDist = isSolid ? MAX_DIST_SOLID : MAX_DIST_MASKED;
+		float threshold = maxDist + EDGE_BUFFER;
+
+		//Printf("Texture type: %s, maxDist=%.1f, threshold=%.1f\n",
+		//       isSolid ? "SOLID" : "MASKED", maxDist, threshold);
+
+		if (dist > threshold)
+		{
+			//Printf("Skipped: Too far from line (%.1f > %.1f)\n", dist, threshold);
+			continue;
+		}
+
+		// 14. PROXIMITY FACTOR CALCULATION
+		float distFromEdge = MAX(0.0f, dist - EDGE_BUFFER);
+		float factor = lerp(0.25f, 1.0f, distFromEdge / maxDist);
+		factor = clamp(factor, 0.25f, 1.0f);
+		proximity_factor = MIN(proximity_factor, factor);
+
+		//Printf("Proximity factor: %.2f (current min: %.2f)\n", factor, proximity_factor);
 	}
 
-	midTexPool[spatialKey] = minProximity;
-	return minProximity;
+	//Printf("===== FINAL PROXIMITY FACTOR: %.2f =====\n", proximity_factor);
+
+	return proximity_factor;
 }
 
 struct MidTextureProximityCacheEntry
@@ -2448,7 +2684,6 @@ struct MidTextureProximityCacheEntry
 	int lastMapTimeUpdateTick = -1;
 	float cachedProximityFactor = 1.0f;  // Changed to float
 };
-
 static TMap<AActor*, MidTextureProximityCacheEntry> MidTextureProximityCache;
 
 bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVector3<double>& thingpos)
@@ -2463,7 +2698,7 @@ bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVecto
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
 		{
 			// Use cached proximity factor to compute boolean
-			return entry.cachedProximityFactor >= 0.55f;
+			return entry.cachedProximityFactor >= 0.75f;
 		}
 
 		// Compute fresh proximity factor and cache it
@@ -2471,13 +2706,13 @@ bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVecto
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
 
 		// Convert cached proximity to boolean
-		return entry.cachedProximityFactor > 0.55f;
+		return entry.cachedProximityFactor > 0.75f;
 	}
 	else
 	{
 		// Original uncached behavior
 		float proximity = CheckFacingMidTextureProximity(thing, viewer, thingpos);
-		return proximity >= 0.55f;
+		return proximity >= 0.75f;
 	}
 }
 
@@ -2486,11 +2721,7 @@ bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVecto
 
 
 
-//         ---===      ***************************************        ===---
-// ******* closed doors in front of sprites detection - start *******
-//                      NOT IMPLEMENTED YET BUT EVEN NEEDED?
-// ******* closed doors in front of sprites detection - start *******
-//         ---===      ***************************************        ===---
+
 
 
 
@@ -2700,9 +2931,7 @@ struct a3DFloorPlaneCacheEntry
 	int lastMapTimeUpdateTick = -1;
 	bool cached3DFloorPlaneResult = false;
 };
-
-// Global cache storage
-static TMap<AActor*, a3DFloorPlaneCacheEntry> a3DFloorPlaneCache;
+static TMap<AActor*, a3DFloorPlaneCacheEntry> a3DFloorPlaneCache; // Global cache storage
 
 bool IsSpriteBehind3DFloorPlaneWrapper(DVector3& cameraPos, DVector3& spritePos, sector_t* sector, AActor* thing)
 {
@@ -2732,6 +2961,9 @@ bool IsSpriteBehind3DFloorPlaneWrapper(DVector3& cameraPos, DVector3& spritePos,
 
 // ******* 3DFloor-planar - floor and ceiling culling block finish *******
 //         ---===      ***************************************        ===---
+
+
+
 
 
 
@@ -2854,8 +3086,7 @@ struct a3DFloorSideCacheEntry
 	int lastMapTimeUpdateTick = -1;
 	bool cached3DFloorSideResult = false;
 };
-// Global cache storage for 3D-floor sides
-static TMap<AActor*, a3DFloorSideCacheEntry> a3DFloorSideCache;
+static TMap<AActor*, a3DFloorSideCacheEntry> a3DFloorSideCache; // Global cache storage for 3D-floor sides
 
 bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thing)
 {
@@ -2899,6 +3130,7 @@ void ResetAnamorphCache()
 	case 0:
 		spriteIntersectsLineCache.Clear(0);
 		SpriteCrossed1sidedLineCache.Clear(0);
+		SpriteCrossed1sidedVoidCache.Clear(0);
 		SpriteBboxFacingCrossed1sCache.Clear(0);
 		break;
 	case 1:
@@ -2920,7 +3152,6 @@ void ResetAnamorphCache()
 // Anamorphic "Forced-Perspective" sprite clipping occlusion culling - finish
 //
 //==========================================================================
-
 
 
 
@@ -3352,6 +3583,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
+		bool thingCrossed1sVoidLine = SpriteCrossed1sidedVoidLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
 		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
@@ -3441,8 +3673,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// With additional culling mechanism coplanar leaks already reduced
 		// But we can disable Forced-Perspective for floating sprites entirely
 		// but only for those whose Y-axis sprite offset doesn't cross ground at all.
-		// Turn off anamorphosis for things that crossed 1sided linedefs.
-		if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
+		if (isfloatingsprite && !hasSignificantNegativeOffset)
 		{
 			// Force smart mode for floating sprites and things crossing 1sided-linedefs
 			blend = 1.0f;
@@ -3556,20 +3787,20 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				}
 			}
 
-			float extremeCull1 = !visible2sideMidTex ? 0.25f : 1.0f;
-			float smallsprtncrps_factor =
-				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || 
-					!visible3dfloorSides) ? extremeCull1 : (3.4f * (sprPrxFctr * 15.0f));
+			float smallsprtncrps_factor = 3.4f * (sprPrxFctr * 15.0f);
+			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
+			                              smallsprtncrps_factor = 1.0f;
+			else if (!visible2sideMidTex) smallsprtncrps_factor = 0.25f;
 
-			float extremeCull2 = !visible2sideMidTex ? 0.05f : 0.25f;
-			float projectiles_factor =
-				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || 
-					!visible3dfloorSides) ? extremeCull2 : 8.0f;
+			float projectiles_factor = 8.0f;
+			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
+			                              projectiles_factor = 1.0f;
+			else if (!visible2sideMidTex) projectiles_factor = 0.25f;
 
-			float extremeCull3 = !visible2sideMidTex ? 0.25f : 1.0f;
-			float regularsizmonster_factor1 =
-				(!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible2sideMidTex || 
-					!visible3dfloorSides) ? extremeCull3 : (3.64f * (sprPrxFctr * 3.0f) );
+			float regularsizmonster_factor1 = 3.64f * (sprPrxFctr * 3.0f);
+			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
+				                          regularsizmonster_factor1 = 1.0f;
+			else if (!visible2sideMidTex) regularsizmonster_factor1 = 0.25f;
 
 			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
 				regularsizmonster_factor1 :
@@ -3586,24 +3817,34 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 
 			//					=== Anamorphosis culling pass 1 - START ===
-			// Only apply extended radius bias for specific actor types
-			float radius_for_bias = spriteSize;
+			float spriteRadius = (float)thing->radius;
+			float radius_for_bias = 0.0f;
 
-			if (isactorsmallbutnotcorpse || islegacyversionprojectile)
+			if (thingCrossed1sidedLine)
+			{
+				// Regular Forced-Perspective way
+				radius_for_bias = spriteRadius;
+				regularsizmonster_factor2 = 0.75f;
+			}
+			else if (isactorsmallbutnotcorpse || islegacyversionprojectile)
 			{
 				radius_for_bias = extended_radius2;
+			}
+			else
+			{
+				radius_for_bias = spriteSize;
 			}
 
 			if (!(r_debug_nolimitanamorphoses))
 			{
-				if (isaregularsizedmonster)
+				float distsqAnam = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+				float distAnam = sqrt(distsqAnam);
+
+				if (distAnam > 0.1f)
 				{
-					float objradiusbias = 1.f - (radius_for_bias * regularsizmonster_factor2) / sqrt((vpx - tpx) * (vpx - tpx) + (vpy - tpy) * (vpy - tpy));
-					minbias = MAX(minbias, objradiusbias);
-				}
-				else
-				{
-					float objradiusbias = 1.f - radius_for_bias / sqrt((vpx - tpx) * (vpx - tpx) + (vpy - tpy) * (vpy - tpy));
+					// Use the monsterfactors for monster and if not - pure radius
+					float currentFactor = (isaregularsizedmonster) ? regularsizmonster_factor2 : 1.0f;
+					float objradiusbias = 1.f - (radius_for_bias * currentFactor) / distAnam;
 					minbias = MAX(minbias, objradiusbias);
 				}
 			}
@@ -3655,16 +3896,45 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 			isonsteepsurf = steepnessfact > 0.0001f;
 
-			bool CrossedAnyWall = thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
+			bool CrossedAnyWall = thingCrossed1sVoidLine || thingCrossed2sidedLine;
 			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
 			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
-			// can't really advise anyone to crank up "increaseAnam" higher than 0.14f
-			// "!thingCrossed2sidedLine" check here because that way we can suppress coplanar leaks
-			// could have another check for whether sprite is spawned too close to a 3d-floor plane bottom like a ceiling mounted lamp but maybe later...
-			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall) increaseAnam = 0.125f;
+			// if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall) increaseAnam = 0.125f;
+			// 0.125 looks good but leaks farther away you go, 0.09 doesn't leak that much but looks worse when close to a sprite
+			// so we need to decrease "increaseAnam" from 0.125 to 0.0 smoothly as the distance exceeds minAnamDist (384.0f)
+			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall)
+			{
+				const float minAnamDist = 384.0f;  // Max effect in this zone
+				const float maxAnamDist = 1200.0f; // Full effect fade here
+				if (dist <= minAnamDist)
+				{
+					increaseAnam = 0.125f; // Full power
+				}
+				else
+				{
+					float fadeFactor = 1.0f - ((dist - minAnamDist) / (maxAnamDist - minAnamDist));
+					// Prevent it from becoming negative
+					if (fadeFactor < 0.0f) fadeFactor = 0.0f;
+					increaseAnam = 0.125f * fadeFactor;
+				}
+			}
 
-			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
+			float spbias = 0.0f; // initialize the variable
+			float decreaseAnam = 0.0f; // initialize the variable
+			if       (thingFacingBboxCrossed1sided) decreaseAnam = 0.075f; // 1sided X
+			else if  (thingCrossed2sidedLine)       decreaseAnam = 0.032f; // 2sided X
+			if (thingCrossed1sidedLine)
+			{
+				// some items like torches still leak through walls if put really close
+				spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) + decreaseAnam;
+			}
+			else
+			{
+				// just putting "- increaseAnam" already makes it leak SO much thus separated
+				// this mode is required to make sprites to draw through flats like crazy
+				spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
+			}
 			float vpbias = 1.0 - spbias;
 			//					=== Anamorphosis final culling pass - FINISH ===
 
