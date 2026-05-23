@@ -7,6 +7,8 @@ in vec4 vEyeNormal;
 in vec4 vTexCoord;
 in vec4 vColor;
 
+uniform vec2 uAnamorphicSprLightCoordsZ;
+
 out vec4 FragColor;
 #ifdef GBUFFER_PASS
 out vec4 FragFog;
@@ -183,9 +185,9 @@ float R_DoomLightingEquation(float light)
 	{
 		z = distance(pixelpos.xyz, uCameraPos.xyz);
 	}
-	else 
+	else
 	{
-		z = pixelpos.w;
+		z = pixelpos.w + (uAnamorphicSprLightCoordsZ.x * 3.4);
 	}
 
 	float colormap = R_DoomColormap(light, z);

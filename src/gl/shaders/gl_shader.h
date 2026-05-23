@@ -291,6 +291,7 @@ class FShader
 	FBufferedUniform1i muViewHeight;
 	FBufferedUniform2f muSpecularMaterial;
 	FBufferedUniform1f muTimer;
+
 	
 	int lights_index;
 	int projectionmatrix_index;
@@ -304,6 +305,7 @@ public:
 	int texcoordmatrix_index;
 	int quadmode_index;
 	int fakevb_index;
+	FBufferedUniform2f muAnamorphicZ;
 private:
 	int currentglowstate = 0;
 	int currentgradientstate = 0;

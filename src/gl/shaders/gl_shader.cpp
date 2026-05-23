@@ -670,6 +670,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 	muAddColor.Init(hShader, "uAddColor");
 	muViewHeight.Init(hShader, "uViewHeight");
 	muTimer.Init(hShader, "timer");
+	muAnamorphicZ.Init(hShader, "uAnamorphicSprLightCoordsZ");
 
 	lights_index = glGetUniformLocation(hShader, "lights");
 	fakevb_index = glGetUniformLocation(hShader, "fakeVB");

@@ -64,8 +64,6 @@
 #include "gl/data/gl_vertexbuffer.h"
 #include "gl/renderer/gl_quaddrawer.h"
 
-#include "p_3dmidtex.h"
-
 CVAR(Bool, gl_usecolorblending, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_sprite_blend, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR(Int, gl_spriteclip, 1, CVAR_ARCHIVE)
@@ -462,12 +460,26 @@ void GLSprite::Draw(int pass)
 			gl_RenderState.SetNormal(0, 0, 0);
 			CalculateVertices(v);
 
+			FShader *sh = GLRenderer->mShaderManager->GetActiveShader();
+			if (gl_spriteclip == -1 || gl_spriteclip == -2 )
+			{
+				if (sh) sh->muAnamorphicZ.Set(nonanam_z1, nonanam_z2);
+			}
+			else
+			{
+				if (sh) sh->muAnamorphicZ.Set(0.0f, 0.0f);
+			}
+
 			FQuadDrawer qd;
 			qd.Set(0, v[0][0], v[0][1], v[0][2], ul, vt);
 			qd.Set(1, v[1][0], v[1][1], v[1][2], ur, vt);
 			qd.Set(2, v[2][0], v[2][1], v[2][2], ul, vb);
 			qd.Set(3, v[3][0], v[3][1], v[3][2], ur, vb);
 			qd.Render(GL_TRIANGLE_STRIP);
+
+			// as soon as sprite is drawn, reset brightness vars
+			// so it doesn't leak to other stuff like walls etc...
+			if (sh) sh->muAnamorphicZ.Set(0.0f, 0.0f);
 
 			// --- Legacy GL1x/GL2x sprites brightmaps block start ---
 			if (gl_RenderState.IsBrightmapEnabled() && gl.legacyMode && !fullbright)
@@ -1382,7 +1394,7 @@ bool SpriteCrossed1sidedVoidLinedef(AActor* thing, AActor* viewer)
 	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
 
 	float                     spriteScale = 0.7f;
-	if (isMicroSprite)      { spriteScale = 2.5f; }
+	if (isMicroSprite)      { spriteScale = 1.5f; }
 	else if (isSmallSprite) { spriteScale = 0.5f; }
 
 	float effectiveRadius = thing->radius;
@@ -1834,7 +1846,7 @@ struct ObstructionData2Sided
 	float maxCeiling;
 
 	bool valid;
-	bool isTightSector;           // flat/closed sectors (gap <= 8 units)
+	bool isTightSector;                // flat/closed sectors like doors (gap <= 8 units)
 	bool isProjectileBehindObstacle;   // persistent flag for projectile door occlusion
 
 	// Constructor to initialize all persistent flags
@@ -1960,8 +1972,8 @@ struct ObstructionData2Sided
 			FVector2 tPos = { (float)thing->X(), (float)thing->Y() };
 			float distToLine = (tPos - clamped).Length();
 
-			// If distance to line is less than 24 AND Z-gap is less than 32 units
-			if (distToLine < 24.0f)
+			// If distance to line is less than 8 AND Z-gap is less than 32 units
+			if (distToLine < 8.0f)
 			{
 				if (diffToFloor <= 32.0f || diffToCeil <= 32.0f)
 				{
@@ -2287,58 +2299,6 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 
 						if (!LineIntersectsSegment2sided(viewerPos, testPoint, lineStart, lineEnd, intersectionPoint))
 							continue;
-
-						// When we're on top of elevation and shoot a rocket from above to below
-						// We can observe it culls too much because our elevation cuts it, thus
-						// Enhanced back-face culling (checks if line faces towards the sprite's center)
-						//const DVector2 lineVec = lineEnd - lineStart;
-						//DVector2 lineNormal(-lineVec.Y, lineVec.X);
-						//lineNormal = lineNormal.Unit();
-						//const DVector2 viewToIntersect = intersectionPoint - viewerPos;
-						//DVector2 thingToIntersect = intersectionPoint - thingCenterPos;
-
-
-						//	// ===============================================================
-						//	// *** FACE CHECK SKIPPING LOGIC - START ***    WIP
-						//
-						//	// Track potential obstructions
-						//potentialObstructionFound = true;
-						//
-						//	// Vertical separation check with tolerance buffer
-						//const float verticalTolerance = 24.0f;
-						//bool spriteIsBelow = (sprTopAdj + verticalTolerance) < viewerBottom;
-						//bool spriteIsAbove = (sprBottomAdj - verticalTolerance) > viewerTop;
-						//
-						//if (spriteIsBelow || spriteIsAbove)
-						//{
-						//	//Printf("Z-SKIP: Sprite (%.1f-%.1f) vertical separation from viewer (%.1f-%.1f)", sprBottomAdj, sprTopAdj, viewerBottom, viewerTop);
-						//	continue; // Skip facing check for vertically separated sprites
-						//}
-						//
-						//	// Perform facing direction check
-						//const DVector2 lineDelta = line->Delta();
-						//DVector2 lineNormal(-lineDelta.Y, lineDelta.X);
-						//lineNormal = lineNormal.Unit();
-						//
-						//const DVector2 viewToIntersect = intersectionPoint - viewerPos;
-						//
-						//if (viewToIntersect.Length() > EPSILON2SIDED)
-						//{
-						//	const DVector2 viewDir = viewToIntersect.Unit();
-						//	double dot = (viewDir | lineNormal);
-						//
-						//	if (dot > 0.25) // More lenient facing threshold
-						//	{
-						//		//Printf("OCCLUDED: Line %d faces viewer (dot=%.2f). Sprite (%.1f-%.1f) blocked.", line->Index(), dot, spriteBottom, spriteTop);
-						//		return false; // Immediate occlusion
-						//	}
-						//	else
-						//	{
-						//		//Printf("Line %d faces away (dot=%.2f) - no occlusion", line->Index(), dot);
-						//	}
-						//}
-						//	// *** FACE CHECK SKIPPING LOGIC - FINISH ***WIP
-						//	// ===============================================================
 
 						const FVector2 clamped =
 						{
@@ -3442,7 +3402,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
 		// ======= Anamorphic Forced-Perspective+ sprite projecting routine START =======
-
+		// init the anamorphic sprite light correction vars with original z1, z2 coords
+		nonanam_z1 = z1; nonanam_z2 = z2;
 		float minbias = r_spriteclipanamorphicminbias;
 		minbias = clamp(minbias, 0.3f, 1.0f);
 
@@ -3495,6 +3456,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			z2 = z2 * spbias + vpz * vpbias;
 		}
 
+		// then use them like correcting coords
+		nonanam_z1 -= z1; nonanam_z2 -= z2;
+
 		// ======= Anamorphic Forced-Perspective+ sprite projecting routine FINISH =======
 	}
 
@@ -3514,6 +3478,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 	if (gl_spriteclip == -2 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
+		// init the anamorphic sprite light correction vars with original z1, z2 coords
+		nonanam_z1 = z1; nonanam_z2 = z2;
 		// Reset cache on need
 		static int lastLevelMaptime = -1;
 		// Level changed/reloaded
@@ -3820,7 +3786,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float spriteRadius = (float)thing->radius;
 			float radius_for_bias = 0.0f;
 
-			if (thingCrossed1sidedLine)
+			// Crucial for "thingCrossed1sVoidLine" to be here
+			// and not further down below as it gets useless there
+			if (thingCrossed1sVoidLine || !visible1sidesInfTallObstr || !visible2sideMidTex)
 			{
 				// Regular Forced-Perspective way
 				radius_for_bias = spriteRadius;
@@ -3896,7 +3864,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 			isonsteepsurf = steepnessfact > 0.0001f;
 
-			bool CrossedAnyWall = thingCrossed1sVoidLine || thingCrossed2sidedLine;
+			bool CrossedAnyWall = thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
 			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
 			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
@@ -3907,32 +3875,49 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			{
 				const float minAnamDist = 384.0f;  // Max effect in this zone
 				const float maxAnamDist = 1200.0f; // Full effect fade here
+				const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
 				if (dist <= minAnamDist)
 				{
 					increaseAnam = 0.125f; // Full power
 				}
 				else
 				{
-					float fadeFactor = 1.0f - ((dist - minAnamDist) / (maxAnamDist - minAnamDist));
+					float fadeFactor = 1.0f - ((dist - minAnamDist) * max2minAnamDistDiffInv);
 					// Prevent it from becoming negative
 					if (fadeFactor < 0.0f) fadeFactor = 0.0f;
 					increaseAnam = 0.125f * fadeFactor;
 				}
 			}
 
-			float spbias = 0.0f; // initialize the variable
+			float spbias = 0.0f;       // initialize the variable
 			float decreaseAnam = 0.0f; // initialize the variable
-			if       (thingFacingBboxCrossed1sided) decreaseAnam = 0.075f; // 1sided X
-			else if  (thingCrossed2sidedLine)       decreaseAnam = 0.032f; // 2sided X
-			if (thingCrossed1sidedLine)
+			// decrease anamorphosis when sprites are culled
+			// by 1sided+void or 2sided lines, softened by facing bbox check
+			if ((thingFacingBboxCrossed1sided && thingCrossed1sVoidLine) || !isSpriteNOTObstructed)
 			{
-				// some items like torches still leak through walls if put really close
+				// values lower aren't sufficient to suppress leaks on big radii sprites like
+				// small sprites - health bonus, torches, etc with increased radii not to fade in far
+				decreaseAnam = 0.075f;
+			}
+			else if (thingCrossed2sidedLine || !isSpriteNOTObstructed)
+			{
+				// values lower aren't sufficient to suppress leaks on big radii sprites like
+				// small sprites - health bonus, torches, etc with increased radii not to fade in far
+				decreaseAnam = 0.015f;
+			}
+
+			if (CrossedAnyWall)
+			{
+				// Some items like torches still leak through walls if put really close.
+				// Yes, it's safe to summ "decreaseAnam" here because it cuts anamorphosis anyway
 				spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) + decreaseAnam;
 			}
 			else
 			{
-				// just putting "- increaseAnam" already makes it leak SO much thus separated
-				// this mode is required to make sprites to draw through flats like crazy
+				// Just putting "- increaseAnam" already makes it leak SO much thus separated.
+				// This mode is required to make sprites to draw through flats like crazy.
+				// No it's NOT safe to subtract "increaseAnam" here on clamp but we got it CULLED
+				// and leaks only occur where we need them (DONE ON PURPOSE).
 				spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 			}
 			float vpbias = 1.0 - spbias;
@@ -3981,6 +3966,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				z2 = smart_z2;
 			}
 		}
+		// then use them like correcting coords
+		nonanam_z1 -= z1; nonanam_z2 -= z2;
 	}
 
 //==========================================================================
@@ -3988,8 +3975,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 // Finish Hybrid Anamorphic Forced-Perspective - Smart projection
 //
 //==========================================================================
-
-
 
 	// light calculation
 
@@ -4006,61 +3991,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	foglevel = (uint8_t)clamp<short>(rendersector->lightlevel, 0, 255);
 
 	lightlevel = gl_CheckSpriteGlow(rendersector, lightlevel, thingpos);
-
-	// anamorphic Forced-Perspective overbright darkening start
-	if (((gl_spriteclip == -1) || (gl_spriteclip == -2)) && !fullbright && (gl_lightmode == 8 || gl_lightmode == 16) )
-	{
-		float base_radius = thing->radius;
-		float base_height = thing->Height;
-		float base_dimen = (base_radius + base_height) * 0.5;
-		bool islittlesprite = (base_dimen <= 18.0f);
-		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
-
-		bool isactorclose = !IsAnamorphicDistanceCulled(thing, 128.0);
-
-		float minbias = r_spriteclipanamorphicminbias;
-		minbias = clamp<float>(minbias, 0.1f, 0.5f);
-
-		// Regular and 3D Floor-Aware Heights
-		float btm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing) - thing->Floorclip;
-		float top = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, thingpos, thing);
-		// Viewer's actual heights (from their sector and 3D floors)
-		float vbtm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
-		float vtop = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
-
-		// Viewer/sprite positions
-		float vpx = r_viewpoint.Pos.X;
-		float vpy = r_viewpoint.Pos.Y;
-		float vpz = r_viewpoint.Pos.Z;
-
-		// Calculate intersections
-		float bintersect = (z2 < vpz && vbtm < vpz) ? MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz)) : 1.f;
-		float tintersect = (z1 > vpz && vtop > vpz) ? MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz)) : 1.f;
-
-		// Blend factor
-		float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f);
-		float vpbias = 1.0f - spbias;
-
-		// Compute steep factor
-		bool isonsteepsurf;
-		const float STEEPNESS = 5.25f;  //detect only very steep surfaces
-		float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
-		isonsteepsurf = steepnessfact > 0.0001f;
-
-		float ANAMORPHIC_DARKEN;
-		if (isonsteepsurf && islittlesprite && !isactoracorpse && isactorclose)
-		{
-			ANAMORPHIC_DARKEN = 0.9f; // useless
-		}
-		else
-		{
-			ANAMORPHIC_DARKEN = 0.989f;
-		}
-
-		float adjusted = (lightlevel * ANAMORPHIC_DARKEN);
-		lightlevel = clamp<float>(adjusted, 0, 255);
-	}
-	// anamorphic Forced-Perspective sprite brightness darkening finish
 
 	ThingColor = (thing->RenderStyle.Flags & STYLEF_ColorIsFixed) ? thing->fillcolor : 0xffffff;
 	ThingColor.a = 255;
