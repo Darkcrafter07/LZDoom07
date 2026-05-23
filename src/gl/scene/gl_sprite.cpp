@@ -3457,7 +3457,16 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 
 		// then use them like correcting coords
-		nonanam_z1 -= z1; nonanam_z2 -= z2;
+		float original_z1 = nonanam_z1; // Store for logging
+		float original_z2 = nonanam_z2;
+		// Calculate the deltas (offsets)
+		// Clamp them to prevent negative depth correction
+		nonanam_z1 = MAX(0.0f, nonanam_z1 - z1);
+		nonanam_z2 = MAX(0.0f, nonanam_z2 - z2);
+		// Output to the engine console
+		// %f - float, %.2f - float with 2 decimal points
+		//Printf("Sprite [%s]: Orig Z1: %.2f, Z2: %.2f | Delta Z1: %.2f, Z2: %.2f\n", 
+		//	thing->GetClass()->TypeName.GetChars(), original_z1, original_z2, nonanam_z1, nonanam_z2);
 
 		// ======= Anamorphic Forced-Perspective+ sprite projecting routine FINISH =======
 	}
@@ -3967,8 +3976,19 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				z2 = smart_z2;
 			}
 		}
+
 		// then use them like correcting coords
-		nonanam_z1 -= z1; nonanam_z2 -= z2;
+		float original_z1 = nonanam_z1; // Store for logging
+		float original_z2 = nonanam_z2;
+		// Calculate the deltas (offsets)
+		// Clamp them to prevent negative depth correction
+		nonanam_z1 = MAX(0.0f, nonanam_z1 - z1);
+		nonanam_z2 = MAX(0.0f, nonanam_z2 - z2);
+		// Output to the engine console
+		// %f - float, %.2f - float with 2 decimal points
+		//Printf("Sprite [%s]: Orig Z1: %.2f, Z2: %.2f | Delta Z1: %.2f, Z2: %.2f\n", 
+		//	thing->GetClass()->TypeName.GetChars(), original_z1, original_z2, nonanam_z1, nonanam_z2);
+
 	}
 
 //==========================================================================
