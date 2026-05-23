@@ -3787,7 +3787,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float radius_for_bias = 0.0f;
 
 			// Crucial for "thingCrossed1sVoidLine" to be here
-			// and not further down below as it gets useless there
+			// otherwise it gets useless below (while it's also needed there as OR in "CrossedAnyWall")
 			if (thingCrossed1sVoidLine || !visible1sidesInfTallObstr || !visible2sideMidTex)
 			{
 				// Regular Forced-Perspective way
@@ -3864,7 +3864,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 			isonsteepsurf = steepnessfact > 0.0001f;
 
-			bool CrossedAnyWall = thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
+			// void detection is still important for "CrossedAnyWall" besides it was already used in 
+			bool CrossedAnyWall = thingCrossed1sVoidLine || thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
 			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
 			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
@@ -3878,7 +3879,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
 				if (dist <= minAnamDist)
 				{
-					increaseAnam = 0.125f; // Full power
+					increaseAnam = 0.125f;         // Full power
 				}
 				else
 				{
