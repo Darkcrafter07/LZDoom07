@@ -1484,44 +1484,45 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 			//					=== Anamorphosis culling pass 1 - FINISH ===
 
+			// void detection is still important for "CrossedAnyWall" besides it was already used in "Anamorphosis culling pass 1"
+			bool CrossedAnyWall = thingCrossed1sVoidLine || thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
+			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
+			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 
 			//		=== The pass 2 agressive culling core process - START ===
-				//bool anamorphCullPass2 = false; // disabled by default
-				//if (anamorphCullPass2)
-				//{
-				//	const float planeProximThresh = 64.0f;
-				//	float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
-				//	float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);
+			if (CrossedAnyWall || !isSpriteNOTObstructed)
+			{
+				const float planeProximThresh = 4.0f;
+				float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
+				float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);
 
-				//	bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
-				//	bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
+				bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
+				bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
 
-				//	bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
-				//	bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
+				bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
+				bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
 
-				//	if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
-				//	{
-				//	}
-				//	else
-				//	{
-				//		if (!r_debug_nolimitanamorphoses)
-				//		{
-				//			float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
-				//			float objradiusbias = 1.f - spriteSize / sqrt(distsq);
-				//			minbias = MAX(minbias, objradiusbias);
-				//		}
-				//	}
-				//}
+				if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
+				{
+				}
+				else
+				{
+					if (!r_debug_nolimitanamorphoses)
+					{
+						float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+						float objradiusbias = 1.f - spriteSize / sqrt(distsq);
+						minbias = MAX(minbias, objradiusbias);
+					}
+				}
+			}
 			//		=== The pass 2 agressive culling core process - FINISH ===
 
 			//					=== Anamorphosis final culling pass - START ===
 			float bintersect, tintersect;
 			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
 			else bintersect = 1.0f;
-
 			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
 			else tintersect = 1.0f;
-
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
 
 			// Compute steep factor
@@ -1530,29 +1531,32 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
 			isonsteepsurf = steepnessfact > 0.0001f;
 
-			// void detection is still important for "CrossedAnyWall" besides it was already used in 
-			bool CrossedAnyWall = thingCrossed1sVoidLine || thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
-			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
-			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
 			// if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall) increaseAnam = 0.125f;
 			// 0.125 looks good but leaks farther away you go, 0.09 doesn't leak that much but looks worse when close to a sprite
 			// so we need to decrease "increaseAnam" from 0.125 to 0.0 smoothly as the distance exceeds minAnamDist (384.0f)
+
+			//float incrAnamMaximum = 0.0f;  // a bit too strict rule
+			//if (spriteSize >= 16.0f && spriteSize <= 25.0f && !islegacyversionmonster && !isfloatingsprite && !isactoracorpse)	
+			//     incrAnamMaximum = 0.2f;   // Small but NOT smaller sprites like health bonuses won't leak much
+			//else incrAnamMaximum = 0.125f; // For all the rest sized sprites
+			float incrAnamMaximum = 0.2f;    // May we try 0.2 for all since culling works now on 2sidedMidTxt
+
 			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall)
 			{
-				const float minAnamDist = 384.0f;  // Max effect in this zone
-				const float maxAnamDist = 1200.0f; // Full effect fade here
+				const float minAnamDist = 384.0f;           // Max effect in this zone
+				const float maxAnamDist = 1200.0f;          // Full effect fade here
 				const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
 				if (dist <= minAnamDist)
 				{
-					increaseAnam = 0.25f;         // Full power
+					increaseAnam = incrAnamMaximum;         // Full power
 				}
 				else
 				{
 					float fadeFactor = 1.0f - ((dist - minAnamDist) * max2minAnamDistDiffInv);
 					// Prevent it from becoming negative
 					if (fadeFactor < 0.0f) fadeFactor = 0.0f;
-					increaseAnam = 0.25f * fadeFactor;
+					increaseAnam = incrAnamMaximum * fadeFactor;
 				}
 			}
 

@@ -1718,21 +1718,24 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	{
 		//Printf("EyeHeight1: %.2f (default value, no player object)\n", EyeHeight1);
 	}
+	const float Ztol2sMidTxt = 8.0f;
 	float viewerBottom = viewer->Z();
 	float viewerTop = viewerBottom + EyeHeight;
-	float viewerBottomAdj = viewerBottom + Ztolerance2sided;
-	float viewerTopAdj = viewerTop + Ztolerance2sided;
+	float viewerBottomAdj = viewerBottom + Ztol2sMidTxt;
+	float viewerTopAdj = viewerTop + Ztol2sMidTxt;
 	float spriteBottom = thing->Z();
 	float spriteTop = (thing->Z()) + (thing->Height);
-	float sprBottomAdj = spriteBottom + Ztolerance2sided;
-	float sprTopAdj = spriteTop + Ztolerance2sided;
+	float sprBottomAdj = spriteBottom + Ztol2sMidTxt;
+	float sprTopAdj = spriteTop + Ztol2sMidTxt;
 
 	// pretty useless
 	//bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) <= EyeHeight;
 	//bool viewerFeetHigherThanSpriteHeadAndStillSeen = viewerBottomAdj <= sprTopAdj >= EyeHeight;
 	// pretty useless and safer for compilation - how to remove leaking through mid tex when we're below it? I don't know yet
-	bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) && ((sprBottomAdj - viewerBottomAdj) <= EyeHeight);
-	bool viewerFeetHigherThanSpriteHeadAndStillSeen = (viewerBottomAdj >= sprTopAdj) && ((viewerBottomAdj - sprTopAdj) <= EyeHeight);
+	//bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) && ((sprBottomAdj - viewerBottomAdj) <= EyeHeight);
+	//bool viewerFeetHigherThanSpriteHeadAndStillSeen = (viewerBottomAdj >= sprTopAdj) && ((viewerBottomAdj - sprTopAdj) <= EyeHeight);
+
+	bool sprIsTooHigh((viewerBottom + (EyeHeight * 0.3f)) < (spriteBottom + thing->Height));
 
 
 	//Printf("  Actor type: %s%s (size: %.1f)\n", isLegacyProjectile ? "Projectile " : "", isLargeSprite ? "Large" : "Standard", spriteSize);
@@ -1781,14 +1784,15 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 
 	float proximity_factor = 1.0f;
 
-	// 8. Calculate view direction vector
-	float yawRadians = viewer->Angles.Yaw.Radians();
-	TVector2<float> viewDir(cos(yawRadians), sin(yawRadians));
-	//Printf("  View direction: (%.3f, %.3f)\n", viewDir.X, viewDir.Y);
+	//	// 8. Calculate view direction vector
+	//float yawRadians = viewer->Angles.Yaw.Radians();
+	//TVector2<float> viewDir(cos(yawRadians), sin(yawRadians));
+	////Printf("  View direction: (%.3f, %.3f)\n", viewDir.X, viewDir.Y);
 
 	// 9. Iterate sector lines (with comprehensive checks)
 	sector_t* sector = thing->Sector;
 	//Printf("Checking %u lines in sector %d\n", sector->Lines.Size(), sector->Index());
+	bool hasValidMidTexture = false;
 	for (auto line : sector->Lines)
 	{
 		//Printf("\n  --- Checking Line %d (flags: %04X) ---\n", line->Index(), line->flags);
@@ -1801,7 +1805,6 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		}
 
 		// 10. MIDTEXTURE EXISTENCE CHECK
-		bool hasValidMidTexture = false;
 		for (int sideno = 0; sideno < 2; sideno++)
 		{
 			FTextureID midtex = line->sidedef[sideno]->GetTexture(side_t::mid);
@@ -1911,6 +1914,8 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	}
 
 	//Printf("===== FINAL PROXIMITY FACTOR: %.2f =====\n", proximity_factor);
+
+	if (sprIsTooHigh && hasValidMidTexture) proximity_factor = 0.25f;
 
 	return proximity_factor;
 }
