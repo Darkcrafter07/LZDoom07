@@ -1111,13 +1111,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			z2 = z2 * spbias + vpz * vpbias;
 		}
 
-		// then use them like correcting coords
-		float original_z1 = nonanam_z1; // Store for logging
+		// Anamorphic sprite overbright correction
+		float sprSizeLight = (thing->radius + thing->Height) * 0.5f;
+		if (sprSizeLight >= 36.0f) sprSizeLight = 36.0f; // clamp sprSizeLight
+		float original_z1 = nonanam_z1;
 		float original_z2 = nonanam_z2;
 		// Calculate the deltas (offsets)
 		// Clamp them to prevent negative depth correction
-		nonanam_z1 = MAX(0.0f, nonanam_z1 - z1);
-		nonanam_z2 = MAX(0.0f, nonanam_z2 - z2);
+		nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * 0.55f));
+		nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * 0.55f));
 		// Output to the engine console
 		// %f - float, %.2f - float with 2 decimal points
 		//Printf("Sprite [%s]: Orig Z1: %.2f, Z2: %.2f | Delta Z1: %.2f, Z2: %.2f\n", 
@@ -1484,32 +1486,32 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 
 			//		=== The pass 2 agressive culling core process - START ===
-			bool anamorphCullPass2 = true;
-			if (anamorphCullPass2)
-			{
-				const float planeProximThresh = 64.0f;
-				float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
-				float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);
+				//bool anamorphCullPass2 = false; // disabled by default
+				//if (anamorphCullPass2)
+				//{
+				//	const float planeProximThresh = 64.0f;
+				//	float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
+				//	float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);
 
-				bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
-				bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
+				//	bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
+				//	bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
 
-				bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
-				bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
+				//	bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
+				//	bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
 
-				if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
-				{
-				}
-				else
-				{
-					if (!r_debug_nolimitanamorphoses)
-					{
-						float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
-						float objradiusbias = 1.f - spriteSize / sqrt(distsq);
-						minbias = MAX(minbias, objradiusbias);
-					}
-				}
-			}
+				//	if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
+				//	{
+				//	}
+				//	else
+				//	{
+				//		if (!r_debug_nolimitanamorphoses)
+				//		{
+				//			float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+				//			float objradiusbias = 1.f - spriteSize / sqrt(distsq);
+				//			minbias = MAX(minbias, objradiusbias);
+				//		}
+				//	}
+				//}
 			//		=== The pass 2 agressive culling core process - FINISH ===
 
 			//					=== Anamorphosis final culling pass - START ===
@@ -1543,14 +1545,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
 				if (dist <= minAnamDist)
 				{
-					increaseAnam = 0.125f;         // Full power
+					increaseAnam = 0.25f;         // Full power
 				}
 				else
 				{
 					float fadeFactor = 1.0f - ((dist - minAnamDist) * max2minAnamDistDiffInv);
 					// Prevent it from becoming negative
 					if (fadeFactor < 0.0f) fadeFactor = 0.0f;
-					increaseAnam = 0.125f * fadeFactor;
+					increaseAnam = 0.25f * fadeFactor;
 				}
 			}
 
@@ -1632,13 +1634,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 		}
 
-		// then use them like correcting coords
-		float original_z1 = nonanam_z1; // Store for logging
+		// Anamorphic sprite overbright correction
+		float sprSizeLight = (thing->radius + thing->Height) * 0.5f;
+		if (sprSizeLight >= 36.0f) sprSizeLight = 36.0f; // clamp sprSizeLight
+		float original_z1 = nonanam_z1;
 		float original_z2 = nonanam_z2;
 		// Calculate the deltas (offsets)
 		// Clamp them to prevent negative depth correction
-		nonanam_z1 = MAX(0.0f, nonanam_z1 - z1);
-		nonanam_z2 = MAX(0.0f, nonanam_z2 - z2);
+		nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * 0.55f));
+		nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * 0.55f));
 		// Output to the engine console
 		// %f - float, %.2f - float with 2 decimal points
 		//Printf("Sprite [%s]: Orig Z1: %.2f, Z2: %.2f | Delta Z1: %.2f, Z2: %.2f\n", 
