@@ -1221,26 +1221,46 @@ struct ObstructionData2Sided
 
 		if (isLegacyProjectile)
 		{
-			// 1. Update MAXFLOOR/MINCEIL early so debug and logic see them
+			FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
+			FVector2 tP = { (float)thing->X(), (float)thing->Y() };
+
+			float d2LineSq = (vP - clamped).LengthSquared();
+			float d2ThingSq = (vP - tP).LengthSquared();
+
+			// 1. SKIP if the line is BEHIND the sprite
+			if (d2LineSq > (d2ThingSq + 16.0f)) return;
+
+			// 2. NEW: SKIP if the line is NOT an actual vertical obstruction
+			bool blocksFloor = (floorHeightInitial > sprBottomAdj + 2.0f);
+			bool blocksCeil = (ceilingHeightInitial < sprTopAdj - 2.0f);
+
+			if (!blocksFloor && !blocksCeil) return; // Path is clear, skip this line
+
+			// --- PRINTF: TRIGGER DATA ---
+			// We only get here if the line is BETWEEN you and the sprite AND it has a height gap
+			//Printf("PROJ_SCAN: %s | Floor: %.2f | SprAdjBtm: %.2f | blocksF: %d\n", 
+            //       thing->GetClass()->TypeName.GetChars(), floorHeightInitial, sprBottomAdj, blocksFloor);
+
+			// 3. REST OF THE LOGIC
 			this->maxFloor = MAX(this->maxFloor, floorHeightInitial);
 			this->minCeiling = MIN(this->minCeiling, ceilingHeightInitial);
 
-			// 2. Z-Horizon Snapping
-			// We check if the projectile is within the "Ledge Danger Zone" (32 units).
-			// If we are close to the line, even a 21-unit gap (like in your debug) 
-			// will cause a massive anamorphic leak. We force occlusion.
 			float diffToFloor = (float)fabs(sprBottomAdj - floorHeightInitial);
 			float diffToCeil = (float)fabs(sprTopAdj - ceilingHeightInitial);
 
-			FVector2 tPos = { (float)thing->X(), (float)thing->Y() };
-			float distToLine = (tPos - clamped).Length();
+			float d2LineCenterSq = (tP - clamped).LengthSquared();
 
-			// If distance to line is less than 8 AND Z-gap is less than 32 units
-			if (distToLine < 8.0f)
+			if (d2LineCenterSq < 64.0f)
 			{
-				if (diffToFloor <= 32.0f || diffToCeil <= 32.0f)
+				// Now it will only trigger if there's a real ledge (> 32 units)
+				if (diffToFloor > 32.0f || diffToCeil > 32.0f)
 				{
 					isProjectileBehindObstacle = true;
+
+					// --- PRINTF: CULLING EVENT ---
+					// This is what actually hides your explosion
+					// Printf("!!! CULLED !!! %s at [%.2f, %.2f] | DiffFloor: %.2f\n", 
+					//	thing->GetClass()->TypeName.GetChars(), (float)thing->X(), (float)thing->Y(), diffToFloor);
 				}
 			}
 		}
@@ -1464,8 +1484,8 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	// ==================================================================================================
 	// THIS IS THE PLACE WHERE YOU CONFIGURE SPRITES CULLING AMOUNT PER TYPE FOR 2SIDED TALL OBSTRUCTIONS
 	// 1st val is large spr, 2nd is small sprites, third is all the rest sprites, higher vals cull more
-	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 8.5f : 1.2f) : 6.0f;
-	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 12.0f : 1.0f) : 1.64f;
+	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.2f) : 6.0f;
+	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.0f) : 1.64f;
 
 	// Core sprite positions (using expansion factors)
 	FVector2 viewerPos = GetActorPosition(viewer);
@@ -1728,15 +1748,8 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	float sprBottomAdj = spriteBottom + Ztol2sMidTxt;
 	float sprTopAdj = spriteTop + Ztol2sMidTxt;
 
-	// pretty useless
-	//bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) <= EyeHeight;
-	//bool viewerFeetHigherThanSpriteHeadAndStillSeen = viewerBottomAdj <= sprTopAdj >= EyeHeight;
-	// pretty useless and safer for compilation - how to remove leaking through mid tex when we're below it? I don't know yet
-	//bool viewerFeetLowerThanSpriteFeetAndStillSeen = (viewerBottomAdj <= sprBottomAdj) && ((sprBottomAdj - viewerBottomAdj) <= EyeHeight);
-	//bool viewerFeetHigherThanSpriteHeadAndStillSeen = (viewerBottomAdj >= sprTopAdj) && ((viewerBottomAdj - sprTopAdj) <= EyeHeight);
-
-	bool sprIsTooHigh((viewerBottom + (EyeHeight * 0.3f)) < (spriteBottom + thing->Height));
-
+	bool sprIsTooLow = (viewerBottom + (EyeHeight * 0.3f)) > spriteTop;
+	bool sprIsTooHigh = (viewerBottom + (EyeHeight * 0.3f)) < spriteTop;
 
 	//Printf("  Actor type: %s%s (size: %.1f)\n", isLegacyProjectile ? "Projectile " : "", isLargeSprite ? "Large" : "Standard", spriteSize);
 
@@ -1784,40 +1797,17 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 
 	float proximity_factor = 1.0f;
 
-	//	// 8. Calculate view direction vector
-	//float yawRadians = viewer->Angles.Yaw.Radians();
-	//TVector2<float> viewDir(cos(yawRadians), sin(yawRadians));
-	////Printf("  View direction: (%.3f, %.3f)\n", viewDir.X, viewDir.Y);
-
 	// 9. Iterate sector lines (with comprehensive checks)
 	sector_t* sector = thing->Sector;
-	//Printf("Checking %u lines in sector %d\n", sector->Lines.Size(), sector->Index());
-	bool hasValidMidTexture = false;
+
+	// We use a local flag to detect if the ray ACTUALLY hit a mid-texture on its path
+	bool rayHitAnyValidMidTexture = false;
+
 	for (auto line : sector->Lines)
 	{
-		//Printf("\n  --- Checking Line %d (flags: %04X) ---\n", line->Index(), line->flags);
-
 		// Minimal line validation - must be two-sided (game logic requirement)
 		if (!line->sidedef[0] || !line->sidedef[1])
 		{
-			//Printf("Skipped: Missing front/back sidedef\n");
-			continue;
-		}
-
-		// 10. MIDTEXTURE EXISTENCE CHECK
-		for (int sideno = 0; sideno < 2; sideno++)
-		{
-			FTextureID midtex = line->sidedef[sideno]->GetTexture(side_t::mid);
-			if (midtex.isValid() && TexMan[midtex])
-			{
-				hasValidMidTexture = true;
-				//Printf("Side %d has valid MID texture: %s\n", sideno, TexMan[midtex]->Name.GetChars());
-				break;
-			}
-		}
-		if (!hasValidMidTexture)
-		{
-			//Printf("Skipped: No valid MID textures on either side\n");
 			continue;
 		}
 
@@ -1830,20 +1820,15 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		float rayLen = rayVec.Length();
 		TVector2<float> rayDir = rayVec.Unit();
 
-		//Printf("Ray: from (%.1f,%.1f) to (%.1f,%.1f) len=%.1f dir(%.3f,%.3f)\n", cameraPos.X, cameraPos.Y, thingPos2D.X, thingPos2D.Y, rayLen, rayDir.X, rayDir.Y);
-
 		// Line geometry data
 		TVector2<float> lineA(line->v1->fX(), line->v1->fY());
 		TVector2<float> lineB(line->v2->fX(), line->v2->fY());
 		TVector2<float> lineV = lineB - lineA;
 
-		//Printf("Line: (%.1f,%.1f)->(%.1f,%.1f) vec(%.1f,%.1f)\n",lineA.X, lineA.Y, lineB.X, lineB.Y, lineV.X, lineV.Y);
-
 		// Ray-line intersection math
 		float denom = rayDir.X * lineV.Y - rayDir.Y * lineV.X;
 		if (fabs(denom) < 1e-10)
 		{
-			//Printf("Skipped: Ray parallel to line (denom=%.4f)\n", denom);
 			continue;
 		}
 
@@ -1851,12 +1836,27 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		float t = (delta.X * lineV.Y - delta.Y * lineV.X) / denom;
 		float u = (delta.X * rayDir.Y - delta.Y * rayDir.X) / denom;
 
-		//Printf("Intersection params: t=%.4f, u=%.4f\n", t, u);
-
-		// Validate segment intersection
+		// Validate segment intersection: This ensures the wall is BETWEEN viewer and thing
 		if (t < 0.0 || t > rayLen || u < -1e-5 || u > 1.00001)
 		{
-			//Printf("Skipped: Intersection outside segments (t=%.1f on ray, u=%.1f on line)\n", t, u);
+			continue;
+		}
+
+		// 10. MIDTEXTURE EXISTENCE CHECK (Now performed only on lines hit by the ray)
+		bool currentLineHasMid = false;
+		for (int sideno = 0; sideno < 2; sideno++)
+		{
+			FTextureID midtex = line->sidedef[sideno]->GetTexture(side_t::mid);
+			if (midtex.isValid() && TexMan[midtex])
+			{
+				currentLineHasMid = true;
+				rayHitAnyValidMidTexture = true; // Global flag for final vertical check
+				break;
+			}
+		}
+
+		if (!currentLineHasMid)
+		{
 			continue;
 		}
 
@@ -1867,7 +1867,6 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		double lineLenSq = lineVec.LengthSquared();
 		if (lineLenSq < 1e-6)
 		{
-			//Printf("Skipped: Degenerate line (length squared=%.4f)\n", lineLenSq);
 			continue;
 		}
 
@@ -1878,8 +1877,6 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		DVector2 closest(v1.X + t_segment * lineVec.X, v1.Y + t_segment * lineVec.Y);
 		float dist = float((thingpos - DVector3(closest, 0)).XY().Length());
 
-		//Printf("Closest point on line: (%.1f,%.1f), distance=%.1f\n", closest.X, closest.Y, dist);
-
 		// 13. ADAPTIVE TEXTURE TYPE HANDLING
 		bool isSolid = false;
 		for (int sideno = 0; !isSolid && sideno < 2; sideno++)
@@ -1888,19 +1885,14 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 			if (tex && !tex->bMasked)
 			{
 				isSolid = true;
-				//Printf("Found solid texture on side %d: %s\n", sideno, tex->Name.GetChars());
 			}
 		}
 
 		float maxDist = isSolid ? MAX_DIST_SOLID : MAX_DIST_MASKED;
 		float threshold = maxDist + EDGE_BUFFER;
 
-		//Printf("Texture type: %s, maxDist=%.1f, threshold=%.1f\n",
-		//       isSolid ? "SOLID" : "MASKED", maxDist, threshold);
-
 		if (dist > threshold)
 		{
-			//Printf("Skipped: Too far from line (%.1f > %.1f)\n", dist, threshold);
 			continue;
 		}
 
@@ -1909,13 +1901,14 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		float factor = lerp(0.25f, 1.0f, distFromEdge / maxDist);
 		factor = clamp(factor, 0.25f, 1.0f);
 		proximity_factor = MIN(proximity_factor, factor);
-
-		//Printf("Proximity factor: %.2f (current min: %.2f)\n", factor, proximity_factor);
 	}
 
-	//Printf("===== FINAL PROXIMITY FACTOR: %.2f =====\n", proximity_factor);
-
-	if (sprIsTooHigh && hasValidMidTexture) proximity_factor = 0.25f;
+	// 15. FINAL VERTICAL ANGLE CHECK
+	// Only apply the 0.25f penalty if we actually crossed a mid-texture AND the angle is extreme.
+	if ((sprIsTooLow || sprIsTooHigh) && rayHitAnyValidMidTexture)
+	{
+		proximity_factor = MIN(proximity_factor, 0.25f);
+	}
 
 	return proximity_factor;
 }

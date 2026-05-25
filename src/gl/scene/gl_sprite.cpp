@@ -1292,6 +1292,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 		// -------------
 
+		// Initialize spriteSize factors here for them
+		// to be visible in this entire sprite clipping mode scope
+		float smallsprtncrps_factor = 1.0f;
+		float projectiles_factor = 1.0f;
+		float regularsizmonster_factor1 = 1.0f;
+
 		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
 		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
 
@@ -1396,10 +1402,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			//   also pay attention we decrease radius only on viewer and sprite coplanar situtations!
 
 			float sprPrxFctr = 1.0f;
-			float sprPrxFctrProj = 1.0f; // Dedicated horizon stabilizer for legacy projectiles
+			float sprPrxFctrProj = 1.0f;
 			float sprPrxDistThresh = 674.0f;
 
-			// High-performance optimization for Celeron (precalculated inverse constant to avoid slow division)
 			const float invSprPrxDistThresh = 1.0f / sprPrxDistThresh;
 
 			// 1. Close-up coplanar mitigation loop
@@ -1419,17 +1424,17 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				}
 			}
 
-			float smallsprtncrps_factor = 3.4f * (sprPrxFctr * 15.0f);
+			smallsprtncrps_factor = 3.4f * (sprPrxFctr * 15.0f);
 			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
 			                              smallsprtncrps_factor = 1.0f;
 			else if (!visible2sideMidTex) smallsprtncrps_factor = 0.25f;
 
-			float projectiles_factor = 8.0f;
+			projectiles_factor = 8.0f;
 			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
 			                              projectiles_factor = 1.0f;
 			else if (!visible2sideMidTex) projectiles_factor = 0.25f;
 
-			float regularsizmonster_factor1 = 3.64f * (sprPrxFctr * 3.0f);
+			regularsizmonster_factor1 = 3.64f * (sprPrxFctr * 3.0f);
 			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
 				                          regularsizmonster_factor1 = 1.0f;
 			else if (!visible2sideMidTex) regularsizmonster_factor1 = 0.25f;
@@ -1490,7 +1495,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
 
 			//		=== The pass 2 agressive culling core process - START ===
-			if (CrossedAnyWall || !isSpriteNOTObstructed)
+			// this pass 2 makes stuff like "increaseAnam" to leak way less
+			if (!isSpriteNOTObstructed && !islegacyversionprojectile)
 			{
 				const float planeProximThresh = 4.0f;
 				float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
@@ -1536,11 +1542,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// 0.125 looks good but leaks farther away you go, 0.09 doesn't leak that much but looks worse when close to a sprite
 			// so we need to decrease "increaseAnam" from 0.125 to 0.0 smoothly as the distance exceeds minAnamDist (384.0f)
 
-			//float incrAnamMaximum = 0.0f;  // a bit too strict rule
-			//if (spriteSize >= 16.0f && spriteSize <= 25.0f && !islegacyversionmonster && !isfloatingsprite && !isactoracorpse)	
-			//     incrAnamMaximum = 0.2f;   // Small but NOT smaller sprites like health bonuses won't leak much
-			//else incrAnamMaximum = 0.125f; // For all the rest sized sprites
-			float incrAnamMaximum = 0.2f;    // May we try 0.2 for all since culling works now on 2sidedMidTxt
+			float incrAnamMaximum = 0.0f;    // Bigger sprites need lesser "increaseAnam" amounts, otherwise they leak more
+			if ( spriteSize >= 16.0f && spriteSize <= 25.0f && (!islegacyversionmonster || !isfloatingsprite || !isactoracorpse) )	
+			     incrAnamMaximum = 0.2f;     // Bigger amount for small but NOT smaller sprites like health bonuses
+			else incrAnamMaximum = 0.075f;   // For all the rest sprites
 
 			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall)
 			{
@@ -1562,17 +1567,17 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			float spbias = 0.0f;       // initialize the variable
 			float decreaseAnam = 0.0f; // initialize the variable
-			// decrease anamorphosis when sprites are culled
+			// Decrease anamorphosis when sprites are culled
 			// by 1sided+void or 2sided lines, softened by facing bbox check
 			if ((thingFacingBboxCrossed1sided && thingCrossed1sVoidLine) || !isSpriteNOTObstructed)
 			{
-				// values lower aren't sufficient to suppress leaks on big radii sprites like
+				// Values lower aren't sufficient to suppress leaks on big radii sprites like
 				// small sprites - health bonus, torches, etc with increased radii not to fade in far
 				decreaseAnam = 0.075f;
 			}
 			else if (thingCrossed2sidedLine || !isSpriteNOTObstructed)
 			{
-				// values lower aren't sufficient to suppress leaks on big radii sprites like
+				// Values lower aren't sufficient to suppress leaks on big radii sprites like
 				// small sprites - health bonus, torches, etc with increased radii not to fade in far
 				decreaseAnam = 0.015f;
 			}
@@ -1641,12 +1646,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// Anamorphic sprite overbright correction
 		float sprSizeLight = (thing->radius + thing->Height) * 0.5f;
 		if (sprSizeLight >= 36.0f) sprSizeLight = 36.0f; // clamp sprSizeLight
-		float original_z1 = nonanam_z1;
-		float original_z2 = nonanam_z2;
+		float original_z1 = nonanam_z1; float original_z2 = nonanam_z2;
 		// Calculate the deltas (offsets)
-		// Clamp them to prevent negative depth correction
-		nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * 0.55f));
-		nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * 0.55f));
+		// Clamp them to prevent negative depth correction - 1st val are small spr
+		float sprAnamLightAmount = (isactorsmallbutnotcorpse) ? (smallsprtncrps_factor * 4.0f) : 0.55f;
+		nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * sprAnamLightAmount));
+		nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * sprAnamLightAmount));
 		// Output to the engine console
 		// %f - float, %.2f - float with 2 decimal points
 		//Printf("Sprite [%s]: Orig Z1: %.2f, Z2: %.2f | Delta Z1: %.2f, Z2: %.2f\n", 
