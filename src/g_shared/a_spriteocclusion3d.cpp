@@ -65,16 +65,33 @@ bool IsAnamorphicDistanceCulled(AActor* thing, float gl_anamorphic_spriteclip_di
 	return (thing->Pos() - r_viewpoint.Pos).LengthSquared() > cullDistSq;
 }
 
-// Frustum culling
-static bool CheckFrustumCulling(AActor* thing)
+// Frustum culling stub - keep for caching system test
+// But make sure if you turn around too fast,
+// it takes time to hide (cull) sprites behind obstructions!
+static bool CheckFrustumCullingUNUSED(AActor* thing)
 {
 	return false; // Not culled by frustum
 }
 
-// Frustum culling - unused
+// Frustum culling - now used again
 // If you turn around too fast you see sprites behind
 //   take too long to get their collision checked and unculled and it's slower
-static bool CheckFrustumCullingUNUSED(AActor* thing)
+//   - compensated by our new cullin pass 1 in gl_sprite.cpp:
+//					=== Anamorphosis culling pass 1 - START ===
+//float spriteRadius = (float)thing->radius;
+//float radius_for_bias = 0.0f;
+//
+//// Crucial for "thingCrossed1sVoidLine" to be here
+//// otherwise it gets useless below (while it's also needed there as OR in "CrossedAnyWall")
+//if (thingCrossed1sVoidLine || !visible1sidesInfTallObstr || !visible2sideMidTex)
+//{
+//	// Regular Forced-Perspective way
+//	radius_for_bias = spriteRadius;
+//	regularsizmonster_factor2 = 0.75f;
+//}
+//			=== Anamorphosis culling pass 1 - TO BE CONTINUED... ===
+
+static bool CheckFrustumCulling(AActor* thing)
 {
 	const DVector3 viewerPos = r_viewpoint.Pos;
 	const DVector3 thingPos = thing->Pos();
@@ -82,7 +99,7 @@ static bool CheckFrustumCullingUNUSED(AActor* thing)
 	// Extract the ACTUAL current FOV from the viewpoint
 	// r_viewpoint.FOV is already in degrees, so we don't need to convert
 	float currentFOV = r_viewpoint.FieldOfView.Degrees;
-	float currentFOVenlarged = currentFOV * 2.0f;
+	float currentFOVenlarged = currentFOV * 1.4f;
 
 	// Calculate frustum based on tilt
 	float tilt = fabs(static_cast<float>(r_viewpoint.Angles.Pitch.Degrees));
@@ -1484,8 +1501,8 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	// ==================================================================================================
 	// THIS IS THE PLACE WHERE YOU CONFIGURE SPRITES CULLING AMOUNT PER TYPE FOR 2SIDED TALL OBSTRUCTIONS
 	// 1st val is large spr, 2nd is small sprites, third is all the rest sprites, higher vals cull more
-	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.2f) : 6.0f;
-	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.0f) : 1.64f;
+	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.2f) : 2.0f;
+	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.0f) : 2.24f;
 
 	// Core sprite positions (using expansion factors)
 	FVector2 viewerPos = GetActorPosition(viewer);

@@ -1544,7 +1544,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 			float incrAnamMaximum = 0.0f;    // Bigger sprites need lesser "increaseAnam" amounts, otherwise they leak more
 			if ( spriteSize >= 16.0f && spriteSize <= 25.0f && (!islegacyversionmonster || !isfloatingsprite || !isactoracorpse) )	
-			     incrAnamMaximum = 0.2f;     // Bigger amount for small but NOT smaller sprites like health bonuses
+			     incrAnamMaximum = 0.175f;   // Bigger amount for small but NOT smaller sprites like health bonuses
 			else incrAnamMaximum = 0.075f;   // For all the rest sprites
 
 			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall)
@@ -1649,7 +1649,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float original_z1 = nonanam_z1; float original_z2 = nonanam_z2;
 		// Calculate the deltas (offsets)
 		// Clamp them to prevent negative depth correction - 1st val are small spr
-		float sprAnamLightAmount = (isactorsmallbutnotcorpse) ? (smallsprtncrps_factor * 4.0f) : 0.55f;
+		float sprAnamLightAmount = (isactorsmallbutnotcorpse) ? (smallsprtncrps_factor * 4.0f) : 0.4f;
 		nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * sprAnamLightAmount));
 		nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * sprAnamLightAmount));
 		// Output to the engine console
