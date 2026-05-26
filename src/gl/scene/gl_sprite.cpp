@@ -1212,7 +1212,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
 		bool isactorsmallbutnotcorpse = (spriteSize >= 8.0f && spriteSize <= 18.0f) && !isactoracorpse;
 		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
+		bool  isabonusitem = ((spriteSize >= 16.0f && spriteSize <= 25.0f) &&
+			(!islegacyversionmonster || !isfloatingsprite || !isactoracorpse));
 
+		// Make sure all 1sided checks and MidTxt checks do NOT have FOV(Frustum Culling) and 2sided - HAVE them instead
 		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
 		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 		bool thingCrossed1sVoidLine = SpriteCrossed1sidedVoidLinedefCachedWrapper(thing, r_viewpoint.camera);
@@ -1531,30 +1534,42 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			else tintersect = 1.0f;
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
 
-			// Compute steep factor
-			bool isonsteepsurf;
-			const float STEEPNESS = 5.25f;  //detect only very steep surfaces
-			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
-			isonsteepsurf = steepnessfact > 0.0001f;
-
-			float increaseAnam = 0.0f; // the higher the more the anamorphosis effect is but more leaks
+			//                |---------------------------------------------------|
+			//		 ---***===|		CRAZY STEEP ANAMORPHOSIS PROCESS - START	  |===***---
+			//                |---------------------------------------------------|
 			// if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall) increaseAnam = 0.125f;
 			// 0.125 looks good but leaks farther away you go, 0.09 doesn't leak that much but looks worse when close to a sprite
 			// so we need to decrease "increaseAnam" from 0.125 to 0.0 smoothly as the distance exceeds minAnamDist (384.0f)
-
-			float incrAnamMaximum = 0.0f;    // Bigger sprites need lesser "increaseAnam" amounts, otherwise they leak more
-			if ( spriteSize >= 16.0f && spriteSize <= 25.0f && (!islegacyversionmonster || !isfloatingsprite || !isactoracorpse) )	
-			     incrAnamMaximum = 0.175f;   // Bigger amount for small but NOT smaller sprites like health bonuses
-			else incrAnamMaximum = 0.075f;   // For all the rest sprites
-
-			if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall)
+			//
+			// -------------------- COMPUTE STEEP FACTOR |-> START|
+			bool  isonsteepsurf;
+			float STEEPNESS = 5.25f; // detect only very steep surfaces
+			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
+			isonsteepsurf = steepnessfact > 0.0001f;
+			// -------------------- THE MULTIPLIER SETUP |-> START|
+			// -- PHASE #1 - determine maximum effect amounts
+			float increaseAnam = 0.0f; // The higher the more the anamorphosis effect is but more leaks
+			float incrAnamMaximum = 0.0f; // Bigger sprites need lesser "increaseAnam" amounts, otherwise they leak more
+			if (CrossedAnyWall)
 			{
-				const float minAnamDist = 384.0f;           // Max effect in this zone
-				const float maxAnamDist = 1200.0f;          // Full effect fade here
+				// Must be done this way, otherwise leaks more
+				incrAnamMaximum = 0.0f; // the culled out case
+			}
+			else
+			{
+				// the visible case
+				if (isabonusitem) incrAnamMaximum = 0.175f;   // Bigger amount for small but NOT smaller than bonus
+				else              incrAnamMaximum = 0.075f;   // Smaller amount for all the rest sprites
+			}
+			// -- PHASE #2 - determine the distant effect amount fade
+			if ((dist < 1200.0f) && isonsteepsurf)
+			{
+				const float minAnamDist = 384.0f;             // Max effect in this zone
+				const float maxAnamDist = 1200.0f;            // Full effect fade here
 				const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
 				if (dist <= minAnamDist)
 				{
-					increaseAnam = incrAnamMaximum;         // Full power
+					increaseAnam = incrAnamMaximum;           // Full power
 				}
 				else
 				{
@@ -1564,11 +1579,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					increaseAnam = incrAnamMaximum * fadeFactor;
 				}
 			}
-
+			// -- PHASE #3 - setup the suppression multiplier (decreaseAnam)
 			float spbias = 0.0f;       // initialize the variable
 			float decreaseAnam = 0.0f; // initialize the variable
-			// Decrease anamorphosis when sprites are culled
-			// by 1sided+void or 2sided lines, softened by facing bbox check
+			// Decrease anamorphosis when sprites are culled by 1s+void or 2s lines, soften by facing
 			if ((thingFacingBboxCrossed1sided && thingCrossed1sVoidLine) || !isSpriteNOTObstructed)
 			{
 				// Values lower aren't sufficient to suppress leaks on big radii sprites like
@@ -1581,7 +1595,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				// small sprites - health bonus, torches, etc with increased radii not to fade in far
 				decreaseAnam = 0.015f;
 			}
-
+			// -------------------- THE MULTIPLIER SETUP |-> FINISH|
+			// ---------PERFORM CRAZY STEEP ANAMORPHOSIS |->  START|
 			if (CrossedAnyWall)
 			{
 				// Some items like torches still leak through walls if put really close.
@@ -1597,8 +1612,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 			}
 			float vpbias = 1.0 - spbias;
-			//					=== Anamorphosis final culling pass - FINISH ===
+			// --------PERFORM CRAZY STEEP ANAMORPHOSIS |->  FINISH|
+			//                |---------------------------------------------------|
+			//		 ---***===|		CRAZY STEEP ANAMORPHOSIS PROCESS - FINISH	  |===***---
+			//                |---------------------------------------------------|
 
+			//					=== Anamorphosis final culling pass - FINISH === 
 
 			// Apply projection distortion using original vp method only if not obstructed by a 3DFloor above or below
 			if (!a3DfloorPlaneObstructed)
@@ -1634,12 +1653,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			else if (blend >= 1.f)
 			{
 				// Apply full smart clipping when blend = 1.0
-				x1 = smart_x1;
-				y1 = smart_y1;
-				z1 = smart_z1;
-				x2 = smart_x2;
-				y2 = smart_y2;
-				z2 = smart_z2;
+				x1 = smart_x1; y1 = smart_y1;
+				z1 = smart_z1; x2 = smart_x2;
+				y2 = smart_y2; z2 = smart_z2;
 			}
 		}
 

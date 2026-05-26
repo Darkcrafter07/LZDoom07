@@ -56,8 +56,7 @@ bool enableAnamorphCache = true; // gives it a really considerable speed-up
 bool IsAnamorphicDistanceCulled(AActor* thing, float gl_anamorphic_spriteclip_distance_cull)
 {
 	if (!thing) return true; // Handle null pointers
-	if (gl_anamorphic_spriteclip_distance_cull <= 0.0f)
-		return false;
+	if (gl_anamorphic_spriteclip_distance_cull <= 0.0f) return false;
 
 	const float cullDist = gl_anamorphic_spriteclip_distance_cull;
 	const float cullDistSq = cullDist * cullDist;
@@ -65,32 +64,16 @@ bool IsAnamorphicDistanceCulled(AActor* thing, float gl_anamorphic_spriteclip_di
 	return (thing->Pos() - r_viewpoint.Pos).LengthSquared() > cullDistSq;
 }
 
-// Frustum culling stub - keep for caching system test
-// But make sure if you turn around too fast,
-// it takes time to hide (cull) sprites behind obstructions!
+// Frustum culling stub - keep for 1sided and midtxt checks
+// Because with the FOV check they start leaking HEAVILY
 static bool CheckFrustumCullingUNUSED(AActor* thing)
 {
 	return false; // Not culled by frustum
 }
 
-// Frustum culling - now used again
-// If you turn around too fast you see sprites behind
-//   take too long to get their collision checked and unculled and it's slower
-//   - compensated by our new cullin pass 1 in gl_sprite.cpp:
-//					=== Anamorphosis culling pass 1 - START ===
-//float spriteRadius = (float)thing->radius;
-//float radius_for_bias = 0.0f;
-//
-//// Crucial for "thingCrossed1sVoidLine" to be here
-//// otherwise it gets useless below (while it's also needed there as OR in "CrossedAnyWall")
-//if (thingCrossed1sVoidLine || !visible1sidesInfTallObstr || !visible2sideMidTex)
-//{
-//	// Regular Forced-Perspective way
-//	radius_for_bias = spriteRadius;
-//	regularsizmonster_factor2 = 0.75f;
-//}
-//			=== Anamorphosis culling pass 1 - TO BE CONTINUED... ===
-
+// A totally different story for 2 sided walls / 3D-floors
+// USE the FOV check otherwise due to caching system imperfection
+// You will see leaks if turn the head around fast!
 static bool CheckFrustumCulling(AActor* thing)
 {
 	const DVector3 viewerPos = r_viewpoint.Pos;
@@ -169,7 +152,7 @@ struct LineSegmentCommon
 
 // Function to check if a wall is thin (less than 12 units thick)
 // how to call: bool thisisathinwall = IsThinWallCommon(thing, r_viewpoint.camera, thingpos);
-static bool IsThinWallCommon(AActor* viewer, AActor* thing, DVector3& thingpos)
+bool IsThinWallCommon(AActor* viewer, AActor* thing, DVector3& thingpos)
 {
 	// Early exit for invalid inputs
 	if (!viewer || !thing) return false;
@@ -363,7 +346,8 @@ bool SpriteCrossed1sidedLinedef(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
 
-	if (CheckFrustumCulling(thing)) return false;
+	// The FOV check is VERY BAD for 1 sided stuff!
+	// if (CheckFrustumCullingUNUSED(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// ONLY check sprite's sector, never viewer's sector
@@ -480,7 +464,8 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
 
-	if (CheckFrustumCulling(thing)) return false;
+	// The FOV check is VERY BAD for 1 sided stuff!
+	// if (CheckFrustumCullingUNUSED(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// 1. SPATIAL POOLING
@@ -633,7 +618,8 @@ bool SpriteCrossed1sidedVoidLinedef(AActor* thing, AActor* viewer)
 {
 	if (!thing || !viewer) return false;
 
-	if (CheckFrustumCulling(thing)) return false;
+	// The FOV check is VERY BAD for 1 sided stuff!
+	// if (CheckFrustumCullingUNUSED(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// 1. SPATIAL POOLING SETUP
@@ -840,7 +826,8 @@ bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor* viewer
 	// Fast escape checks
 	if (!thing || !viewer) return false;
 
-	if (CheckFrustumCulling(thing)) return false;
+	// The FOV check is VERY BAD for 1 sided stuff!
+	// if (CheckFrustumCullingUNUSED(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	float spriteScale = 0.15f;
@@ -1671,7 +1658,7 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 	if (!viewer || !thing || viewer == thing) return false;
 
 	// We call the function with "!" - that's why return "true" when culled
-	if (CheckFrustumCulling(thing)) return false;
+	//if (CheckFrustumCulling(thing)) return false; // no need to do it twice
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	// 3. Occlusion test - choose implementation based on toggle
@@ -1725,12 +1712,12 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 	//Printf("Thing: %s at (%.1f, %.1f, %.1f)\n", thing->GetClass()->TypeName.GetChars(), thingpos.X, thingpos.Y, thingpos.Z);
 	//Printf("Camera: (%.1f, %.1f, %.1f) facing %.1f degrees\n", camera->X(), camera->Y(), camera->Z(), camera->Angles.Yaw.Degrees());
 
-	// 1. Quick out: Frustum culling
-	if (CheckFrustumCulling(thing))
-	{
-		//Printf("Skipped: Frustum culled\n");
-		return 0.0f;
-	}
+	// 1. Quick out: Frustum culling - DISABLED BECAUSE BAD FOR MID TEXTURES!!!
+	//if (CheckFrustumCullingUNUSED(thing))
+	//{
+	//	//Printf("Skipped: Frustum culled\n");
+	//	return 0.0f;
+	//}
 
 	// 2. Distance culling (far planes)
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f))
@@ -1881,14 +1868,14 @@ static float CheckFacingMidTextureProximity(AActor* thing, const AActor* viewer,
 		DVector2 v1(line->v1->fX(), line->v1->fY());
 		DVector2 v2(line->v2->fX(), line->v2->fY());
 		DVector2 lineVec = v2 - v1;
-		double lineLenSq = lineVec.LengthSquared();
+		float lineLenSq = lineVec.LengthSquared();
 		if (lineLenSq < 1e-6)
 		{
 			continue;
 		}
 
 		DVector2 toSprite(thingpos.X - v1.X, thingpos.Y - v1.Y);
-		double dot = lineVec.X * toSprite.X + lineVec.Y * toSprite.Y;
+		float dot = lineVec.X * toSprite.X + lineVec.Y * toSprite.Y;
 		float t_segment = clamp(float(dot / lineLenSq), 0.0f, 1.0f);
 
 		DVector2 closest(v1.X + t_segment * lineVec.X, v1.Y + t_segment * lineVec.Y);
