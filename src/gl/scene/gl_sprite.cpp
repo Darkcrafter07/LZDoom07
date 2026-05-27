@@ -1582,8 +1582,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// -- PHASE #3 - setup the suppression multiplier (decreaseAnam)
 			float spbias = 0.0f;       // initialize the variable
 			float decreaseAnam = 0.0f; // initialize the variable
-			// Decrease anamorphosis when sprites are culled by 1s+void or 2s lines, soften by facing
-			if ((thingFacingBboxCrossed1sided && thingCrossed1sVoidLine) || !isSpriteNOTObstructed)
+			// Decrease anamorphosis when sprites are culled by 1s+void or 2s lines,void is now facing
+			if (thingCrossed1sVoidLine && !isSpriteNOTObstructed)
 			{
 				// Values lower aren't sufficient to suppress leaks on big radii sprites like
 				// small sprites - health bonus, torches, etc with increased radii not to fade in far
@@ -1597,6 +1597,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 			// -------------------- THE MULTIPLIER SETUP |-> FINISH|
 			// ---------PERFORM CRAZY STEEP ANAMORPHOSIS |->  START|
+			// Make sure your 1s, midtxt checks do NOT have FOV check and 2s, 3df - do HAVE it
 			if (CrossedAnyWall)
 			{
 				// Some items like torches still leak through walls if put really close.
@@ -1617,7 +1618,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			//		 ---***===|		CRAZY STEEP ANAMORPHOSIS PROCESS - FINISH	  |===***---
 			//                |---------------------------------------------------|
 
-			//					=== Anamorphosis final culling pass - FINISH === 
+			//					=== Anamorphosis final culling pass - FINISH ===
 
 			// Apply projection distortion using original vp method only if not obstructed by a 3DFloor above or below
 			if (!a3DfloorPlaneObstructed)
