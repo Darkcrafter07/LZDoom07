@@ -866,7 +866,6 @@ struct Visibility1sidedCacheEntry
 	int lastMapTimeUpdateTick = -1;
 	bool cached1sidedResult = true;
 };
-
 // Global cache storage for 1-sided checks
 static TMap<AActor*, Visibility1sidedCacheEntry> Visibility1sidedCache;
 
@@ -1315,7 +1314,7 @@ struct ObstructionData2Sided
 					isProjectileBehindObstacle = true;
 
 					// --- PRINTF: CULLING EVENT ---
-					// This is what actually hides your explosion
+					// This is what actually hides the explosion
 					// Printf("!!! CULLED !!! %s at [%.2f, %.2f] | DiffFloor: %.2f\n", 
 					//	thing->GetClass()->TypeName.GetChars(), (float)thing->X(), (float)thing->Y(), diffToFloor);
 				}
@@ -1694,15 +1693,12 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 
 
 
-
-
 // Cache structure - stores only what we need
 struct Visibility2sidedObstrCacheEntry
 {
 	int lastMapTimeUpdateTick = -1;
 	bool cached2sidedObstrResult = true;
 };
-
 // Global cache storage
 static TMap<AActor*, Visibility2sidedObstrCacheEntry> Visibility2sidedObstrCache;
 
@@ -1751,8 +1747,6 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 //         ---===      ***************************************        ===---
 // ******* 2-sided-linedef-based mid-texture in front of a sprite facing camera - start *******
 
-
-// 2-sided-linedef-based mid-texture in front of a sprite facing camera
 // "CheckFacingMidTextureProximity" - finds out whether a mid texture facing camera
 // lies on viewdirection between viewer and sprite behind that mid texture and returns
 // a proximity value from 0 to 1, where 1 is fully visible. Large sprites must come at
@@ -1774,21 +1768,28 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AA
 struct MidTextureFencePathAccumulator
 {
 	float closestMidTexFenceDist;
+	bool  isProjectileInFront; // Flag to abort occlusion if explosion occurs BEFORE the fence
 	bool  hitValidFence;
 	bool  isSolidFence;
 
 	MidTextureFencePathAccumulator()
 	{
 		closestMidTexFenceDist = MAXCOORD2SIDED; // Start at maximum range
+		isProjectileInFront = false;
 		hitValidFence = false;
 		isSolidFence = false;
 	}
 
-	void AccumulateMidTextureFenceData(line_t *line, float calculatedDist)
+	void AccumulateMidTextureFenceData(line_t *line, float calculatedDist, AActor* thing, const AActor* viewer,
+												const FVector2& intersectionPoint, float sprBot, float sprTop)
 	{
 		// Check both sides to identify if the hit line contains a true mid-texture
 		bool currentLineHasMid = false;
 		bool currentLineIsSolid = false;
+
+		// Should have been done with "AND" but "OR" works better
+		const bool isLegacyVersionProjectile = (thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY)) ||
+												  (thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS));
 
 		for (int sideno = 0; sideno < 2; sideno++)
 		{
@@ -1825,6 +1826,23 @@ struct MidTextureFencePathAccumulator
 		// If this line physically stands as a genuine fence, lock it into the path accumulator
 		if (currentLineHasMid)
 		{
+			// SPECIAL PROJECTILE / EXPLOSION PROTECTION (Brought from 2S system)
+			if (isLegacyVersionProjectile)
+			{
+				FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
+				FVector2 tP = { (float)thing->X(), (float)thing->Y() };
+
+				float d2LineSq = (vP - intersectionPoint).LengthSquared();
+				float d2ThingSq = (vP - tP).LengthSquared();
+
+				// 1. SKIP if the mid-texture line is BEHIND the sprite/explosion
+				if (d2LineSq > (d2ThingSq + 16.0f))
+				{
+					isProjectileInFront = true;
+					return;
+				}
+			}
+
 			hitValidFence = true;
 			if (calculatedDist < closestMidTexFenceDist)
 			{
@@ -2004,7 +2022,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 	float proximity_factor = 1.0f;
 	bool  rayHitAnyValidMidTexture = false;
 
-	// Setup vectors for line-intersection check matching your CheckLineOfSight2sided
+	// Setup vectors for line-intersection check matching CheckLineOfSight2sided
 	FVector2 viewerPos = { (float)viewer->X(), (float)viewer->Y() };
 	FVector2 thingPos2D = { (float)thingpos.X, (float)thingpos.Y };
 	FVector2 toSprite = (thingPos2D - viewerPos);
@@ -2060,6 +2078,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			FVector2 raySources[3] = { viewerPos, viewerPos + sideOffset, viewerPos - sideOffset };
 			FVector2 rayTargets[3] = { thingPos2D, thingPos2D + sideOffset, thingPos2D - sideOffset };
 			bool     anyRayHitThisLine = false;
+			FVector2 actualIntersectionPoint = { 0.0f, 0.0f };
 
 			for (int r = 0; r < 3; r++)
 			{
@@ -2068,6 +2087,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 				if (LineIntersectsSegment2sided(raySources[r], rayTargets[r], lineStart, lineEnd, intersectionPoint))
 				{
 					anyRayHitThisLine = true;
+					actualIntersectionPoint = intersectionPoint; // Remember exactly where the ray clipped the wall
 					break; 	// If at least one fan ray collided in the obstruction - OCCLUDE!
 				}
 			}
@@ -2091,8 +2111,14 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			DVector2 closest = { lineStart.X + t_segment * lineVec2D.X, lineStart.Y + t_segment * lineVec2D.Y };
 			float    dist = float((thingpos - DVector3(closest, 0)).XY().Length());
 
-			// Feed the intersection data to the accumulator class
-			pathData.AccumulateMidTextureFenceData(line, dist);
+			// Feed the intersection data to the accumulator class (including vector and actor pointers for missile checks)
+			pathData.AccumulateMidTextureFenceData(line, dist, thing, viewer, actualIntersectionPoint, spriteBottom, spriteTop);
+
+			// Fast out if the projectile shortcut bypass triggered
+			if (pathData.isProjectileInFront)
+			{
+				return 1.0f; // Return full visibility immediately!
+			}
 		}
 	}
 
@@ -2121,7 +2147,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 	if (rayHitAnyValidMidTexture)
 	{
 		// --- ADAPTIVE LEDGE THRESHOLD & VIEW LEVEL MITIGATION ---
-		// Replicating your 2sided obstruction dynamic thresholds and height offsets to tame 
+		// Replicating the 2sided obstruction dynamic thresholds and height offsets to tame 
 		// aggressive culling on steps and stairs. It ensures the floor you are standing on is not treated as a wall.
 		float LEDGE_THRESHOLD = 0.0f;
 
@@ -2130,7 +2156,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 
 		if (isSmallSpriteForLedge)
 		{
-			LEDGE_THRESHOLD = 7.0f; // Needs taller obstructions to cull small sprites
+			LEDGE_THRESHOLD = 7.0f;  // Needs taller obstructions to cull small sprites
 		}
 		else
 		{
@@ -2468,13 +2494,109 @@ bool IsSpriteBehind3DFloorPlaneCachedWrapper(DVector3& cameraPos, DVector3& spri
 
 
 
-//         ---===      ***************************************        ===---
+// ---=== *************************************** ===---
 // ******* 3DFloor-sides culling block start *******
+
+// 1. OBSTRUCTION DATA ACCUMULATOR FOR 3D FLOORS
+struct ObstructionData3DFloor
+{
+	float maxFloorOverlap;  // Highest bottom plane Z that overlaps the ray
+	float minCeilingOverlap; // Lowest top plane Z that overlaps the ray
+	bool valid;
+	bool isProjectileBehindObstacle; // Persistent flag for 3D-floor projectile door/ledge occlusion
+
+	ObstructionData3DFloor()
+	{
+		// Start far apart so the bounds can contract during accumulation
+		maxFloorOverlap = -999999.0f;
+		minCeilingOverlap = 999999.0f;
+		valid = false;
+		isProjectileBehindObstacle = false;
+	}
+
+	void Accumulate3DFloorObstruction(AActor* thing, AActor* viewer, float fBot, float fTop,
+								float rangeMin, float rangeMax, float viewerFeet, float viewZ,
+								const FVector2& intersectionPoint, float sprBot, float sprTop)
+	{
+		// Determine sprite classification (matching the 2S logic setup)
+		const bool isLegacyProjectile = (thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
+			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
+			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
+
+		// THE CORE FIX: Intersection of two vertical segments
+		float intersectMin = MAX(rangeMin, fBot);
+		float intersectMax = MIN(rangeMax, fTop);
+		float overlapHeight = intersectMax - intersectMin;
+
+		// OCCLUSION CONDITION
+		if (overlapHeight > 0.0f)
+		{
+			// Prevent self-occlusion when standing on the same 3D floor or high ceiling
+			bool isPlayerStandingOnIt = (fTop >= (viewerFeet - 4.0f) && fTop <= (viewerFeet + 4.0f));
+			bool isHighCeiling = (fBot > (viewZ + 8.0f));
+
+			if (!isPlayerStandingOnIt && !isHighCeiling)
+			{
+				// SPECIAL PROJECTILE / EXPLOSION LOGIC (Brought from 2S system)
+				if (isLegacyProjectile)
+				{
+					FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
+					FVector2 tP = { (float)thing->X(), (float)thing->Y() };
+
+					float d2LineSq = (vP - intersectionPoint).LengthSquared();
+					float d2ThingSq = (vP - tP).LengthSquared();
+
+					// 1. SKIP if the 3D-floor side line is BEHIND the sprite/explosion
+					if (d2LineSq > (d2ThingSq + 16.0f)) return;
+
+					// 2. SKIP if this specific 3D floor is NOT an actual vertical obstruction
+					bool blocksFloor = (fTop > sprBot + 2.0f);
+					bool blocksCeil = (fBot < sprTop - 2.0f);
+					if (!blocksFloor && !blocksCeil) return; // Path is clear, skip this 3D floor
+
+					// 3. Accumulate projectile specifics
+					if (fTop > maxFloorOverlap) maxFloorOverlap = fTop;
+					if (fBot < minCeilingOverlap) minCeilingOverlap = fBot;
+					valid = true;
+
+					float diffToFloor = (float)fabs(sprBot - fTop);
+					float diffToCeil = (float)fabs(sprTop - fBot);
+					float d2LineCenterSq = (tP - intersectionPoint).LengthSquared();
+
+					// Only cull projectile if it's tightly close to a massive 3D ledge (> 32 units)
+					if (d2LineCenterSq < 64.0f)
+					{
+						if (diffToFloor > 32.0f || diffToCeil > 32.0f)
+						{
+							isProjectileBehindObstacle = true;
+						}
+					}
+				}
+				else
+				{
+					// Regular monsters and items accumulation
+					if (fTop > maxFloorOverlap) maxFloorOverlap = fTop;
+					if (fBot < minCeilingOverlap) minCeilingOverlap = fBot;
+					valid = true;
+				}
+			}
+		}
+	}
+};
+
+// Cache structure for 3D floor side (ribs) checks
+struct a3DFloorSideCacheEntry
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached3DFloorSideResult = true;
+};
+
+static TMap<AActor*, a3DFloorSideCacheEntry> a3DFloorSideCache;
+
 // Utility: get plane height at a 2D point
 bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 {
 	if (!viewer || !thing) return true;
-
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	const FVector2 vd = { (float)viewer->Pos().X, (float)viewer->Pos().Y };
@@ -2484,20 +2606,22 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 	float sprBot, sprTop;
 	if (thing->flags & MF_SPAWNCEILING)
 	{
-		// Ceiling-mounted: Anchor is at the top, height grows downwards
 		sprTop = (float)thing->Z();
 		sprBot = sprTop - (float)thing->Height;
 	}
 	else
 	{
-		// Ground-mounted: Anchor is at the bottom, height grows upwards
 		sprBot = (float)thing->Z();
 		sprTop = sprBot + (float)thing->Height;
 	}
 
-	const float viewZ = (float)viewer->Pos().Z + 41.0f; // Eye height matching your 2S logic
+	const float viewZ = (float)viewer->Pos().Z + 41.0f;
+	const float viewerFeet = (float)viewer->Z();
 	const float dist2D = (sd - vd).Length();
 	if (dist2D < 0.1f) return true;
+
+	// Instance of the accumulator
+	ObstructionData3DFloor obsData;
 
 	// --- 2. BLOCKMAP SCANNING ---
 	int minBX = level.blockmap.GetBlockX(MIN(vd.X, sd.X) - 16.0f);
@@ -2510,8 +2634,8 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 		for (int by = minBY; by <= maxBY; by++)
 		{
 			if (!level.blockmap.isValidBlock(bx, by)) continue;
-
 			int* list = level.blockmap.GetLines(bx, by);
+
 			for (int i = 0; list[i] != -1; i++)
 			{
 				line_t* line = &level.lines[list[i]];
@@ -2531,48 +2655,51 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 
 					for (auto& floor : sec->e->XFloor.ffloors)
 					{
-						if (!(floor->flags & FF_SOLID) || !(floor->flags & FF_EXISTS)) continue;
+						if (!(floor->flags & FF_EXISTS) || !(floor->flags & FF_SOLID)) continue;
+						if (!(floor->flags & (FF_RENDERSIDES | FF_RENDERPLANES))) continue;
 
-						// 1. Get 3D floor bounds at intersection point
 						float fTop = (float)floor->top.plane->ZatPoint(intersectionPoint.X, intersectionPoint.Y);
 						float fBot = (float)floor->bottom.plane->ZatPoint(intersectionPoint.X, intersectionPoint.Y);
 
-						// 2. Project sprite bounds (using player's EYE height)
 						float rayZBot = viewZ + t * (sprBot - viewZ);
 						float rayZTop = viewZ + t * (sprTop - viewZ);
 
-						// 3. Define the actual span of the sprite as seen by the player
 						float rangeMin = MIN(rayZBot, rayZTop);
 						float rangeMax = MAX(rayZBot, rayZTop);
 
-						// 4. LEDGE_THRESHOLD - same as the 2S logic
-						const float spriteSize = (thing->radius + thing->Height) * 0.5f;
-						float LEDGE_THRESHOLD = (spriteSize <= 22.0f) ? 12.0f : 4.0f;
-
-						// 5. THE CORE FIX: Intersection of two vertical segments
-						// We check if the 3D floor's vertical "wall" overlaps with the sprite's "view"
-						float intersectMin = MAX(rangeMin, fBot);
-						float intersectMax = MIN(rangeMax, fTop);
-
-						float overlapHeight = intersectMax - intersectMin;
-
-						// 6. OCCLUSION CONDITION
-						// If the overlap is significant, the 3D floor is blocking the view
-						if (overlapHeight > LEDGE_THRESHOLD)
-						{
-							// Important: To prevent self-occlusion when standing on the same 3D floor
-							// we only occlude if the floor is NOT at our exact feet level (with tolerance)
-							float viewerFeet = (float)viewer->Z();
-
-							// If the 3D floor side is significantly above your feet OR significantly below your head
-							// (This mimics 2S logic for maxFloor > viewerBottom + Ztolerance)
-							if (fTop > (viewerFeet + 2.0f) || fBot < (viewZ - 2.0f))
-							{
-								return false; // OCCLUDED
-							}
-						}
+						// Pass all data down to accumulator including projectile helper traits
+						obsData.Accumulate3DFloorObstruction(thing, viewer, fBot, fTop, rangeMin, rangeMax,
+							viewerFeet, viewZ, intersectionPoint, sprBot, sprTop);
 					}
 				}
+			}
+		}
+	}
+
+	// --- 3. FINAL VISIBILITY EVALUATION ---
+	// If a projectile shortcut flag triggered a hard cull, hide it immediately
+	if (obsData.isProjectileBehindObstacle) return false;
+
+	if (obsData.valid)
+	{
+		const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+		float LEDGE_THRESHOLD = (spriteSize <= 22.0f) ? 12.0f : 4.0f;
+
+		// Check A: Floor/Ledge occlusion
+		if (obsData.maxFloorOverlap >= (sprBot + LEDGE_THRESHOLD))
+		{
+			if (obsData.maxFloorOverlap > (viewerFeet + 4.0f))
+			{
+				return false;
+			}
+		}
+
+		// Check B: Ceiling/Lintel occlusion
+		if (obsData.minCeilingOverlap <= (sprTop - LEDGE_THRESHOLD))
+		{
+			if (obsData.minCeilingOverlap < (viewZ - 4.0f))
+			{
+				return false;
 			}
 		}
 	}
@@ -2580,46 +2707,33 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 	return true;
 }
 
-// Cache structure for 3D floor side (ribs) checks
-struct a3DFloorSideCacheEntry
-{
-	int lastMapTimeUpdateTick = -1;
-	bool cached3DFloorSideResult = false;
-};
-static TMap<AActor*, a3DFloorSideCacheEntry> a3DFloorSideCache; // Global cache storage for 3D-floor sides
-
+// Cached wrapper function
 bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thing)
 {
-	// Use caching if enabled
 	if (enableAnamorphCache)
 	{
 		const int currentMapTimeTick = level.maptime;
-
-		// Access or create entry for this specific actor
 		a3DFloorSideCacheEntry& entry = a3DFloorSideCache[thing];
 
-		// Return cached result if valid (updated within last 7 ticks)
-		// We use the same 7-tick window as your plane check for consistency
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 7)
 		{
 			return entry.cached3DFloorSideResult;
 		}
 
-		// Compute fresh result from the blockmap scanner
 		entry.cached3DFloorSideResult = IsSpriteVisibleBehind3DFloorSides(viewer, thing);
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
-
 		return entry.cached3DFloorSideResult;
 	}
 	else
 	{
-		// Direct call if caching is disabled
 		return IsSpriteVisibleBehind3DFloorSides(viewer, thing);
 	}
 }
 
 // ******* 3DFloor-sides culling block finish *******
-//         ---===      ***************************************        ===---
+// ---=== *************************************** ===---
+
+
 
 static int resetCounter = -1;
 void ResetAnamorphCache()
@@ -2628,19 +2742,19 @@ void ResetAnamorphCache()
 	switch (resetCounter % 7)
 	{
 	case 0:
-		SpriteIntersectsLineCache.Clear(0);
-		SpriteCrossed1sidedLineCache.Clear(0);
-		SpriteCrossed1sidedVoidCache.Clear(0);
-		SpriteBboxFacingCrossed1sCache.Clear(0);
+		Visibility2sidedObstrCache.Clear(0);
+		SpriteCrossed2sidedLineCache.Clear(0);
 		break;
 	case 1:
-		SpriteCrossed2sidedLineCache.Clear(0);
+		SpriteIntersectsLineCache.Clear(0);
+		SpriteBboxFacingCrossed1sCache.Clear(0);
+		SpriteCrossed1sidedVoidCache.Clear(0);
 		Visibility1sidedCache.Clear(0);
-		a3DFloorSideCache.Clear(0);
 		break;
-	case 2:
-		Visibility2sidedObstrCache.Clear(0);
+	case 3:
+		SpriteCrossed1sidedLineCache.Clear(0);
 		MidTextureProximityCache.Clear(0);
+		a3DFloorSideCache.Clear(0);
 		a3DFloorPlaneCache.Clear(0);
 		break;
 	}
