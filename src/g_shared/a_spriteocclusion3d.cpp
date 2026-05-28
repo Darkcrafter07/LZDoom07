@@ -1780,30 +1780,30 @@ struct MidTextureFencePathAccumulator
 		isSolidFence = false;
 	}
 
-	void AccumulateMidTextureFenceData(line_t *line, float calculatedDist, AActor* thing, const AActor* viewer,
-		const FVector2& intersectionPoint, float sprBot, float sprTop)
+	void AccumulateMidTextureFenceData(line_t *line, float calculatedDist, AActor *thing, const AActor *viewer,
+		const FVector2 &intersectionPoint)
 	{
-		// Check both sides to identify if the hit line contains a true mid-texture
-		bool currentLineHasMid = false;
-		bool currentLineIsSolid = false;
-
-		// Should have been done with "AND" but "OR" works better
 		const bool isLegacyVersionProjectile = (thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY)) ||
 			(thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS));
+
+		bool currentLineHasMid = false;
+		bool currentLineIsSolid = false;
+		FTextureID midtex;
+		side_t* checkedSide = nullptr;
 
 		for (int sideno = 0; sideno < 2; sideno++)
 		{
 			if (sideno == 1 && line->backsector == nullptr) continue;
 			if (line->sidedef[sideno] == nullptr) continue;
 
-			FTextureID midtex = line->sidedef[sideno]->GetTexture(side_t::mid);
-
+			midtex = line->sidedef[sideno]->GetTexture(side_t::mid);
 			if (midtex.isValid() && midtex.GetIndex() > 0)
 			{
 				// === LZDoom07 way START ==============================================================
 				if (TexMan[midtex])
 				{
 					currentLineHasMid = true;
+					checkedSide = line->sidedef[sideno];
 					FTexture* tex = TexMan[midtex];
 					if (tex && !tex->bMasked) currentLineIsSolid = true;
 					break;
@@ -1812,10 +1812,11 @@ struct MidTextureFencePathAccumulator
 
 				// === UZDoom way START ================================================================
 				//FGameTexture *gtex = TexMan.GameTexture(midtex);
-				// Verify that it is a real graphical texture map and not a generic empty node container
+				//// Verify that it is a real graphical texture map and not a generic empty node container
 				//if (gtex && gtex->isValid() && gtex->GetTexture() != nullptr && !gtex->GetName().IsEmpty())
 				//{
 				//	currentLineHasMid = true;
+				//	checkedSide = line->sidedef[sideno];
 				//	if (!gtex->isMasked()) currentLineIsSolid = true;
 				//	break;
 				//}
@@ -1823,19 +1824,29 @@ struct MidTextureFencePathAccumulator
 			}
 		}
 
-		// If this line physically stands as a genuine fence, lock it into the path accumulator
-		if (currentLineHasMid)
+		if (currentLineHasMid && checkedSide)
 		{
+			// === GEOMETRICAL RAY DIRECTION PROTECTION ===
+			FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
+			FVector2 tP = { (float)thing->X(), (float)thing->Y() };
+
+			float d2LineSq = (vP - intersectionPoint).LengthSquared();
+			float d2ThingSq = (vP - tP).LengthSquared();
+
+			// THE CRITICAL DIVIDE (MAP26 vs MAP19 Unified Fix):
+			// Genuine 2-sided fences/windows MUST stand strictly BETWEEN the viewer and the actor.
+			// If a 2-sided mid-texture is behind the actor, we drop it immediately (MAP26 Chaingunguy Fix).
+			// However, 1-sided walls (window frames/corners allowed by radial prescan) are allowed 
+			// to be slightly further than the actor's center to clip grazing angles correctly (MAP19 Citadel Fix).
+			const bool isLine2Sided = (line->backsector != nullptr);
+			if (isLine2Sided && (d2LineSq > d2ThingSq))
+			{
+				return; // Uncull: Background 2S fences cannot block sight
+			}
+
 			// SPECIAL PROJECTILE / EXPLOSION PROTECTION (Brought from 2S system)
 			if (isLegacyVersionProjectile)
 			{
-				FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
-				FVector2 tP = { (float)thing->X(), (float)thing->Y() };
-
-				float d2LineSq = (vP - intersectionPoint).LengthSquared();
-				float d2ThingSq = (vP - tP).LengthSquared();
-
-				// 1. SKIP if the mid-texture line is BEHIND the sprite/explosion
 				if (d2LineSq > (d2ThingSq + 16.0f))
 				{
 					isProjectileInFront = true;
@@ -2178,7 +2189,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			float    dist = float((thingpos - DVector3(closest, 0)).XY().Length());
 
 			// Feed the intersection data to the accumulator class (including vector and actor pointers for missile checks)
-			pathData.AccumulateMidTextureFenceData(line, dist, thing, viewer, actualIntersectionPoint, spriteBottom, spriteTop);
+			pathData.AccumulateMidTextureFenceData(line, dist, thing, viewer, actualIntersectionPoint);
 
 			// Fast out if the projectile shortcut bypass triggered
 			if (pathData.isProjectileInFront)
