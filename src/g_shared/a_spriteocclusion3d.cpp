@@ -82,7 +82,7 @@ static bool CheckFrustumCulling(AActor* thing)
 	// Extract the ACTUAL current FOV from the viewpoint
 	// r_viewpoint.FOV is already in degrees, so we don't need to convert
 	float currentFOV = r_viewpoint.FieldOfView.Degrees;
-	float currentFOVenlarged = currentFOV * 1.4f;
+	float currentFOVenlarged = currentFOV * 2.1f;
 
 	// Calculate frustum based on tilt
 	float tilt = fabs(static_cast<float>(r_viewpoint.Angles.Pitch.Degrees));
@@ -1217,6 +1217,8 @@ struct ObstructionData2Sided
 		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
 		float sprTopAdj = spriteTop + Ztolerance2sided;
 
+		//Printf("Viewer Info -> Bottom: %.2f | Top: %.2f | EyeHeight: %.2f | Class: %s\n", viewerBottom, viewerTop, EyeHeight, viewer->GetClass()->TypeName.GetChars());
+
 		const FVector2 clamped =
 		{
 			clamp<float>(point.X, MINCOORD2SIDED, MAXCOORD2SIDED),
@@ -1274,6 +1276,8 @@ struct ObstructionData2Sided
 
 		if (isLegacyProjectile)
 		{
+			// What this block also does is that in case projectile
+			// is exploded in FRONT OF YOU and NOT an obstacle - uncull it too
 			FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
 			FVector2 tP = { (float)thing->X(), (float)thing->Y() };
 
