@@ -1781,7 +1781,7 @@ struct MidTextureFencePathAccumulator
 	}
 
 	void AccumulateMidTextureFenceData(line_t *line, float calculatedDist, AActor* thing, const AActor* viewer,
-												const FVector2& intersectionPoint, float sprBot, float sprTop)
+		const FVector2& intersectionPoint, float sprBot, float sprTop)
 	{
 		// Check both sides to identify if the hit line contains a true mid-texture
 		bool currentLineHasMid = false;
@@ -1789,7 +1789,7 @@ struct MidTextureFencePathAccumulator
 
 		// Should have been done with "AND" but "OR" works better
 		const bool isLegacyVersionProjectile = (thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY)) ||
-												  (thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS));
+			(thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS));
 
 		for (int sideno = 0; sideno < 2; sideno++)
 		{
@@ -1812,7 +1812,7 @@ struct MidTextureFencePathAccumulator
 
 				// === UZDoom way START ================================================================
 				//FGameTexture *gtex = TexMan.GameTexture(midtex);
-				//// Verify that it is a real graphical texture map and not a generic empty node container
+				// Verify that it is a real graphical texture map and not a generic empty node container
 				//if (gtex && gtex->isValid() && gtex->GetTexture() != nullptr && !gtex->GetName().IsEmpty())
 				//{
 				//	currentLineHasMid = true;
@@ -1891,7 +1891,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
 
 	float                   spriteScale = 3.7f;
-	if      (isMicroSprite) spriteScale = 2.5f;
+	if (isMicroSprite) spriteScale = 2.5f;
 	else if (isSmallSprite) spriteScale = 2.0f;
 
 	float effectiveRadius = thing->radius;
@@ -2049,11 +2049,73 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 		if (bx == lastBX && by == lastBY) continue;
 		lastBX = bx; lastBY = by;
 
+		// === STEP 1: RADIAL 3x3 PRE-SCAN FOR MAP19 WINDOW CONTEXT ===
+		// Look around the current block and its neighbors to see if any 2-sided mid-texture exists.
+		// This protects window frames on MAP19 when split across blockmap boundaries.
+		bool nearbyBlockContainsValid2SMidTex = false;
+
+		for (int nx = -1; nx <= 1 && !nearbyBlockContainsValid2SMidTex; nx++)
+		{
+			for (int ny = -1; ny <= 1; ny++)
+			{
+				int targetBX = bx + nx;
+				int targetBY = by + ny;
+
+				if (!level.blockmap.isValidBlock(targetBX, targetBY)) continue;
+				int *checkList = level.blockmap.GetLines(targetBX, targetBY);
+
+				for (int j = 0; checkList[j] != -1; j++)
+				{
+					line_t *checkLine = &level.lines[checkList[j]];
+					if (checkLine && (checkLine->flags & ML_TWOSIDED))
+					{
+						for (int sideno = 0; sideno < 2; sideno++)
+						{
+							if (sideno == 1 && checkLine->backsector == nullptr) continue;
+							if (checkLine->sidedef[sideno] == nullptr) continue;
+
+							FTextureID mtex = checkLine->sidedef[sideno]->GetTexture(side_t::mid);
+							if (mtex.isValid() && mtex.GetIndex() > 0)
+							{
+								// === LZDoom07 way START ==============================================================
+								if (TexMan[mtex])
+								{
+									nearbyBlockContainsValid2SMidTex = true;
+									break;
+								}
+								// === LZDoom07 way FINISH =============================================================
+
+								// === UZDoom way START ================================================================
+								//FGameTexture *gtex = TexMan.GameTexture(mtex);
+								//if (gtex && gtex->isValid() && gtex->GetTexture() != nullptr && !gtex->GetName().IsEmpty())
+								//{
+								//	nearbyBlockContainsValid2SMidTex = true;
+								//	break;
+								//}
+								// === UZDoom way FINISH ===============================================================
+							}
+						}
+					}
+					if (nearbyBlockContainsValid2SMidTex) break;
+				}
+			}
+		}
+
+		// === STEP 2: MAIN SCROLLING LOOP ===
 		int *list = level.blockmap.GetLines(bx, by);
 		for (int i = 0; list[i] != -1; i++)
 		{
 			line_t *line = &level.lines[list[i]];
 			if (!line || line->frontsector == nullptr) continue;
+
+			// THE SMART CONTEXT FILTER: 
+			// If a line is 1-sided (solid world wall), we only allow it to pass if there is 
+			// a 2-sided mid-texture window frame nearby in the 3x3 grid. Otherwise, skip it instantly!
+			const bool isLine1Sided = (line->backsector == nullptr);
+			if (isLine1Sided && !nearbyBlockContainsValid2SMidTex)
+			{
+				continue; // Skip standard solid walls that don't belong to any windows or fences
+			}
 
 			// 9. MULTI-RAY PRECISION OCCLUSION DETECTION WITH VIRTUAL LINEDEF EXTENSION
 			FVector2 lineStart = { (float)line->v1->fX(), (float)line->v1->fY() };
@@ -2075,8 +2137,11 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 
 			// --- 3-RAY FAN GEOMETRY SETUP (RESTORED FOR SHARP GRAZING ANGLES) ---
 			FVector2 sideOffset = { -dir.Y * adjustedRadius * 0.5f, dir.X * adjustedRadius * 0.5f };
+
+			// Explicitly defined as arrays of 3 elements to satisfy constructor specs
 			FVector2 raySources[3] = { viewerPos, viewerPos + sideOffset, viewerPos - sideOffset };
 			FVector2 rayTargets[3] = { thingPos2D, thingPos2D + sideOffset, thingPos2D - sideOffset };
+
 			bool     anyRayHitThisLine = false;
 			FVector2 actualIntersectionPoint = { 0.0f, 0.0f };
 
@@ -2084,6 +2149,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			{
 				FVector2 intersectionPoint;
 				// Check every fan ray intersection with the virtually prolonged line
+				// Passing correct array elements using index matching your vectors.h setup
 				if (LineIntersectsSegment2sided(raySources[r], rayTargets[r], lineStart, lineEnd, intersectionPoint))
 				{
 					anyRayHitThisLine = true;
