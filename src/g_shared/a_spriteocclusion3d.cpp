@@ -2119,13 +2119,29 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			line_t *line = &level.lines[list[i]];
 			if (!line || line->frontsector == nullptr) continue;
 
-			// THE SMART CONTEXT FILTER: 
-			// If a line is 1-sided (solid world wall), we only allow it to pass if there is 
-			// a 2-sided mid-texture window frame nearby in the 3x3 grid. Otherwise, skip it instantly!
+			// THE SMART CONTEXT FILTER (The Near-Viewer 1S Bugfix)
 			const bool isLine1Sided = (line->backsector == nullptr);
-			if (isLine1Sided && !nearbyBlockContainsValid2SMidTex)
+			if (isLine1Sided)
 			{
-				continue; // Skip standard solid walls that don't belong to any windows or fences
+				// If there is no mid-texture context in a 3x3 grid, skip 1S walls immediately (MAP02 specs)
+				if (!nearbyBlockContainsValid2SMidTex) continue;
+
+				// === CRITICAL FIX FOR MAP26 & MAP19 ===
+				// Even if we are near a window context, a 1-sided wall can ONLY be a window frame
+				// if it is close to the target sprite! If the intersection happens right in front 
+				// of the viewer's face, it's just the player's room wall corner. SKIP IT!
+				// We project the vectors to find out the exact intersection point later, 
+				// but we can do a fast ray distance check right here.
+				FVector2 lineStartCheck = { (float)line->v1->fX(), (float)line->v1->fY() };
+				FVector2 lineEndCheck = { (float)line->v2->fX(), (float)line->v2->fY() };
+
+				// Calculate approximate distance from viewer to this 1S line segment
+				// using simple 2D line-to-point math or checking blockmap step 'd'
+				// 'd' is our current distance along the ray scanner!
+				if (d < 144.0f)
+				{
+					continue; // Ignore any 1-sided wall that is within 144 units from the viewer's face
+				}
 			}
 
 			// 9. MULTI-RAY PRECISION OCCLUSION DETECTION WITH VIRTUAL LINEDEF EXTENSION
@@ -2146,13 +2162,22 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 				lineV = lineEnd - lineStart;
 			}
 
-			// --- 3-RAY FAN GEOMETRY SETUP (RESTORED FOR SHARP GRAZING ANGLES) ---
-			FVector2 sideOffset = { -dir.Y * adjustedRadius * 0.5f, dir.X * adjustedRadius * 0.5f };
+			// === DYNAMIC RADIUS EXPANSION FOR FAR-PLCCED SLITS ===
+			// If we are deep along the ray scanner (d >= 144.0f) and handling a 1-sided window frame on MAP19,
+			// we expand the detection radius proportional to the total distance to avoid sub-pixel gaps.
+			float localAdjustedRadius = adjustedRadius;
+			if (isLine1Sided && rayDist > 144.0f)
+			{
+				// Gently increase the ray fan width as the player gets further from the bunker
+				float distanceBonus = rayDist * 0.05f;
+				localAdjustedRadius += clamp(distanceBonus, 0.0f, 14.0f); // Secure clamp to avoid over-culling
+			}
 
-			// Explicitly defined as arrays of 3 elements to satisfy constructor specs
+			// --- 3-RAY FAN GEOMETRY SETUP (RESTORED FOR SHARP GRAZING ANGLES) ---
+			// FIXED: Now uses localAdjustedRadius to expand the fan on far-away MAP19 slits
+			FVector2 sideOffset = { -dir.Y * localAdjustedRadius * 0.5f, dir.X * localAdjustedRadius * 0.5f };
 			FVector2 raySources[3] = { viewerPos, viewerPos + sideOffset, viewerPos - sideOffset };
 			FVector2 rayTargets[3] = { thingPos2D, thingPos2D + sideOffset, thingPos2D - sideOffset };
-
 			bool     anyRayHitThisLine = false;
 			FVector2 actualIntersectionPoint = { 0.0f, 0.0f };
 
