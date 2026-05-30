@@ -1155,15 +1155,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			lastLevelMaptime = level.maptime;
 		}
 
-		// Define distance constants properly
-		const float FP_CLOSER_LIMIT = 384.0f;            // Where Forced-Perspective coordinates without lift-up end (close-up)
-		const float SMART_START_DISTANCE = 1200.0f;       // Where Smart-clip starts coordinates start to lift-up (far-side)
-		const float TRANSITION_WIDTH = SMART_START_DISTANCE - FP_CLOSER_LIMIT;    // Length of transition
-
-		// Get the viewpoint from the current draw context that helped to reduce leaks
-		const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to GZDoom v4.14.2
-
 		// Determine sprite classification
+		float spriteRadius = (float)thing->radius;
+		float spriteSize = (thing->radius + thing->Height) * 0.5f;
+		bool isMicroSprite = (spriteSize <= 8.0f && spriteSize < 12.0f);
+		bool isTinySprite = (spriteSize <= 12.0f && spriteSize < 18.0f);
+		bool isSmallSprite = (spriteSize <= 18.0f);
+		bool isMediumSprite = (spriteSize > 18.0f && spriteSize < 38.0f);
+		bool isLargeSprite = (spriteSize > 38.0f);
+
 		bool islegacyversionprojectile =
 			(thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
 			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
@@ -1180,9 +1180,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			(thing->flags2 & MF2_PASSMOBJ) && (thing->flags3 & MF3_ISMONSTER) &&
 			(thing->flags & MF_FLOAT || thing->flags & MF_INFLOAT);
 		bool isfloatingsprite = (thing->flags & MF_FLOAT || thing->flags & MF_INFLOAT);
+		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
+		bool isactorsmallbutnotcorpse = (spriteSize >= 8.0f && spriteSize <= 18.0f) && !isactoracorpse;
+		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
+		bool isabonusitem = ((spriteSize >= 16.0f && spriteSize <= 25.0f) &&
+			(!islegacyversionmonster || !isfloatingsprite || !isactoracorpse));
 
 
-		// An attempt to detect whether Y-axis sprite offset significant enough to cross the ground
+		// ~~~*** Detect if Y-axis sprite offset significant enough to cross the ground - START ***~~~
+		// === LZDoom07 way - START ===================================================================
 		int spriteFileOffset = 0;      // Blank rows at top of texture (from file)
 		int spriteRasterXdimen = 0;    // Total texture width (including blank columns)
 		int spriteRasterYdimen = 0;    // Total texture height (including blank rows)
@@ -1190,7 +1196,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		if (gltexture && gltexture->tex)
 		{
 			FTexture* tex = gltexture->tex;
-
 			// we get scaled dim because they can be hires
 			spriteRasterXdimen = tex->GetScaledWidth();
 			spriteRasterYdimen = tex->GetScaledHeight();
@@ -1202,189 +1207,68 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			//Printf("Sprite '%s': ""FileH=%dpx | ""TopOff=%dpx | ""VisibleH=%dpx | ""SigNegOffset=%s",
 			//	tex->Name.GetChars(),spriteRasterYdimen, spriteFileOffset,visibleSpriteHeight,hasSignificantNegativeOffset ? "YES" : "NO");
 		}
+		// === LZDoom07 way - FINISH===================================================================
+		// === UZDoom way - START =====================================================================
+		//int  spriteFileOffset             = 0; // Blank rows at top of texture (from file)
+		//int  spriteRasterXdimen           = 0; // Total texture width (including blank columns)
+		//int  spriteRasterYdimen           = 0; // Total texture height (including blank rows)
+		//bool hasSignificantNegativeOffset = false;
+		//FGameTexture *gtex                         = nullptr;
+		//
+		//	// First, check for a direct texture override (picnum)
+		//if (thing->picnum.isValid())
+		//{
+		//	gtex = TexMan.GetGameTexture(thing->picnum);
+		//}
+		//else
+		//{
+		//	// In UZDoom, sprites are handled by the Texture Manager using their ID and frame.
+		//	// We fetch the game texture using the sprite index and frame from the actor.
+		//	// thing->sprite is the sprite ID, thing->frame is the frame index.
+		//	gtex = TexMan.GameByIndex(thing->sprite, true); // true for animation check
+		//}
+		//
+		//if (gtex)
+		//{
+		//	// Access the underlying FTexture object
+		//	FTexture *tex = gtex->GetTexture();
+		//
+		//	if (tex)
+		//	{
+		//		// GetScaledWidth/Height automatically account for Scale.X/Scale.Y
+		//		spriteRasterXdimen = tex->GetScaledWidth();
+		//		spriteRasterYdimen = tex->GetScaledHeight();
+		//		// GetScaledTopOffset replaces the old public TopOffset field
+		//		spriteFileOffset = tex->GetScaledTopOffset();
+		//		// Calculate visible sprite height (actual drawn pixels)
+		//		int visibleSpriteHeight      = spriteRasterYdimen - spriteFileOffset;
+		//		hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
+		//		// Debug output to verify dimensions
+		//		// Printf("Sprite Resolve: %s | RasterH: %d | TopOff: %d | Visible: %d\n",
+		//		//       tex->Name.GetChars(), spriteRasterYdimen,
+		//		//       spriteFileOffset, visibleSpriteHeight);
+		//	}
+		//}
+		// === UZDoom way - FINISH ====================================================================
+		// ~~~*** Detect if Y-axis sprite offset significant enough to cross the ground - FINISH ***~~~
 
-		float spriteSize = (thing->radius + thing->Height) * 0.5f;
-		bool isMicroSprite = (spriteSize <= 8.0f && spriteSize < 12.0f);
-		bool isTinySprite = (spriteSize <= 12.0f && spriteSize < 18.0f);
-		bool isSmallSprite = (spriteSize <= 18.0f);
-		bool isMediumSprite = (spriteSize > 18.0f && spriteSize < 38.0f);
-		bool isLargeSprite = (spriteSize > 38.0f);
-		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
-		bool isactorsmallbutnotcorpse = (spriteSize >= 8.0f && spriteSize <= 18.0f) && !isactoracorpse;
-		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
-		bool  isabonusitem = ((spriteSize >= 16.0f && spriteSize <= 25.0f) &&
-			(!islegacyversionmonster || !isfloatingsprite || !isactoracorpse));
-
-		// Make sure all 1sided checks and MidTxt checks do NOT have FOV(Frustum Culling) and 2sided - HAVE them instead
-		bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
-		bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
-		bool thingCrossed1sVoidLine = SpriteCrossed1sidedVoidLinedefCachedWrapper(thing, r_viewpoint.camera);
-		bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
-		bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
-		bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
-		bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
-		bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, thing);
-		bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
-
-		// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
-		// That's why get viewer from renderer context instead of function parameters
-		AActor* viewer = r_viewpoint.camera;
-		float EyeHeight = 41.0f;
-		if (viewer->player && viewer->player->mo)
+		// =*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*
+		// ******* REGULAR FP sprite projecting routine for SMALL NONCORPSE sprites OPTIMIZATION START *******
+		// Use simple Forced-Perspective without occlusion checks and smart clipping for sprites that
+		// are smaller than 8 units, and that are not corpses, not monsters and not projectiles (explosions)
+		// AND if their raster graphical size is indeed small
+		const bool useRegularForcedPerspective(spriteRadius <= 8.0f &&
+				         (!isactoracorpse || !islegacyversionmonster || !islegacyversionprojectile) &&
+		( (spriteRasterXdimen <= 24 && spriteRasterYdimen <= 24) || !hasSignificantNegativeOffset)  );
+		if (useRegularForcedPerspective)
 		{
-			EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
-		}
+			float minbias = r_spriteclipanamorphicminbias;
+			minbias = clamp(minbias, 0.3f, 1.0f);
 
-		float viewerBottom = viewer->Z();
-		float viewerTop = viewerBottom + EyeHeight;
-		float spriteBottom = thing->Z();
-		float spriteTop = thing->Top();
-		float sprLowerMid = (spriteBottom + (spriteTop * 0.25f));
-		float sprLowerMidAdj = sprLowerMid + Ztolerance2sided;
-		float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
-		float viewerTopAdj = viewerTop + Ztolerance2sided;
-		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
-		float sprTopAdj = spriteTop + Ztolerance2sided;
-
-		// -------------
-		// Some mods have big looking sprites with little radius-or-height
-		// we need to adjust them to have a nice anamorphosis effect (increase it)
-		if ((spriteRasterXdimen >= (thing->radius)) || (spriteRasterYdimen >= (thing->Height)))
-		{
-			if (isMicroSprite)
-			{
-				if (spriteRasterXdimen >= 64.0f || spriteRasterYdimen >= 64.0f)
-				{
-					// handle bigger sized sprites first
-					spriteSize = 4.8f;
-				}
-				else
-				{
-					spriteSize = 2.12f;
-				}
-			}
-			else if (isTinySprite)   { spriteSize += 1.0f; }
-			else if (isSmallSprite)  { spriteSize += 1.2f; }
-			else if (isMediumSprite) { spriteSize += 2.4f; }
-			else                     { spriteSize *= 1.1f; }
-		}
-		// -------------
-
-		// -------------
-		// We'll have to limit spriteSize to minimize the leaks unfortunately
-		if (spriteSize >= 44.0f)
-		{
-			spriteSize = 44.0f;
-		}
-		// -------------
-
-		// -------------
-		// Too many leaks through 2sided obstructions because even default sprite sizes
-		// are too big and cross the linedefs, making them invisible to detection systems.
-		// In this case, we must decrease their sprite sizes to make them reasonable sizes.
-		if (!visible2sideTallEnoughObstr)
-		{   spriteSize *= 0.5f;  }
-		// -------------
-
-		// -------------
-		// Some sprites like torches can still leak through
-		// thin 2sided walls, especially, if they cross those linedefs
-		if ( (!visible2sideTallEnoughObstr || !visible3dfloorSides) && thingCrossed2sidedLine )
-		{
-			spriteSize *= 0.64f;
-		}
-		// -------------
-
-		// Initialize spriteSize factors here for them
-		// to be visible in this entire sprite clipping mode scope
-		float smallsprtncrps_factor = 1.0f;
-		float projectiles_factor = 1.0f;
-		float regularsizmonster_factor1 = 1.0f;
-
-		float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
-		float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
-
-		DVector3 thingpos3D(thingpos.X, thingpos.Y, z);
-		float distSq = (thingpos3D - r_viewpoint.Pos).LengthSquared();
-		float dist = sqrt(distSq);
-
-		// Calculate blend properly
-		float blend = 0.f;
-
-		// With additional culling mechanism coplanar leaks already reduced
-		// But we can disable Forced-Perspective for floating sprites entirely
-		// but only for those whose Y-axis sprite offset doesn't cross ground at all.
-		if (isfloatingsprite && !hasSignificantNegativeOffset)
-		{
-			// Force smart mode for floating sprites and things crossing 1sided-linedefs
-			blend = 1.0f;
-		}
-		else
-		{
-			// If we're in the transition zone between forced and normal perspective
-			if (dist > FP_CLOSER_LIMIT && dist < SMART_START_DISTANCE)
-			{
-				blend = (dist - FP_CLOSER_LIMIT) / TRANSITION_WIDTH;
-			}
-			// If we're beyond the transition zone, use normal perspective
-			else if (dist >= SMART_START_DISTANCE)
-			{
-				blend = 1.0f;
-			}
-
-			// Special handling for projectiles and small sprites (except corpses): force forced-perspective
-			if (islegacyversionprojectile || isactorsmallbutnotcorpse)
-			{
-				blend = 0.f;
-			}
-		}
-
-		// Clamp to ensure it's within [0,1] range
-		blend = clamp<float>(blend, 0.f, 1.f);
-
-		// Store original coordinates
-		float orig_x1 = x1, orig_y1 = y1, orig_z1 = z1;
-		float orig_x2 = x2, orig_y2 = y2, orig_z2 = z2;
-
-		// Calculate smart clipping values
-		float smart_x1 = orig_x1, smart_y1 = orig_y1, smart_z1 = orig_z1;
-		float smart_x2 = orig_x2, smart_y2 = orig_y2, smart_z2 = orig_z2;
-
-		// Only calculate smart clipping for non-special cases
-		if (blend > 0.f && !islegacyversionprojectile && !isactorsmallbutnotcorpse)
-		{
-			// Save original coordinates
-			float temp_x1 = orig_x1, temp_y1 = orig_y1, temp_z1 = orig_z1;
-			float temp_x2 = orig_x2, temp_y2 = orig_y2, temp_z2 = orig_z2;
-
-			if ( (isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
-			{
-				// Perform smart clip but don't raise for the cases above
-				PerformSpriteClipAdjustment(thing, thingpos, 0.0);
-			}
-			else
-			{
-				// Perform smart clip on original coordinates
-				PerformSpriteClipAdjustment(thing, thingpos, 0.0);
-				smart_x1 = x1; smart_y1 = y1; smart_z1 = z1;
-				smart_x2 = x2; smart_y2 = y2; smart_z2 = z2;
-			}
-
-			// Restore original coordinates for forced perspective calculation
-			x1 = temp_x1; y1 = temp_y1; z1 = temp_z1;
-			x2 = temp_x2; y2 = temp_y2; z2 = temp_z2;
-		}
-
-		// Only apply forced perspective if blend < 1.0 and NOT a floating sprite
-		if (blend < 1.f)
-		{
-			float minbias = clamp<float>(r_spriteclipanamorphicminbias, 0.1f, 0.5f);
-
-			// ======= Forced-Perspective Anamorphic sprite projecting routine START =======
-
-			// we still got leaks when viewer is situtated at extremely steep angles to sprites
-			// even through 1-sided walls, which we could try to hack by adding z-tolerance
-			// but not even like that, when viewer middle is within vertical bounds of sprite
+			// Get the viewpoint from the current draw context
+			const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to how GZDoom v4.14.2
+			// and that helped to reduce leaks, the olny difference from original sprite cliping mode of
+			// Forced-Perspective is that it's 3DFloor aware
 
 			// Regular and 3D Floor-Aware Heights
 			float btm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing) - thing->Floorclip;
@@ -1393,234 +1277,33 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float vbtm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
 			float vtop = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
 
+			float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
+			float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
 
-			//     === Dynamic anamorphosis occlusion based amount effect adjustment - START ===
-			// ---===============================================================================---
-			// Some HUGE leaks still occur through 2sided obstructions if we're too close. It's
-			//   because we set our anamorphosis radius amounts too big for them to penetrate flats
-			//   even as we step farther from them. But what to do when we're too close?
-			// Pay attention that even with huge anamorphosis radiuses these leaks go away.
-			// Conclusion: decrease anamorphosis radius when sprite is closer because when we close
-			//   even a smaller radius anamorphosis amount is enough to provide a good effect.
-			//   also pay attention we decrease radius only on viewer and sprite coplanar situtations!
-
-			float sprPrxFctr = 1.0f;
-			float sprPrxFctrProj = 1.0f;
-			float sprPrxDistThresh = 674.0f;
-
-			const float invSprPrxDistThresh = 1.0f / sprPrxDistThresh;
-
-			// 1. Close-up coplanar mitigation loop
-			if ((dist < sprPrxDistThresh) && (fabs(btm - vbtm) <= Ztolerance2sided || fabs(btm - vtop) <= Ztolerance2sided))
+			// Radius-based bias (disable with r_debug_nolimitanamorphoses) - prevents leaks
+			if (!r_debug_nolimitanamorphoses)
 			{
-				float distProgress = dist * invSprPrxDistThresh; // Celeron-friendly fast multiplication!
-				sprPrxFctr = 0.075f + (0.25f - 0.075f) * distProgress;
-				sprPrxFctrProj = sprPrxFctr; // Sync close-up behavior
+				float objradius = thing->radius;
+				float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+				float objradiusbias = 1.f - objradius / sqrt(distsq);
+				minbias = MAX(minbias, objradiusbias);
 			}
 
-			// 2. DISTANT HORIZON BLIND-ZONE INTERCEPTOR (Small Items)
-			if (dist >= sprPrxDistThresh && isactorsmallbutnotcorpse)
-			{
-				if (fabs(vpz - btm) < 128.0f)
-				{
-					sprPrxFctr = 0.15f; // Force-clamp the expansion hull for items on flat views
-				}
-			}
-
-			smallsprtncrps_factor = 3.4f * (sprPrxFctr * 15.0f);
-			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
-			                              smallsprtncrps_factor = 1.0f;
-			else if (!visible2sideMidTex) smallsprtncrps_factor = 0.25f;
-
-			projectiles_factor = 8.0f;
-			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
-			                              projectiles_factor = 1.0f;
-			else if (!visible2sideMidTex) projectiles_factor = 0.25f;
-
-			regularsizmonster_factor1 = 3.64f * (sprPrxFctr * 3.0f);
-			if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
-				                          regularsizmonster_factor1 = 1.0f;
-			else if (!visible2sideMidTex) regularsizmonster_factor1 = 0.25f;
-
-			float regularsizmonster_factor2 = (isaregularsizedmonster) ?
-				regularsizmonster_factor1 :
-				regularsizmonster_factor1 * 4.0f;
-
-			float extended_radius1 = (isactorsmallbutnotcorpse) ?
-				spriteSize * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 1.0 ocl, 0.025 super occluded
-				spriteSize;                              // 1x for all the rest sprites
-			float extended_radius2 = (islegacyversionprojectile) ?
-				extended_radius1 * projectiles_factor :  // 16x for projectiles like rockets, explosions and 6x when occluded
-				extended_radius1;                        // 1x for all the rest sprites
-			// ---===============================================================================---
-			//     === Dynamic anamorphosis occlusion based amount effect adjustment - FINISH ===
-
-
-			//					=== Anamorphosis culling pass 1 - START ===
-			float spriteRadius = (float)thing->radius;
-			float radius_for_bias = 0.0f;
-
-			// Crucial for "thingCrossed1sVoidLine" to be here
-			// otherwise it gets useless below (while it's also needed there as OR in "CrossedAnyWall")
-			if (thingCrossed1sVoidLine || !visible1sidesInfTallObstr || !visible2sideMidTex)
-			{
-				// Regular Forced-Perspective way
-				radius_for_bias = spriteRadius;
-				regularsizmonster_factor2 = 0.75f;
-			}
-			else if (isactorsmallbutnotcorpse || islegacyversionprojectile)
-			{
-				radius_for_bias = extended_radius2;
-			}
-			else
-			{
-				radius_for_bias = spriteSize;
-			}
-
-			if (!(r_debug_nolimitanamorphoses))
-			{
-				float distsqAnam = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
-				float distAnam = sqrt(distsqAnam);
-
-				if (distAnam > 0.1f)
-				{
-					// Use the monsterfactors for monster and if not - pure radius
-					float currentFactor = (isaregularsizedmonster) ? regularsizmonster_factor2 : 1.0f;
-					float objradiusbias = 1.f - (radius_for_bias * currentFactor) / distAnam;
-					minbias = MAX(minbias, objradiusbias);
-				}
-			}
-			//					=== Anamorphosis culling pass 1 - FINISH ===
-
-			// void detection is still important for "CrossedAnyWall" besides it was already used in "Anamorphosis culling pass 1"
-			bool CrossedAnyWall = thingCrossed1sVoidLine || thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
-			// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
-			bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
-
-			//		=== The pass 2 agressive culling core process - START ===
-			// this pass 2 makes stuff like "increaseAnam" to leak way less
-			if (!isSpriteNOTObstructed && !islegacyversionprojectile)
-			{
-				const float planeProximThresh = 4.0f;
-				float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
-				float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);
-
-				bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
-				bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
-
-				bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
-				bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
-
-				if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
-				{
-				}
-				else
-				{
-					if (!r_debug_nolimitanamorphoses)
-					{
-						float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
-						float objradiusbias = 1.f - spriteSize / sqrt(distsq);
-						minbias = MAX(minbias, objradiusbias);
-					}
-				}
-			}
-			//		=== The pass 2 agressive culling core process - FINISH ===
-
-			//					=== Anamorphosis final culling pass - START ===
 			float bintersect, tintersect;
-			if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
-			else bintersect = 1.0f;
-			if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
-			else tintersect = 1.0f;
-			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
+			if (z2 < vpz && vbtm < vpz)		bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
+			else							bintersect = 1.0;
 
-			//                |---------------------------------------------------|
-			//		 ---***===|		CRAZY STEEP ANAMORPHOSIS PROCESS - START	  |===***---
-			//                |---------------------------------------------------|
-			// if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall) increaseAnam = 0.125f;
-			// 0.125 looks good but leaks farther away you go, 0.09 doesn't leak that much but looks worse when close to a sprite
-			// so we need to decrease "increaseAnam" from 0.125 to 0.0 smoothly as the distance exceeds minAnamDist (384.0f)
-			//
-			// -------------------- COMPUTE STEEP FACTOR |-> START|
-			bool  isonsteepsurf;
-			float STEEPNESS = 5.25f; // detect only very steep surfaces
-			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), STEEPNESS);
-			isonsteepsurf = steepnessfact > 0.0001f;
-			// -------------------- THE MULTIPLIER SETUP |-> START|
-			// -- PHASE #1 - determine maximum effect amounts
-			float increaseAnam = 0.0f; // The higher the more the anamorphosis effect is but more leaks
-			float incrAnamMaximum = 0.0f; // Bigger sprites need lesser "increaseAnam" amounts, otherwise they leak more
-			if (CrossedAnyWall)
-			{
-				// Must be done this way, otherwise leaks more
-				incrAnamMaximum = 0.0f; // the culled out case
-			}
-			else
-			{
-				// the visible case
-				if (isabonusitem) incrAnamMaximum = 0.175f;   // Bigger amount for small but NOT smaller than bonus
-				else              incrAnamMaximum = 0.075f;   // Smaller amount for all the rest sprites
-			}
-			// -- PHASE #2 - determine the distant effect amount fade
-			if ((dist < 1200.0f) && isonsteepsurf)
-			{
-				const float minAnamDist = 384.0f;             // Max effect in this zone
-				const float maxAnamDist = 1200.0f;            // Full effect fade here
-				const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
-				if (dist <= minAnamDist)
-				{
-					increaseAnam = incrAnamMaximum;           // Full power
-				}
-				else
-				{
-					float fadeFactor = 1.0f - ((dist - minAnamDist) * max2minAnamDistDiffInv);
-					// Prevent it from becoming negative
-					if (fadeFactor < 0.0f) fadeFactor = 0.0f;
-					increaseAnam = incrAnamMaximum * fadeFactor;
-				}
-			}
-			// -- PHASE #3 - setup the suppression multiplier (decreaseAnam)
-			float spbias = 0.0f;       // initialize the variable
-			float decreaseAnam = 0.0f; // initialize the variable
-			// Decrease anamorphosis when sprites are culled by 1s+void or 2s lines,void is now facing
-			if (thingCrossed1sVoidLine && !isSpriteNOTObstructed)
-			{
-				// Values lower aren't sufficient to suppress leaks on big radii sprites like
-				// small sprites - health bonus, torches, etc with increased radii not to fade in far
-				decreaseAnam = 0.075f;
-			}
-			else if (thingCrossed2sidedLine || !isSpriteNOTObstructed)
-			{
-				// Values lower aren't sufficient to suppress leaks on big radii sprites like
-				// small sprites - health bonus, torches, etc with increased radii not to fade in far
-				decreaseAnam = 0.015f;
-			}
-			// -------------------- THE MULTIPLIER SETUP |-> FINISH|
-			// ---------PERFORM CRAZY STEEP ANAMORPHOSIS |->  START|
-			// Make sure your 1s, midtxt checks do NOT have FOV check and 2s, 3df - do HAVE it
-			if (CrossedAnyWall)
-			{
-				// Some items like torches still leak through walls if put really close.
-				// Yes, it's safe to summ "decreaseAnam" here because it cuts anamorphosis anyway
-				spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) + decreaseAnam;
-			}
-			else
-			{
-				// Just putting "- increaseAnam" already makes it leak SO much thus separated.
-				// This mode is required to make sprites to draw through flats like crazy.
-				// No it's NOT safe to subtract "increaseAnam" here on clamp but we got it CULLED
-				// and leaks only occur where we need them (DONE ON PURPOSE).
-				spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
-			}
+			if (z1 > vpz && vtop > vpz)		tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
+			else							tintersect = 1.0;
+
+			if (thing->waterlevel >= 1 && thing->waterlevel <= 2)					bintersect = tintersect = 1.0f;
+
+			float spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f);
 			float vpbias = 1.0 - spbias;
-			// --------PERFORM CRAZY STEEP ANAMORPHOSIS |->  FINISH|
-			//                |---------------------------------------------------|
-			//		 ---***===|		CRAZY STEEP ANAMORPHOSIS PROCESS - FINISH	  |===***---
-			//                |---------------------------------------------------|
 
-			//					=== Anamorphosis final culling pass - FINISH ===
+			bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
 
-			// Apply projection distortion using original vp method only if not obstructed by a 3DFloor above or below
+			// Apply projection distortion using original vp method
 			if (!a3DfloorPlaneObstructed)
 			{
 				x1 = x1 * spbias + vpx * vpbias;
@@ -1631,49 +1314,524 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				z2 = z2 * spbias + vpz * vpbias;
 			}
 
-			// ======= Forced-Perspective Anamorphic sprite projecting routine FINISH =======
+			// Anamorphic sprite overbright correction
+			float sprSizeLight = (thing->radius + thing->Height) * 0.5f;
+			if (sprSizeLight >= 36.0f) sprSizeLight = 36.0f; // clamp sprSizeLight
+			float original_z1 = nonanam_z1;
+			float original_z2 = nonanam_z2;
+			// Calculate the deltas (offsets)
+			// Clamp them to prevent negative depth correction
+			nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * 0.55f));
+			nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * 0.55f));
+			// Output to the engine console
+			// %f - float, %.2f - float with 2 decimal points
+			//Printf("Sprite [%s]: Orig Z1: %.2f, Z2: %.2f | Delta Z1: %.2f, Z2: %.2f\n", 
+			//	thing->GetClass()->TypeName.GetChars(), original_z1, original_z2, nonanam_z1, nonanam_z2);
+			// ******* REGULAR FP sprite projecting routine for SMALL NONCORPSE sprites OPTIMIZATION FINISH*******
+			// =*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*
 		}
-
-		// Store forced-perspective adjusted positions
-		float fp_x1 = x1, fp_y1 = y1, fp_z1 = z1;
-		float fp_x2 = x2, fp_y2 = y2, fp_z2 = z2;
-
-		// Apply blending based on distance
-		if (!islegacyversionprojectile && !isactorsmallbutnotcorpse)
+		else
 		{
-			if (blend > 0.f && blend < 1.f)
+			// Define distance constants properly
+			const float FP_CLOSER_LIMIT = 384.0f;            // Where Forced-Perspective coordinates without lift-up end (close-up)
+			const float SMART_START_DISTANCE = 1200.0f;       // Where Smart-clip starts coordinates start to lift-up (far-side)
+			const float TRANSITION_WIDTH = SMART_START_DISTANCE - FP_CLOSER_LIMIT;    // Length of transition
+
+			// Get the viewpoint from the current draw context that helped to reduce leaks
+			const DVector3 &vp = r_viewpoint.Pos; // defining that way is closer to GZDoom v4.14.2
+
+			// Make sure all 1sided checks and MidTxt checks do NOT have FOV(Frustum Culling) and 2sided - HAVE them instead
+			bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
+			bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
+			bool thingCrossed1sVoidLine = SpriteCrossed1sidedVoidLinedefCachedWrapper(thing, r_viewpoint.camera, false);
+			bool thingCrossed1sVoidBbox = SpriteCrossed1sidedVoidBboxFaceCachedWrapper(thing, r_viewpoint.camera, true);
+			bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
+			bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
+			bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
+			bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
+			bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, thing);
+			bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
+
+			// Adding "AActor* viewer" to "GLSprite::Process" signature would be a pain
+			// That's why get viewer from renderer context instead of function parameters
+			AActor* viewer = r_viewpoint.camera;
+			float EyeHeight = 41.0f;
+			if (viewer->player && viewer->player->mo)
 			{
-				// Blend between forced and smart clipping for ALL coordinates
-				x1 = fp_x1 * (1 - blend) + smart_x1 * blend;
-				y1 = fp_y1 * (1 - blend) + smart_y1 * blend;
-				z1 = fp_z1 * (1 - blend) + smart_z1 * blend;
-				x2 = fp_x2 * (1 - blend) + smart_x2 * blend;
-				y2 = fp_y2 * (1 - blend) + smart_y2 * blend;
-				z2 = fp_z2 * (1 - blend) + smart_z2 * blend;
+				EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
 			}
-			else if (blend >= 1.f)
+
+			float viewerBottom = viewer->Z();
+			float viewerTop = viewerBottom + EyeHeight;
+			float spriteBottom = thing->Z();
+			float spriteTop = thing->Top();
+			float sprLowerMid = (spriteBottom + (spriteTop * 0.25f));
+			float sprLowerMidAdj = sprLowerMid + Ztolerance2sided;
+			float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
+			float viewerTopAdj = viewerTop + Ztolerance2sided;
+			float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
+			float sprTopAdj = spriteTop + Ztolerance2sided;
+
+			// -------------
+			// Some mods have big looking sprites with little radius-or-height
+			// we need to adjust them to have a nice anamorphosis effect (increase it)
+			if ((spriteRasterXdimen >= (thing->radius)) || (spriteRasterYdimen >= (thing->Height)))
 			{
-				// Apply full smart clipping when blend = 1.0
-				x1 = smart_x1; y1 = smart_y1;
-				z1 = smart_z1; x2 = smart_x2;
-				y2 = smart_y2; z2 = smart_z2;
+				if (isMicroSprite)
+				{
+					if (spriteRasterXdimen >= 64.0f || spriteRasterYdimen >= 64.0f)
+					{
+						// handle bigger sized sprites first
+						spriteSize = 4.8f;
+					}
+					else
+					{
+						spriteSize = 2.12f;
+					}
+				}
+				else if (isTinySprite) { spriteSize += 1.0f; }
+				else if (isSmallSprite) { spriteSize += 1.2f; }
+				else if (isMediumSprite) { spriteSize += 2.4f; }
+				else { spriteSize *= 1.1f; }
 			}
+			// -------------
+
+			// -------------
+			// We'll have to limit spriteSize to minimize the leaks unfortunately
+			if (spriteSize >= 44.0f)
+			{
+				spriteSize = 44.0f;
+			}
+			// -------------
+
+			// -------------
+			// Too many leaks through 2sided obstructions because even default sprite sizes
+			// are too big and cross the linedefs, making them invisible to detection systems.
+			// In this case, we must decrease their sprite sizes to make them reasonable sizes.
+			if (!visible2sideTallEnoughObstr)
+			{
+				spriteSize *= 0.5f;
+			}
+			// -------------
+
+			// -------------
+			// Some sprites like torches can still leak through
+			// thin 2sided walls, especially, if they cross those linedefs
+			if ((!visible2sideTallEnoughObstr || !visible3dfloorSides) && thingCrossed2sidedLine)
+			{
+				spriteSize *= 0.64f;
+			}
+			// -------------
+
+			// Initialize spriteSize factors here for them
+			// to be visible in this entire sprite clipping mode scope
+			float smallsprtncrps_factor = 1.0f;
+			float projectiles_factor = 1.0f;
+			float regularsizmonster_factor1 = 1.0f;
+			float regularsizmonster_factor2 = 1.0f;
+			float extended_radius2 = 1.0f;
+
+			float vpx = vp.X; float vpy = vp.Y; float vpz = vp.Z;
+			float tpx = thingpos.X; float tpy = thingpos.Y; float tpz = z; // Use 'z' from sprite setup
+
+			DVector3 thingpos3D(thingpos.X, thingpos.Y, z);
+			float distSq = (thingpos3D - r_viewpoint.Pos).LengthSquared();
+			float dist = sqrt(distSq);
+
+			// Calculate blend properly
+			float blend = 0.f;
+
+			// With additional culling mechanism coplanar leaks already reduced
+			// But we can disable Forced-Perspective for floating sprites entirely
+			// but only for those whose Y-axis sprite offset doesn't cross ground at all.
+			if (isfloatingsprite && !hasSignificantNegativeOffset)
+			{
+				// Force smart mode for floating sprites and things crossing 1sided-linedefs
+				blend = 1.0f;
+			}
+			else
+			{
+				// If we're in the transition zone between forced and normal perspective
+				if (dist > FP_CLOSER_LIMIT && dist < SMART_START_DISTANCE)
+				{
+					blend = (dist - FP_CLOSER_LIMIT) / TRANSITION_WIDTH;
+				}
+				// If we're beyond the transition zone, use normal perspective
+				else if (dist >= SMART_START_DISTANCE)
+				{
+					blend = 1.0f;
+				}
+
+				// Special handling for projectiles and small sprites (except corpses): force forced-perspective
+				if (islegacyversionprojectile || isactorsmallbutnotcorpse)
+				{
+					blend = 0.f;
+				}
+			}
+
+			// Clamp to ensure it's within [0,1] range
+			blend = clamp<float>(blend, 0.f, 1.f);
+
+			// Store original coordinates
+			float orig_x1 = x1, orig_y1 = y1, orig_z1 = z1;
+			float orig_x2 = x2, orig_y2 = y2, orig_z2 = z2;
+
+			// Calculate smart clipping values
+			float smart_x1 = orig_x1, smart_y1 = orig_y1, smart_z1 = orig_z1;
+			float smart_x2 = orig_x2, smart_y2 = orig_y2, smart_z2 = orig_z2;
+
+			// Only calculate smart clipping for non-special cases
+			if (blend > 0.f && !islegacyversionprojectile && !isactorsmallbutnotcorpse)
+			{
+				// Save original coordinates
+				float temp_x1 = orig_x1, temp_y1 = orig_y1, temp_z1 = orig_z1;
+				float temp_x2 = orig_x2, temp_y2 = orig_y2, temp_z2 = orig_z2;
+
+				if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
+				{
+					// Perform smart clip but don't raise for the cases above
+					PerformSpriteClipAdjustment(thing, thingpos, 0.0);
+				}
+				else
+				{
+					// Perform smart clip on original coordinates
+					PerformSpriteClipAdjustment(thing, thingpos, 0.0);
+					smart_x1 = x1; smart_y1 = y1; smart_z1 = z1;
+					smart_x2 = x2; smart_y2 = y2; smart_z2 = z2;
+				}
+
+				// Restore original coordinates for forced perspective calculation
+				x1 = temp_x1; y1 = temp_y1; z1 = temp_z1;
+				x2 = temp_x2; y2 = temp_y2; z2 = temp_z2;
+			}
+
+			// Only apply forced perspective if blend < 1.0 and NOT a floating sprite
+			if (blend < 1.f)
+			{
+				float minbias = clamp<float>(r_spriteclipanamorphicminbias, 0.1f, 0.5f);
+
+				// ======= Forced-Perspective Anamorphic sprite projecting routine START =======
+
+				// we still got leaks when viewer is situtated at extremely steep angles to sprites
+				// even through 1-sided walls, which we could try to hack by adding z-tolerance
+				// but not even like that, when viewer middle is within vertical bounds of sprite
+
+				// Regular and 3D Floor-Aware Heights
+				float btm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing) - thing->Floorclip;
+				float top = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, thingpos, thing);
+				// Viewer's actual heights (from their sector and 3D floors)
+				float vbtm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
+				float vtop = GetActualSpriteCeilingZ3DfloorsAndOther(thing->Sector, r_viewpoint.Pos, thing);
+
+
+				//     === Dynamic anamorphosis occlusion based amount effect adjustment - START ===
+				// ---===============================================================================---
+				// Some HUGE leaks still occur through 2sided obstructions if we're too close. It's
+				//   because we set our anamorphosis radius amounts too big for them to penetrate flats
+				//   even as we step farther from them. But what to do when we're too close?
+				// Pay attention that even with huge anamorphosis radiuses these leaks go away.
+				// Conclusion: decrease anamorphosis radius when sprite is closer because when we close
+				//   even a smaller radius anamorphosis amount is enough to provide a good effect.
+				//   also pay attention we decrease radius only on viewer and sprite coplanar situtations!
+				float sprPrxFctr = 1.0f;
+				float sprPrxFctrProj = 1.0f;
+				float sprPrxDistThresh = 674.0f;
+
+				const float invSprPrxDistThresh = 1.0f / sprPrxDistThresh;
+
+				// 1. Close-up coplanar mitigation loop
+				if ((dist < sprPrxDistThresh) && (fabs(btm - vbtm) <= Ztolerance2sided || fabs(btm - vtop) <= Ztolerance2sided))
+				{
+					float distProgress = dist * invSprPrxDistThresh; // Celeron-friendly fast multiplication!
+					sprPrxFctr = 0.075f + (0.25f - 0.075f) * distProgress;
+					sprPrxFctrProj = sprPrxFctr; // Sync close-up behavior
+				}
+
+				// 2. DISTANT HORIZON BLIND-ZONE INTERCEPTOR (Small Items)
+				if (dist >= sprPrxDistThresh && isactorsmallbutnotcorpse)
+				{
+					if (fabs(vpz - btm) < 128.0f)
+					{
+						sprPrxFctr = 0.15f; // Force-clamp the expansion hull for items on flat views
+					}
+				}
+
+				smallsprtncrps_factor = 3.4f * (sprPrxFctr * 15.0f);
+				if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
+					smallsprtncrps_factor = 1.0f;
+				else if (!visible2sideMidTex) smallsprtncrps_factor = 0.25f;
+
+				projectiles_factor = 8.0f;
+				if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
+					projectiles_factor = 1.0f;
+				else if (!visible2sideMidTex) projectiles_factor = 0.25f;
+
+				regularsizmonster_factor1 = 3.64f * (sprPrxFctr * 3.0f);
+				if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
+					regularsizmonster_factor1 = 1.0f;
+				else if (!visible2sideMidTex) regularsizmonster_factor1 = 0.25f;
+
+				regularsizmonster_factor2 = (isaregularsizedmonster) ?
+					regularsizmonster_factor1 :
+					regularsizmonster_factor1 * 4.0f;
+
+				float extended_radius1 = (isactorsmallbutnotcorpse) ?
+					spriteSize * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 1.0 ocl, 0.025 super occluded
+					spriteSize;                              // 1x for all the rest sprites
+				float extended_radius2 = (islegacyversionprojectile) ?
+					extended_radius1 * projectiles_factor :  // 16x for projectiles like rockets, explosions and 6x when occluded
+					extended_radius1;                        // 1x for all the rest sprites
+				// ---===============================================================================---
+				//     === Dynamic anamorphosis occlusion based amount effect adjustment - FINISH ===
+
+
+				//					=== Anamorphosis culling pass 1 - START ===
+				float radius_for_bias = 0.0f;
+
+				// void detection is still important for "CrossedAnyWall" besides it was already used in "Anamorphosis culling pass 1"
+				bool CrossedAnyWall = thingCrossed1sVoidLine || thingFacingBboxCrossed1sided || thingCrossed2sidedLine;
+				// notice "isSpriteNOTObstructed" has no "! negation signs" as it means sprite is NOT obstructed and reported as visible
+				bool isSpriteNOTObstructed = (visible1sidesInfTallObstr || visible2sideTallEnoughObstr || visible2sideMidTex || visible3dfloorSides);
+
+				// Crucial for "thingCrossed1sVoidLine" to be here
+				// otherwise it gets useless below (while it's also needed there as OR in "CrossedAnyWall")
+				if (thingCrossed1sVoidLine || thingFacingBboxCrossed1sided || !isSpriteNOTObstructed)
+				{
+					// Regular Forced-Perspective way
+					radius_for_bias = spriteRadius;
+					spriteSize *= 0.25f;
+					smallsprtncrps_factor *= 0.25f;
+					projectiles_factor *= 0.25f;
+					regularsizmonster_factor2 = 0.75f;
+				}
+				else if (isactorsmallbutnotcorpse || islegacyversionprojectile)
+				{
+					radius_for_bias = extended_radius2;
+				}
+				else
+				{
+					radius_for_bias = spriteSize;
+				}
+
+				if (!(r_debug_nolimitanamorphoses))
+				{
+					float distsqAnam = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+					float distAnam = sqrt(distsqAnam);
+
+					if (distAnam > 0.1f)
+					{
+						// Use the monsterfactors for monster and if not - pure radius
+						float currentFactor = (isaregularsizedmonster) ? regularsizmonster_factor2 : 1.0f;
+						float objradiusbias = 1.f - (radius_for_bias * currentFactor) / distAnam;
+						minbias = MAX(minbias, objradiusbias);
+					}
+				}
+				//					=== Anamorphosis culling pass 1 - FINISH ===
+
+				////		=== The pass 2 agressive culling core process - START ===
+				//// this pass 2 makes stuff like "increaseAnam" to leak way less
+				//if (!isSpriteNOTObstructed && !islegacyversionprojectile)
+				//{
+				//	const float planeProximThresh = 4.0f;
+				//	float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
+				//	float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);
+
+				//	bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
+				//	bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
+
+				//	bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
+				//	bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
+
+				//	if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
+				//	{
+				//	}
+				//	else
+				//	{
+				//		if (!r_debug_nolimitanamorphoses)
+				//		{
+				//			float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
+				//			float objradiusbias = 1.f - spriteSize / sqrt(distsq);
+				//			minbias = MAX(minbias, objradiusbias);
+				//		}
+				//	}
+				//}
+				////		=== The pass 2 agressive culling core process - FINISH ===
+
+				//					=== Anamorphosis final culling pass - START ===
+				float bintersect, tintersect;
+				if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
+				else bintersect = 1.0f;
+				if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
+				else tintersect = 1.0f;
+				if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
+
+				//                |---------------------------------------------------|
+				//		 ---***===|		CRAZY STEEP ANAMORPHOSIS PROCESS - START	  |===***---
+				//                |---------------------------------------------------|
+				// if ((dist < 1200.0f) && isonsteepsurf && isSpriteNOTObstructed && !CrossedAnyWall) increaseAnam = 0.125f;
+				// 0.125 looks good but leaks farther away you go, 0.09 doesn't leak that much but looks worse when close to a sprite
+				// so we need to decrease "increaseAnam" from 0.125 to 0.0 smoothly as the distance exceeds minAnamDist (384.0f)
+				//
+				// -------------------- COMPUTE STEEP FACTOR |-> START|
+				bool  isonsteepsurf, isonsteepsurfmild;
+				float steepness = 5.25f;    // detect only very steep surfaces
+				float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepness);
+				isonsteepsurf = steepnessfact > 0.0001f;
+				float steepnessmild = 1.5f; // detect not so steep surfaces too
+				float steepnessmildfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepnessmild);
+				isonsteepsurfmild = steepnessmildfact > 0.0001f;
+				float viewerEyeLevelZ = viewerBottom + EyeHeight;
+				bool isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= 24.0f;
+				float viewer2x5EyeLevelZ = viewerBottom + (EyeHeight * 2.5f);
+				bool isSprBotAt2x5EyeLevel = fabsf(spriteBottom - viewer2x5EyeLevelZ) <= 24.0f;
+				float viewerHalfEyeLevelZ = viewerBottom + (EyeHeight * 0.5f);
+				bool isSprBotAtHalfEyeLevel = fabsf(spriteBottom - viewerHalfEyeLevelZ) <= 12.0f;
+				// -------------------- THE MULTIPLIER SETUP |-> START|
+				// -- PHASE #1 - determine maximum effect amounts
+				float increaseAnam = 0.0f; // The higher the more the anamorphosis effect is but more leaks
+				float incrAnamMaximum = 0.0f; // Bigger sprites need lesser "increaseAnam" amounts, otherwise they leak more
+				if (CrossedAnyWall)
+				{
+					// Must be done this way, otherwise leaks more
+					incrAnamMaximum = 0.0f; // the culled out case
+				}
+				else
+				{
+					// the visible case
+					if (isabonusitem) incrAnamMaximum = 0.175f;   // Bigger amount for small but NOT smaller than bonus
+					else              incrAnamMaximum = 0.075f;   // Smaller amount for all the rest sprites
+				}
+				// -- PHASE #2 - determine the distant effect amount fade
+				if ((dist < 1200.0f) && isonsteepsurf)
+				{
+					const float minAnamDist = 384.0f;             // Max effect in this zone
+					const float maxAnamDist = 1200.0f;            // Full effect fade here
+					const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
+					if (dist <= minAnamDist)
+					{
+						increaseAnam = incrAnamMaximum;           // Full power
+					}
+					else
+					{
+						float fadeFactor = 1.0f - ((dist - minAnamDist) * max2minAnamDistDiffInv);
+						// Prevent it from becoming negative
+						if (fadeFactor < 0.0f) fadeFactor = 0.0f;
+						increaseAnam = incrAnamMaximum * fadeFactor;
+					}
+				}
+				// -- PHASE #3 - setup the suppression multiplier (decreaseAnam)
+				float spbias = 0.0f;       // initialize the variable
+				float decreaseAnam = 0.0f; // initialize the variable
+				// Decrease anamorphosis when sprites are culled by 1s+void or 2s lines,void is now facing
+				if ((thingCrossed1sVoidLine || thingFacingBboxCrossed1sided) && isonsteepsurfmild)
+				{
+					//	//            ****** another dirty workaround hack - START ******
+					//	// Tame down Project Brutality 3 invoid spawn lamps that leak through walls
+					//  // A better way to tame them down - use thingCrossed1sVoidLine without bbox facing
+					//	// Big decreaseAnam amounts don't just decrease anamorphosis effect - ERASE sprites
+					//	// that's why you decrease decreaseAnam if their increased radii are small!
+					//if (spriteSize <= 18.0f)
+					//{
+					//	if (isonsteepsurfmild && (isSprBotAtEyeLevel || isSprBotAt2x5EyeLevel) )
+					//		                                           decreaseAnam = 0.27f;
+					//	else                                           decreaseAnam = 0.05f;
+					//}
+					//else if (spriteSize > 32.0f && spriteSize < 43.0f) decreaseAnam = 0.15f;
+					//else                                               decreaseAnam = 0.2f;
+					//	//            ****** another dirty workaround hack - FINISH ******
+
+					// Values lower aren't sufficient to suppress leaks on big radii sprites like
+					// small sprites - health bonus, torches, etc with increased radii not to fade in far
+					decreaseAnam = 0.075f; // that's why put it simple and do a better occlusion logic
+				}
+				// Still some leaks through 2s obstr. Calc isonsteepsurfmild within SprBotAtHalfEyeLev
+				// Fixes some leaks on Doom2 Remake, Map12 and allows for other sprites that aren't
+				// under steep angles (coplanar) to render properly.
+				else if (thingCrossed2sidedLine && (isonsteepsurfmild && isSprBotAtHalfEyeLevel))
+				{
+					// Values lower aren't sufficient to suppress leaks on big radii sprites like
+					// small sprites - health bonus, torches, etc with increased radii not to fade in far
+					decreaseAnam = 0.05f;
+				}
+				// -------------------- THE MULTIPLIER SETUP |-> FINISH|
+				// ---------PERFORM CRAZY STEEP ANAMORPHOSIS |->  START|
+				// Make sure your 1s, midtxt checks do NOT have FOV check and 2s, 3df - do HAVE it
+				if (CrossedAnyWall)
+				{
+					// Some items like torches still leak through walls if put really close.
+					// Yes, it's safe to summ "decreaseAnam" here because it cuts anamorphosis anyway
+					spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) + decreaseAnam;
+				}
+				else
+				{
+					// Just putting "- increaseAnam" already makes it leak SO much thus separated.
+					// This mode is required to make sprites to draw through flats like crazy.
+					// No it's NOT safe to subtract "increaseAnam" here on clamp but we got it CULLED
+					// and leaks only occur where we need them (DONE ON PURPOSE).
+					spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
+				}
+				float vpbias = 1.0 - spbias;
+				// --------PERFORM CRAZY STEEP ANAMORPHOSIS |->  FINISH|
+				//                |---------------------------------------------------|
+				//		 ---***===|		CRAZY STEEP ANAMORPHOSIS PROCESS - FINISH	  |===***---
+				//                |---------------------------------------------------|
+
+				//					=== Anamorphosis final culling pass - FINISH ===
+
+				// Apply projection distortion using original vp method only if not obstructed by a 3DFloor above or below
+				if (!a3DfloorPlaneObstructed)
+				{
+					x1 = x1 * spbias + vpx * vpbias;
+					y1 = y1 * spbias + vpy * vpbias;
+					z1 = z1 * spbias + vpz * vpbias;
+					x2 = x2 * spbias + vpx * vpbias;
+					y2 = y2 * spbias + vpy * vpbias;
+					z2 = z2 * spbias + vpz * vpbias;
+				}
+
+				// ======= Forced-Perspective Anamorphic sprite projecting routine FINISH =======
+			}
+
+			// Store forced-perspective adjusted positions
+			float fp_x1 = x1, fp_y1 = y1, fp_z1 = z1;
+			float fp_x2 = x2, fp_y2 = y2, fp_z2 = z2;
+
+			// Apply blending based on distance
+			if (!islegacyversionprojectile && !isactorsmallbutnotcorpse)
+			{
+				if (blend > 0.f && blend < 1.f)
+				{
+					// Blend between forced and smart clipping for ALL coordinates
+					x1 = fp_x1 * (1 - blend) + smart_x1 * blend;
+					y1 = fp_y1 * (1 - blend) + smart_y1 * blend;
+					z1 = fp_z1 * (1 - blend) + smart_z1 * blend;
+					x2 = fp_x2 * (1 - blend) + smart_x2 * blend;
+					y2 = fp_y2 * (1 - blend) + smart_y2 * blend;
+					z2 = fp_z2 * (1 - blend) + smart_z2 * blend;
+				}
+				else if (blend >= 1.f)
+				{
+					// Apply full smart clipping when blend = 1.0
+					x1 = smart_x1; y1 = smart_y1;
+					z1 = smart_z1; x2 = smart_x2;
+					y2 = smart_y2; z2 = smart_z2;
+				}
+			}
+
+			// Anamorphic sprite overbright correction
+			float sprSizeLight = (thing->radius + thing->Height) * 0.5f;
+			if (sprSizeLight >= 36.0f) sprSizeLight = 36.0f; // clamp sprSizeLight
+			float original_z1 = nonanam_z1; float original_z2 = nonanam_z2;
+			// Calculate the deltas (offsets)
+			// Clamp them to prevent negative depth correction - 1st val are small spr
+			float sprAnamLightAmount = (isactorsmallbutnotcorpse) ? (smallsprtncrps_factor * 4.0f) : 0.4f;
+			nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * sprAnamLightAmount));
+			nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * sprAnamLightAmount));
+			// Output to the engine console
+			// %f - float, %.2f - float with 2 decimal points
+			//Printf("Sprite [%s]: Orig Z1: %.2f, Z2: %.2f | Delta Z1: %.2f, Z2: %.2f\n", 
+			//	thing->GetClass()->TypeName.GetChars(), original_z1, original_z2, nonanam_z1, nonanam_z2);
 		}
-
-		// Anamorphic sprite overbright correction
-		float sprSizeLight = (thing->radius + thing->Height) * 0.5f;
-		if (sprSizeLight >= 36.0f) sprSizeLight = 36.0f; // clamp sprSizeLight
-		float original_z1 = nonanam_z1; float original_z2 = nonanam_z2;
-		// Calculate the deltas (offsets)
-		// Clamp them to prevent negative depth correction - 1st val are small spr
-		float sprAnamLightAmount = (isactorsmallbutnotcorpse) ? (smallsprtncrps_factor * 4.0f) : 0.4f;
-		nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * sprAnamLightAmount));
-		nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * sprAnamLightAmount));
-		// Output to the engine console
-		// %f - float, %.2f - float with 2 decimal points
-		//Printf("Sprite [%s]: Orig Z1: %.2f, Z2: %.2f | Delta Z1: %.2f, Z2: %.2f\n", 
-		//	thing->GetClass()->TypeName.GetChars(), original_z1, original_z2, nonanam_z1, nonanam_z2);
-
 	}
 
 //==========================================================================
