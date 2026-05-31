@@ -1411,6 +1411,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			// thin 2sided walls, especially, if they cross those linedefs
 			if ((!visible2sideTallEnoughObstr || !visible3dfloorSides) && thingCrossed2sBboxWall)
 				                                              spriteSize *= 0.64f;
+			                                                  spriteRadius *= 0.64f;
 			// ------------------------------------------------------------------------------------
 
 			// Initialize spriteSize factors here for them
