@@ -81,21 +81,20 @@ static bool CheckFrustumCulling(AActor *thing)
 
 	// Extract the ACTUAL current FOV from the viewpoint
 	// r_viewpoint.FOV is already in degrees, so we don't need to convert
-	float currentFOV = r_viewpoint.FieldOfView.Degrees; // LZDoom07 way
-	// UZDoom way - remove () after each function call
-	// float currentFOV = r_viewpoint.FieldOfView.Degrees(); 
+	float currentFOV = r_viewpoint.FieldOfView.Degrees;     // LZDoom07 way
+	//float currentFOV = r_viewpoint.FieldOfView.Degrees();     // UZDoom way
 	float currentFOVenlarged = currentFOV * 1.4f;
 
 	// Calculate frustum based on tilt
-	float tilt = fabs(static_cast<float>(r_viewpoint.Angles.Pitch.Degrees));
-	if (tilt > 46.0f)
-		return false; // Don't cull at extreme angles
+	float tilt = fabs(static_cast<float>(r_viewpoint.Angles.Pitch.Degrees)); // LZDoom07 way
+	//float tilt = fabs(static_cast<float>(r_viewpoint.Angles.Pitch.Degrees())); // UZDoom way
+	if (tilt > 46.0f) return false; // Don't cull at extreme angles
 
 	// Use the actual FOV instead of hardcoded 90
-	float floatangle = 2.0 + (45.0 + (tilt / 1.9)) * currentFOVenlarged * 48.0 /
-		AspectMultiplier(r_viewwindow.WidescreenRatio) / currentFOV;
-	angle_t frustumAngle = DAngle(floatangle).BAMs(); // LZDoom07 way
-	// angle_t frustumAngle = DAngle::fromDeg(floatangle).BAMs; // UZDoom way
+	float floatangle = 2.0f + (45.0f + (tilt / 1.9f)) * currentFOVenlarged * 48.0f /
+		                AspectMultiplier(r_viewwindow.WidescreenRatio) / currentFOV;
+	angle_t frustumAngle = DAngle(floatangle).BAMs();           // LZDoom07 way
+	//angle_t frustumAngle = DAngle::fromDeg(floatangle).BAMs();    // UZDoom way
 
 	if (frustumAngle < ANGLE_180)
 	{
@@ -141,8 +140,7 @@ struct LineSegmentCommon
 
 		float cross1 = cross(dx1, dy1, relAX, relAY);
 		float cross2 = cross(dx1, dy1, relBX, relBY);
-		if (cross1 * cross2 >= 0)
-			return false;
+		if (cross1 * cross2 >= 0) return false;
 
 		float relCX = x1 - other.x1;
 		float relCY = y1 - other.y1;
@@ -160,22 +158,21 @@ struct LineSegmentCommon
 static bool IsThinWallCommon(AActor *viewer, AActor *thing, DVector3 &thingpos)
 {
 	// Early exit for invalid inputs
-	if (!viewer || !thing)
-		return false;
+	if (!viewer || !thing) return false;
 
 	sector_t *viewSector = viewer->Sector;
 	sector_t* thingSector = P_PointInSector(thingpos.X, thingpos.Y); // LZDoom07 way
-	// sector_t *thingSector = level.PointInSector(thingpos); // UZDoom way
+	//sector_t *thingSector = level.PointInSector(thingpos); // UZDoom way
 
 	// Only check if in different sectors
-	if (viewSector == thingSector)
-		return false;
+	if (viewSector == thingSector) return false;
 
 	DVector3          viewerPos = viewer->Pos();
 	LineSegmentCommon sight(viewerPos.X, viewerPos.Y, thingpos.X, thingpos.Y);
 
 	// Precompute perpendicular direction for thickness checks
-	const DVector2 perpDirs[2] = {
+	const DVector2 perpDirs[2] =
+	{
 		{0,  1}, // Positive perpendicular
 		{0, -1}  // Negative perpendicular
 	};
@@ -196,8 +193,7 @@ static bool IsThinWallCommon(AActor *viewer, AActor *thing, DVector3 &thingpos)
 				DVector2 wallDir(line->v2->fX() - line->v1->fX(), line->v2->fY() - line->v1->fY());
 				float    wallLength = wallDir.Length();
 
-				if (wallLength <= 0)
-					continue;
+				if (wallLength <= 0) continue;
 
 				// Normalize wall direction
 				wallDir /= wallLength;
@@ -206,13 +202,13 @@ static bool IsThinWallCommon(AActor *viewer, AActor *thing, DVector3 &thingpos)
 				for (float t : {0.2f, 0.5f, 0.8f})
 				{
 					DVector2 wallPoint(line->v1->fX() + wallDir.X * wallLength * t,
-						line->v1->fY() + wallDir.Y * wallLength * t);
+						              line->v1->fY() + wallDir.Y * wallLength * t);
 
 					// Check thickness in both perpendicular directions
 					for (const auto &perp : perpDirs)
 					{
 						DVector2 testPerp(perp.Y * wallDir.X - perp.X * wallDir.Y,
-							perp.X * wallDir.Y - perp.Y * wallDir.X);
+							             perp.X * wallDir.Y - perp.Y * wallDir.X);
 
 						// Ray cast for thickness
 						for (float rayDist = 1.0f; rayDist <= 15.0f; rayDist += 1.0f)
@@ -220,10 +216,9 @@ static bool IsThinWallCommon(AActor *viewer, AActor *thing, DVector3 &thingpos)
 							DVector2 testPos = wallPoint + testPerp * rayDist;
 
 							if (P_PointInSector(testPos.X, testPos.Y) == otherSector) // LZDoom07 way
-							// if (level.PointInSector(testPos) == otherSector) // UZDoom way
+							//if (level.PointInSector(testPos) == otherSector) // UZDoom way
 							{
-								if (rayDist < 12.0f) // Thin wall found
-									return true;
+								if (rayDist < 12.0f) return true; // Thin wall found
 								break;
 							}
 						}
@@ -239,14 +234,13 @@ static bool IsThinWallCommon(AActor *viewer, AActor *thing, DVector3 &thingpos)
 // Wrapper function - to call struct LineSegment1sided from any other place
 // bool thingCrossed1sidedLine = SpriteIntersectsLinedef(viewerPos.X, viewerPos.Y, edgeX, edgeY, line->v1->fX(),
 // line->v1->fY(), line->v2->fX(), line->v2->fY(), ix, iy);
-static bool SpriteIntersectsLinedef(float x1, float y1, float x2, float y2, float ox1, float oy1, float ox2, float oy2,
-	float &ix, float &iy)
+static bool SpriteIntersectsLinedef(float x1, float y1, float x2, float y2, float ox1, float oy1, 
+	                                                  float ox2, float oy2, float &ix, float &iy)
 {
 	LineSegmentCommon seg1(x1, y1, x2, y2);
 	LineSegmentCommon seg2(ox1, oy1, ox2, oy2);
 
-	if (!seg1.IntersectsCommon(seg2))
-		return false;
+	if (!seg1.IntersectsCommon(seg2)) return false;
 
 	// Calculate intersection point
 	float denom = (x1 - x2) * (oy1 - oy2) - (y1 - y2) * (ox1 - ox2);
@@ -309,8 +303,8 @@ struct spriteIntersectsLineCacheEntry
 };
 static TMap<line_t *, TMap<SpriteIntersectsLinedefCacheKey, spriteIntersectsLineCacheEntry>> SpriteIntersectsLineCache;
 
-bool spriteIntersectsLineCachedWrapper(line_t *line, float x1, float y1, float x2, float y2, float x3, float y3,
-	float x4, float y4, float &ix, float &iy)
+bool spriteIntersectsLineCachedWrapper(line_t *line, float x1, float y1, float x2, float y2, 
+	                           float x3, float y3, float x4, float y4, float &ix, float &iy)
 {
 	// Use caching if enabled
 	if (enableAnamorphCache)
@@ -321,20 +315,19 @@ bool spriteIntersectsLineCachedWrapper(line_t *line, float x1, float y1, float x
 		spriteIntersectsLineCacheEntry &entry = SpriteIntersectsLineCache[line][key];
 		// Return cached result if valid (updated within last 3 ticks)
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 5 &&
-			entry.cachedSpriteIntersectsLineValid)
+			                                                         entry.cachedSpriteIntersectsLineValid)
 		{
 			ix = entry.cached_ix;
 			iy = entry.cached_iy;
 			return entry.cachedSpriteIntersectsLine;
 		}
 		// Compute fresh result and cache it
-		entry.cachedSpriteIntersectsLine =
-			SpriteIntersectsLinedef(x1, y1, x2, y2, x3, y3, x4, y4, entry.cached_ix, entry.cached_iy);
+		entry.cachedSpriteIntersectsLine = SpriteIntersectsLinedef(x1, y1, x2, y2, x3, y3, 
+			                                    x4, y4, entry.cached_ix, entry.cached_iy);
 		entry.cachedSpriteIntersectsLineValid = true;
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
 		// Set output values
-		ix = entry.cached_ix;
-		iy = entry.cached_iy;
+		ix = entry.cached_ix; iy = entry.cached_iy;
 
 		return entry.cachedSpriteIntersectsLine;
 	}
@@ -391,7 +384,7 @@ bool SpriteCrossed1sidedLinedef(AActor *thing, AActor *viewer)
 	// Scale adjustments
 	// Default: micro/tiny/small sprites
 	float                        spriteScale = 0.44f;
-	if (isMediumSprite)     spriteScale = 0.5f;
+	if      (isMediumSprite)     spriteScale = 0.5f;
 	else if (isLargeSprite)      spriteScale = 0.15f;
 	else if (isHugeSprite)       spriteScale = 0.1f;
 
@@ -449,13 +442,12 @@ static TMap<AActor *, SpriteCrossed1SidedLineCacheEntry> SpriteCrossed1sidedLine
 bool SpriteCrossed1sidedLinedefCachedWrapper(AActor *thing, AActor *viewer)
 {
 	// Fast escape checks
-	if (!thing || !viewer)
-		return false;
+	if (!thing || !viewer) return false;
 
 	// Use caching if enabled
 	if (enableAnamorphCache)
 	{
-		const int                          currentMapTimeTick = level.maptime;
+		const int             currentMapTimeTick = level.maptime;
 		SpriteCrossed1SidedLineCacheEntry &entry = SpriteCrossed1sidedLineCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
@@ -507,7 +499,7 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 	// Added coarse angle (90 deg steps) to key so results change when you orbit the sprite
 	int      gridX = (int)floorf(thingX * blockmapGridSizInv);
 	int      gridY = (int)floorf(thingY * blockmapGridSizInv);
-	int      angleKey = (int)(viewer->Angles.Yaw.Degrees * fovInv); // LZDoom07 way
+	int      angleKey = (int)(viewer->Angles.Yaw.Degrees * fovInv);     // LZDoom07 way
 	//int      angleKey = (int)(viewer->Angles.Yaw.Degrees() * fovInv); // UZDoom way
 	uint64_t spatialKey = ((uint64_t)gridX << 32) | ((uint32_t)gridY << 8) | (uint8_t)angleKey;
 
@@ -525,11 +517,11 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 
 	// 3. SIZE ADAPTATION
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
-	const bool  isTinySprite = (spriteSize < 18.0f);
+	const bool  isTinySprite  = (spriteSize < 18.0f);
 	const bool  isLargeSprite = (spriteSize >= 45.0f);
 
 	float                   spriteScale = 7.5f;
-	if (isTinySprite)       spriteScale = 3.5f;
+	if       (isTinySprite) spriteScale = 3.5f;
 	else if (isLargeSprite) spriteScale = 2.5f;
 	else                    spriteScale = 3.5f;
 
@@ -580,8 +572,8 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 				for (int j = 0; j < 2; j++) // Only 2 points: center and facing edge
 				{
 					float ix, iy;
-					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], l1x, l1y, l2x, l2y, ix,
-						iy))
+					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], 
+						                                           l1x, l1y, l2x, l2y, ix, iy))
 					{
 						float dx_int = ix - thingX;
 						float dy_int = iy - thingY;
@@ -605,19 +597,17 @@ struct SpriteBboxFacingCameraCrossed1sLineCacheEntry
 	int  lastMapTimeUpdateTick = -1;
 	bool cached1sCrossBboxFacingResult = false; // Default: assume NO 1-sided crossing
 };
-
 static TMap<AActor *, SpriteBboxFacingCameraCrossed1sLineCacheEntry> SpriteBboxFacingCrossed1sCache;
 
 bool SpriteBboxFacingCameraCrossed1sLineCachedWrapper(AActor *thing, AActor *viewer)
 {
 	// Fast escape checks
-	if (!thing || !viewer)
-		return false;
+	if (!thing || !viewer) return false;
 
 	// Use caching if enabled
 	if (enableAnamorphCache)
 	{
-		const int                                      currentMapTimeTick = level.maptime;
+		const int                         currentMapTimeTick = level.maptime;
 		SpriteBboxFacingCameraCrossed1sLineCacheEntry &entry = SpriteBboxFacingCrossed1sCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
@@ -665,7 +655,7 @@ bool SpriteCrossed1sidedVoidLinedef(AActor *thing, AActor *viewer, bool enablebb
 	float thingX = (float)thing->X();
 	float thingY = (float)thing->Y();
 
-	const float fovInv = 1.0f / 90.0f; // for 90 degrees FOV
+	const float fovInv = 1.0f / 90.0f;             // for 90 degrees FOV
 	const float blockmapGridSizInv = 1.0f / 64.0f; // for 64x64 grid size
 
 	// Calculate grid coordinates for the 64-unit spatial key
@@ -687,9 +677,9 @@ bool SpriteCrossed1sidedVoidLinedef(AActor *thing, AActor *viewer, bool enablebb
 	const bool isMicroSprite = (spriteSize <= 12.0f); // Combine micro/tiny
 	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
 
-	float                     spriteScale = 4.7f;
-	if (isMicroSprite)        spriteScale = 3.5f;
-	else if (isSmallSprite)   spriteScale = 3.2f;
+	float                      spriteScale = 4.7f;
+	if      (isMicroSprite)    spriteScale = 3.5f;
+	else if (isSmallSprite)    spriteScale = 3.2f;
 
 	float effectiveRadius = thing->radius;
 	if (effectiveRadius < 1.0f) effectiveRadius = 4.0f;
@@ -764,7 +754,7 @@ bool SpriteCrossed1sidedVoidLinedef(AActor *thing, AActor *viewer, bool enablebb
 
 					float ix, iy;
 					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1],
-						l1x, l1y, l2x, l2y, ix, iy))
+						                                           l1x, l1y, l2x, l2y, ix, iy))
 					{
 						pointIsObstructed[j] = true;
 					}
@@ -808,7 +798,7 @@ bool SpriteCrossed1sidedVoidLinedefCachedWrapper(AActor *thing, AActor *viewer, 
 
 	if (enableAnamorphCache)
 	{
-		const int                          currentMapTimeTick = level.maptime;
+		const int             currentMapTimeTick = level.maptime;
 		SpriteCrossed1sidedVoidCacheEntry &entry = SpriteCrossed1sidedVoidCache[thing];
 
 		// Return cached result if valid each 7 ticks
@@ -846,7 +836,7 @@ bool SpriteCrossed1sidedVoidBboxFaceCachedWrapper(AActor *thing, AActor *viewer,
 
 	if (enableAnamorphCache)
 	{
-		const int                          currentMapTimeTick = level.maptime;
+		const int             currentMapTimeTick = level.maptime;
 		SpriteCrossed1sVoidBboxCacheEntry &entry = SpriteCrossed1sVoidBboxCache[thing];
 
 		// Return cached result if valid each 7 ticks
@@ -877,7 +867,7 @@ static bool CheckLineOfSight1sided(AActor *viewer, const DVector3 &thingpos, flo
 	sector_t *viewSector = viewer->Sector;
 
 	sector_t* thingSector = P_PointInSector(thingpos.X, thingpos.Y); // LZDoom07 way
-	//sector_t *thingSector = level.PointInSector(thingpos); // UZDoom way
+	//sector_t *thingSector = level.PointInSector(thingpos);         // UZDoom way
 
 	// Early exit for same position
 	if (viewerPos.XY() == thingpos.XY()) return true;
@@ -904,8 +894,7 @@ static bool CheckLineOfSight1sided(AActor *viewer, const DVector3 &thingpos, flo
 		for (auto &line : sector->Lines)
 		{
 			// Only check 1-sided lines
-			if (!line->sidedef[0] || line->sidedef[1])
-				continue;
+			if (!line->sidedef[0] || line->sidedef[1]) continue;
 
 			LineSegmentCommon wall(line->v1->fX(), line->v1->fY(), line->v2->fX(), line->v2->fY());
 
@@ -913,8 +902,7 @@ static bool CheckLineOfSight1sided(AActor *viewer, const DVector3 &thingpos, flo
 			{
 				LineSegmentCommon sight(viewerPos.X, viewerPos.Y, pt.X, pt.Y);
 
-				if (wall.IntersectsCommon(sight)) // Now correct - single argument
-					return false;                 // Blocked by 1-sided line
+				if (wall.IntersectsCommon(sight)) return false; // Blocked by 1-sided line
 			}
 		}
 	}
@@ -945,7 +933,7 @@ bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor *thing, AActor *viewer
 	// Use caching if enabled
 	if (enableAnamorphCache)
 	{
-		const int                   currentMapTimeTick = level.maptime;
+		const int      currentMapTimeTick = level.maptime;
 		Visibility1sidedCacheEntry &entry = Visibility1sidedCache[thing];
 
 		// Return cached result if valid
@@ -1000,58 +988,15 @@ static FVector3 GetActorPosition3D(const AActor *actor)
 	return FVector3(static_cast<float>(actor->X()), static_cast<float>(actor->Y()), static_cast<float>(actor->Z()));
 }
 
-// Unused because doesn't look too good, use with BBOX camera facing one instead
-bool SpriteCrossed2sidedLinedef(AActor *thing, AActor *viewer)
-{
-	if (!thing || !viewer) return false;
-
-	if (CheckFrustumCulling(thing)) return false;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
-
-	// Only check thing's sector - no other changes
-	sector_t *currentSector = thing->Sector;
-	if (!currentSector || currentSector->Lines.Size() == 0) return false;
-
-	float vpx = (float)viewer->X();
-	float vpy = (float)viewer->Y();
-	float tpx = (float)thing->X();
-	float tpy = (float)thing->Y();
-
-	for (unsigned i = 0; i < currentSector->Lines.Size(); i++)
-	{
-		line_t *testLine = currentSector->Lines[i];
-
-		// only check 2-sided linedefs (has both front and back sides)
-		if (testLine->sidedef[0] && testLine->sidedef[1])
-		{
-			float ix, iy;
-
-			// it's slower to call cached version from here, thus unused. If possible, call
-			// "SpriteCrossed2sidedLinedefCachedWrapper" as it's going to be faster
-			// if (spriteIntersectsLineCachedWrapper(testLine, vpx, vpy, tpx, tpy, testLine->v1->fX(),
-			// testLine->v1->fY(), testLine->v2->fX(), testLine->v2->fY(), ix, iy))
-			if (SpriteIntersectsLinedef(vpx, vpy, tpx, tpy, testLine->v1->fX(), testLine->v1->fY(), testLine->v2->fX(),
-				testLine->v2->fY(), ix, iy))
-			{
-				return true;
-			}
-		}
-	}
-	return false;
-}
-
 // This one is nice for taming "increaseAnam" leaks
 // This one culls sprites if they crossed 2sided lines
 // but if a side of the sprite bounding box facing the viewer - uncull
-// I know the facing check is disabled but it's still better than nonfacing 1sideXser
-bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
+bool SpriteCrossed2sidedLinedef(AActor *thing, AActor *viewer, bool checkBboxCameraFace)
 {
 	if (!thing || !viewer) return false;
 
 	if (CheckFrustumCullingUNUSED(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
-
-	bool checkBboxCameraFace = true;
 
 	sector_t *thingSector = thing->Sector;
 	if (!thingSector || thingSector->Lines.Size() == 0) return false;
@@ -1071,22 +1016,22 @@ bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 	const bool  isHugeSprite = (spriteSize >= 60.0f);
 
 	// Scale for test point offsets (how far we look around the center)
-	float                          spriteScale = 10.5f;     // isMircosprite and other unmentioned
-	if (isTinySprite) { spriteScale = 5.5f; }
-	else if (isSmallSprite) { spriteScale = 2.5f; }
-	else if (isMediumSprite) { spriteScale = 1.2f; }
-	else if (isLargeSprite) { spriteScale = 0.3f; }
-	else if (isHugeSprite) { spriteScale = 0.15f; }
+	float                      spriteScale = 6.5f; // isMircosprite and other unmentioned
+	if      (isTinySprite)     spriteScale = 3.5f;
+	else if (isSmallSprite)    spriteScale = 1.5f;
+	else if (isMediumSprite)   spriteScale = 0.7f;
+	else if (isLargeSprite)    spriteScale = 0.4f;
+	else if (isHugeSprite)     spriteScale = 0.15f;
 
 	float adjustedRadius = thing->radius * spriteScale;
 
 	// Scale for the "Kill Zone" (how close the portal must be to block anamorphosis)
-	float                          strictZoneScale = 10.5f; // isMircosprite and other unmentioned
-	if (isTinySprite) { strictZoneScale = 8.5f; }
-	else if (isSmallSprite) { strictZoneScale = 5.0f; }
-	else if (isMediumSprite) { strictZoneScale = 3.2f; }
-	else if (isLargeSprite) { strictZoneScale = 2.5f; }
-	else if (isHugeSprite) { strictZoneScale = 1.5f; }
+	float                      strictZoneScale = 5.5f; // isMircosprite and other unmentioned
+	if      (isTinySprite)     strictZoneScale = 3.5f;
+	else if (isSmallSprite)    strictZoneScale = 1.5f;
+	else if (isMediumSprite)   strictZoneScale = 0.7f;
+	else if (isLargeSprite)    strictZoneScale = 0.4f;
+	else if (isHugeSprite)     strictZoneScale = 0.15f;
 	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
 
 	// === 2. SETUP TEST POINTS (Both modes use the same adjustedRadius) ===
@@ -1183,7 +1128,7 @@ struct SpriteCrossed2SidedLineCacheEntry
 };
 static TMap<AActor *, SpriteCrossed2SidedLineCacheEntry> SpriteCrossed2sidedLineCache;
 
-bool SpriteCrossed2sidedLinedefCachedWrapper(AActor *thing, AActor *viewer)
+bool SpriteCrossed2sidedLinedefCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace)
 {
 	// Fast escape checks
 	if (!thing || !viewer) return false;
@@ -1191,7 +1136,7 @@ bool SpriteCrossed2sidedLinedefCachedWrapper(AActor *thing, AActor *viewer)
 	// Use caching if enabled
 	if (enableAnamorphCache)
 	{
-		const int                          currentMapTimeTick = level.maptime;
+		const int             currentMapTimeTick = level.maptime;
 		SpriteCrossed2SidedLineCacheEntry &entry = SpriteCrossed2sidedLineCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
@@ -1201,7 +1146,7 @@ bool SpriteCrossed2sidedLinedefCachedWrapper(AActor *thing, AActor *viewer)
 		}
 
 		// Compute and cache fresh result from non-cached function
-		bool resultSprX2sLine = SpriteBboxFacingCameraCrossed2sLine(thing, viewer);
+		bool resultSprX2sLine = SpriteCrossed2sidedLinedef(thing, viewer, false); // NO check bbox face
 		entry.cached2sidedSpriteCrossedResult = resultSprX2sLine;
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
 		return resultSprX2sLine;
@@ -1209,9 +1154,50 @@ bool SpriteCrossed2sidedLinedefCachedWrapper(AActor *thing, AActor *viewer)
 	else
 	{
 		// Original uncached behavior
-		return SpriteBboxFacingCameraCrossed2sLine(thing, viewer);
+		return SpriteCrossed2sidedLinedef(thing, viewer, false);                  // NO check bbox face
 	}
 }
+
+struct SpriteCrossed2sBboxCacheEntry
+{
+	int  lastMapTimeUpdateTick = -1;
+	bool cached2sidedSpriteCrossedResult = false; // Default: assume NO 1-sided crossing
+};
+static TMap<AActor *, SpriteCrossed2sBboxCacheEntry> SpriteCrossed2sBboxLineCache;
+
+bool SpriteCrossed2sBboxFaceCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace)
+{
+	// Fast escape checks
+	if (!thing || !viewer) return false;
+
+	// Use caching if enabled
+	if (enableAnamorphCache)
+	{
+		const int         currentMapTimeTick = level.maptime;
+		SpriteCrossed2sBboxCacheEntry &entry = SpriteCrossed2sBboxLineCache[thing];
+
+		// Return cached result if valid (updated within last 3 ticks)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 5)
+		{
+			return entry.cached2sidedSpriteCrossedResult;
+		}
+
+		// Compute and cache fresh result from non-cached function
+		bool resultSprX2sBboxFaceLine = SpriteCrossed2sidedLinedef(thing, viewer, true); // check bbox face
+		entry.cached2sidedSpriteCrossedResult = resultSprX2sBboxFaceLine;
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return resultSprX2sBboxFaceLine;
+	}
+	else
+	{
+		// Original uncached behavior
+		return SpriteCrossed2sidedLinedef(thing, viewer, true);                         // check bbox face
+	}
+}
+
+
+
+
 
 // === Here comes regular 2sided obstructions check =======================================
 // Here comes regular 2sided obstructions check
@@ -1232,10 +1218,10 @@ struct ObstructionData2Sided
 	// Constructor to initialize all persistent flags
 	ObstructionData2Sided()
 	{
-		minFloor = MAXCOORD2SIDED;    // Start high, find lowest
-		maxFloor = MINCOORD2SIDED;    // Start low, find highest
-		minCeiling = MAXCOORD2SIDED;  // Start high, find lowest
-		maxCeiling = MINCOORD2SIDED;  // Start low, find highest
+		minFloor = MAXCOORD2SIDED;     // Start high, find lowest
+		maxFloor = MINCOORD2SIDED;     // Start low, find highest
+		minCeiling = MAXCOORD2SIDED;   // Start high, find lowest
+		maxCeiling = MINCOORD2SIDED;   // Start low, find highest
 		valid = false;
 		isTightSector = false;
 		isPlatformTooHigh = false;
@@ -1305,7 +1291,6 @@ struct ObstructionData2Sided
 		// Fixes both vertical extremes:
 		// 1. When a 3D floor sits directly on the sector floor (solid steps).
 		// 2. When a 3D floor is flush with the sector ceiling (hanging architectural beams).
-		// ==========================================================================
 		if (sector->e && sector->e->XFloor.ffloors.Size() > 0)
 		{
 			for (auto& floor : sector->e->XFloor.ffloors)
@@ -1390,7 +1375,7 @@ struct ObstructionData2Sided
 		float highestGameStep = 24.0f;
 		float diffOfHigestStepAndHorizon = EyeHeight - highestGameStep;
 		bool isPlatformTooHigh = (sprTopAdj - diffOfHigestStepAndHorizon + Ztolerance2sided) <= floorHeightInitial ||
-			(sprBottomAdj + diffOfHigestStepAndHorizon + Ztolerance2sided) >= ceilingHeightInitial;
+			                  (sprBottomAdj + diffOfHigestStepAndHorizon + Ztolerance2sided) >= ceilingHeightInitial;
 
 
 		// determine which sprites are located slightly above on elevated platforms
@@ -1460,11 +1445,9 @@ struct ObstructionData2Sided
 		//float distToFloor = fabs(spriteBottom - maxFloor); // For doors extruded from floor to ceilings
 
 		// Min obstruction height to fully occlude a sprite behind it
-		float LEDGE_THRESHOLD = 0.0f;               // Initialize the variable
+		float              LEDGE_THRESHOLD = 0.0f;  // Initialize the variable
 		if (isSmallSprite) LEDGE_THRESHOLD = 12.0f; // Needs taller obstructions to cull small sprites
 		else               LEDGE_THRESHOLD = 4.0f;  // Shorter obstructions for bigger sprites not to leak through ledges
-
-
 
 		// 1. Floor/Ledge occlusion
 		// Trigger ONLY if the ledge is higher than the sprite's feet AND higher than your feet.
@@ -1570,6 +1553,56 @@ static const FVector2 directionVectors[4] =
 	{0.0f, -1.0f}   // North
 };
 
+bool IsActorTopologyEmbeddedIn2sWall(AActor* thing)
+{
+	if (!thing || !thing->Sector) return false;
+
+	sector_t* sec = thing->Sector;
+
+	// CRITICAL WALL RECOGNITION: Architectural niches, slits, and wall recesses +
+	// are exceptionally tight clusters of geometry. They rarely have more than 6-8 lines.
+	// If a sector has more than 8 lines, it's a room, a corridor, or an open street.
+	if (sec->Lines.Size() > 8) return false;
+
+	float nativeFloorZ = (float)sec->floorplane.ZatPoint(thing->X(), thing->Y());
+	int structuralBoundaries = 0;
+
+	// Count how many lines of this micro-sector separate it from a drastically 
+	// different vertical environment (either stepped floor OR dropped ceiling).
+	for (unsigned int i = 0; i < sec->Lines.Size(); ++i)
+	{
+		line_t* line = sec->Lines[i];
+		if (!(line->flags & ML_TWOSIDED))
+		{
+			// If it's a 1-sided wall, it's a solid void boundary (perfect niche signature)
+			structuralBoundaries++;
+			continue;
+		}
+
+		sector_t* neighborSec = (line->frontsector == sec) ? line->backsector : line->frontsector;
+		if (!neighborSec) continue;
+
+		float neighborFloorZ = (float)neighborSec->floorplane.ZatPoint(thing->X(), thing->Y());
+		float neighborCeilingZ = (float)neighborSec->ceilingplane.ZatPoint(thing->X(), thing->Y());
+
+		// Use absolute values (fabsf) to detect ANY severe architectural break (recess or step)
+		if (fabsf(nativeFloorZ - neighborFloorZ) >= 12.0f || fabsf(sec->ceilingplane.ZatPoint(thing->X(), thing->Y()) - neighborCeilingZ) >= 12.0f)
+		{
+			structuralBoundaries++;
+		}
+	}
+
+	// IF MORE THAN HALF OF THE LINES ARE SOLID WALLS OR SEVERE HEIGHT REBASED WINDOWS:
+	// It is mathematically isolated inside a structural cage (Niche / Case A).
+	if (sec->Lines.Size() > 0 && structuralBoundaries >= (int)(sec->Lines.Size() / 2))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+
 // Optimized Implementation of CheckLineOfSight2sided with extended radius
 static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 {
@@ -1608,8 +1641,8 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	// ==================================================================================================
 	// THIS IS THE PLACE WHERE YOU CONFIGURE SPRITES CULLING AMOUNT PER TYPE FOR 2SIDED TALL OBSTRUCTIONS
 	// 1st val is large spr, 2nd is small sprites, third is all the rest sprites, higher vals cull more
-	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.2f) : 2.0f;
-	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.0f) : 2.24f;
+	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.2f) : 2.5f;
+	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.5f : 1.0f) : 2.5f;
 
 	// Core sprite positions (using expansion factors)
 	FVector2 viewerPos = GetActorPosition(viewer);
@@ -1779,7 +1812,7 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AA
 	if (enableAnamorphCache)
 	{
 		// CACHED VERSION
-		const int                        currentMapTimeTick = level.maptime;
+		const int           currentMapTimeTick = level.maptime;
 		Visibility2sidedObstrCacheEntry &entry = Visibility2sidedObstrCache[viewer, thing];
 
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 5)
@@ -1844,10 +1877,10 @@ struct MidTextureFencePathAccumulator
 	}
 
 	void AccumulateMidTextureFenceData(line_t *line, float calculatedDist, AActor *thing, const AActor *viewer,
-		const FVector2 &intersectionPoint)
+		                                                                     const FVector2 &intersectionPoint)
 	{
 		const bool isLegacyVersionProjectile = (thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY)) ||
-			(thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS));
+			                                     (thing->flags2 & (MF2_IMPACT | MF2_NOTELEPORT | MF2_PCROSS));
 
 		bool currentLineHasMid = false;
 		bool currentLineIsSolid = false;
@@ -1935,18 +1968,10 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 	// camera->Angles.Yaw.Degrees());
 
 	// 1. Quick out: Frustum culling - DISABLED BECAUSE BAD FOR MID TEXTURES!!!
-	if (CheckFrustumCullingUNUSED(thing))
-	{
-		// Printf("Skipped: Frustum culled\n");
-		return 0.0f;
-	}
+	if (CheckFrustumCullingUNUSED(thing)) return 0.0f;
 
 	// 2. Distance culling (far planes)
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f))
-	{
-		// Printf("Skipped: Distance culled (2048+ units away)\n");
-		return 0.0f;
-	}
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return 0.0f;
 
 	// 3. Actor classification flags and thresholds (CORPSE PROTECTION INTEGRATED)
 	// If the actor is a corpse, its physical height drops to ~12, but for
@@ -2236,8 +2261,8 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 				localAdjustedRadius += clamp(distanceBonus, 0.0f, 14.0f); // Secure clamp to avoid over-culling
 			}
 
-			// --- 3-RAY FAN GEOMETRY SETUP (RESTORED FOR SHARP GRAZING ANGLES) ---
-			// FIXED: Now uses localAdjustedRadius to expand the fan on far-away MAP19 slits
+			// --- 3-RAY FAN GEOMETRY SETUP (FOR SHARP GRAZING ANGLES) ---
+			// Now uses localAdjustedRadius to expand the fan on far-away MAP19 slits
 			FVector2 sideOffset = { -dir.Y * localAdjustedRadius * 0.5f, dir.X * localAdjustedRadius * 0.5f };
 			FVector2 raySources[3] = { viewerPos, viewerPos + sideOffset, viewerPos - sideOffset };
 			FVector2 rayTargets[3] = { thingPos2D, thingPos2D + sideOffset, thingPos2D - sideOffset };
@@ -2287,7 +2312,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 		}
 	}
 
-	// --- FINAL VISIBILITY EVALUATION ---
+	// 9. FINAL VISIBILITY EVALUATION
 	if (pathData.hitValidFence)
 	{
 		float maxDist = pathData.isSolidFence ? MAX_DIST_SOLID : MAX_DIST_MASKED;
@@ -2334,7 +2359,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			float fenceFloor = (float)thing->Sector->floorplane.ZatPoint(thingPos2D);
 			float fenceCeil = (float)thing->Sector->ceilingplane.ZatPoint(thingPos2D);
 
-			// 1. Floor/Ledge Occlusion with Height Shift Guard
+			// Floor/Ledge Occlusion with Height Shift Guard
 			// Trigger ONLY if the ledge is physically higher than the sprite's feet AND higher than your own feet.
 			bool floorOccludes = false;
 			if (fenceFloor >= (spriteBottom + LEDGE_THRESHOLD))
@@ -2346,7 +2371,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 				}
 			}
 
-			// 2. Ceiling/Lintel Occlusion with Height Shift Guard
+			// Ceiling/Lintel Occlusion with Height Shift Guard
 			// Trigger ONLY if the hanging beam is lower than the sprite's head AND lower than your own head level.
 			bool ceilingOccludes = false;
 			if (fenceCeil <= (spriteTop - LEDGE_THRESHOLD))
@@ -2381,7 +2406,7 @@ bool CheckFacingMidTextureProximityWrapper(AActor *thing, AActor *viewer, TVecto
 	// Use caching if enabled
 	if (enableAnamorphCache)
 	{
-		const int                      currentMapTimeTick = level.maptime;
+		const int         currentMapTimeTick = level.maptime;
 		MidTextureProximityCacheEntry &entry = MidTextureProximityCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
@@ -2430,12 +2455,12 @@ static DVector3 GetSpriteOcclusionPoint3DFloors(AActor *thing, DVector3 &pos)
 	{
 		// Could be "and" but "or" works better
 		const bool islegacyversionprojectile = (thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
-			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
-			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
+                                               (thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
+                                               (thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
 
 		const float base_radius = thing->radius;
 		const float base_height = thing->Height;
-		const float base_dimen = (base_radius + base_height) * 0.5;
+		const float base_dimen = (base_radius + base_height) * 0.5f;
 
 		const bool islittlesprite = (base_dimen <= 18.0f);
 		const bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
@@ -2444,9 +2469,9 @@ static DVector3 GetSpriteOcclusionPoint3DFloors(AActor *thing, DVector3 &pos)
 		if (isactorsmallbutnotcorpse)
 		{
 			// Expand virtual height dramatically for sprites with extended radius to block more agressively
-			occlusionPos.Z += thing->Height * 2.0;
+			occlusionPos.Z += thing->Height * 2.0f;
 			// Expand horizontally by 1600%
-			occlusionPos += DVector3(thing->radius * 16.0, thing->radius * 16.0, 0);
+			occlusionPos += DVector3(thing->radius * 16.0f, thing->radius * 16.0f, 0);
 		}
 	}
 
@@ -2456,31 +2481,28 @@ static DVector3 GetSpriteOcclusionPoint3DFloors(AActor *thing, DVector3 &pos)
 // Shared filter to determine relevant 3D floors
 static bool IsRelevantFFloor3DFloors(F3DFloor *rover, AActor *thing)
 {
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f))
-		return 0;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return 0;
 
-	return (rover->flags & FF_EXISTS) && (rover->flags & FF_SOLID) && (rover->flags & FF_RENDERPLANES) &&
-		!(rover->flags & FF_TRANSLUCENT)
-
-		//      no need to check those yet
-
-		//		&& (rover->alpha >= 200)
-		;
+	return (rover->flags & FF_EXISTS) && 
+		   (rover->flags & FF_SOLID) && 
+		   (rover->flags & FF_RENDERPLANES) &&
+		   !(rover->flags & FF_TRANSLUCENT)
+           //  no need to check those yet
+           // && (rover->alpha >= 200)
+         ; // don't miss the semicolon!
 }
 
 // Modified to use absolute sprite bottom
 float GetActualSpriteFloorZ3DfloorsAndOther(sector_t *s, DVector3 &pos, AActor *thing)
 {
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f))
-		return pos.Z;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return pos.Z;
 
 	float height = s->floorplane.ZatPoint(pos);
 	float spriteBottom = thing->Z(); // Absolute bottom position
 
 	for (auto rover : s->e->XFloor.ffloors)
 	{
-		if (!IsRelevantFFloor3DFloors(rover, thing))
-			continue;
+		if (!IsRelevantFFloor3DFloors(rover, thing)) continue;
 
 		float rover_z = rover->top.plane->ZatPoint(pos);
 		if (rover_z > height && rover_z <= spriteBottom + 2.0f) // 2-unit tolerance
@@ -2492,16 +2514,14 @@ float GetActualSpriteFloorZ3DfloorsAndOther(sector_t *s, DVector3 &pos, AActor *
 // Modified to use absolute sprite top
 float GetActualSpriteCeilingZ3DfloorsAndOther(sector_t *s, DVector3 &pos, AActor *thing)
 {
-	if (IsAnamorphicDistanceCulled(thing, 2048.0))
-		return pos.Z;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0)) return pos.Z;
 
 	float height = s->ceilingplane.ZatPoint(pos);
 	float spriteTop = thing->Z() + thing->Height; // Absolute top position
 
 	for (auto rover : s->e->XFloor.ffloors)
 	{
-		if (!IsRelevantFFloor3DFloors(rover, thing))
-			continue;
+		if (!IsRelevantFFloor3DFloors(rover, thing)) continue;
 
 		float rover_z = rover->bottom.plane->ZatPoint(pos);
 		if (rover_z < height && rover_z >= spriteTop - 2.0f) // 2-unit tolerance
@@ -2513,21 +2533,18 @@ float GetActualSpriteCeilingZ3DfloorsAndOther(sector_t *s, DVector3 &pos, AActor
 // Helper function: Find intersection between plane and line
 static bool PlaneLineIntersection3DFloors(AActor *thing, secplane_t *plane, DVector3 &start, DVector3 &end, DVector3 &out)
 {
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f))
-		return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	const DVector3 &n = plane->Normal();
-	float           planeD = plane->fD();
+	float      planeD = plane->fD();
 
 	DVector3 dir = end - start;
 	float    denominator = n | dir; // Dot product
 
-	if (fabs(denominator) < 1e-8)
-		return false; // Line is parallel to plane
+	if (fabs(denominator) < 1e-8) return false; // Line is parallel to plane
 
 	float t = -(planeD + (n | start)) / denominator;
-	if (t < 0.0 || t > 1.0)
-		return false; // Intersection point not between start and end
+	if (t < 0.0 || t > 1.0) return false; // Intersection point not between start and end
 
 	out = start + t * dir;
 	return true;
@@ -2561,18 +2578,17 @@ bool IsSpriteBehind3DFloorPlane(DVector3 &cameraPos, DVector3 &spritePos, sector
 	if (CheckFrustumCulling(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
-	const float TOLERANCE = 16.0f; // Vertex-aligned sector tolerance
-	const float EPSILON = 8.0f;  // Vertical comparison safety
+	const float TOLERANCE = 16.0f;    // Vertex-aligned sector tolerance
+	const float EPSILON = 8.0f;       // Vertical comparison safety
 	const float HORIZ_SAFETY = 32.0f; // Horizontal expansion
 
 	AActor     *viewer = players[consoleplayer].camera;
-	const float viewerBottom = viewer->Z();                   // Absolute bottom position
+	const float viewerBottom = viewer->Z();                // Absolute bottom position
 	const float viewerTop = viewerBottom + viewer->Height; // Absolute top position
 
 	for (auto rover : sector->e->XFloor.ffloors)
 	{
-		if (!IsRelevantFFloor3DFloors(rover, thing))
-			continue;
+		if (!IsRelevantFFloor3DFloors(rover, thing)) continue;
 
 		// 1. Get the 3D floor's target sector
 		sector_t *target = rover->target;
@@ -2582,28 +2598,27 @@ bool IsSpriteBehind3DFloorPlane(DVector3 &cameraPos, DVector3 &spritePos, sector
 		GetSectorBounds3DFloors(target, minBound, maxBound);
 
 		// --- LZDoom07 way START ---
-		 minBound -= HORIZ_SAFETY;
-		 maxBound += HORIZ_SAFETY;
+		 //minBound -= HORIZ_SAFETY;
+		 //maxBound += HORIZ_SAFETY;
 		// --- LZDoom07 way FINISH ---
 
 		// --- UZDoom way START ---
-		//minBound.X -= HORIZ_SAFETY;
-		//minBound.Y -= HORIZ_SAFETY;
-		//maxBound.X += HORIZ_SAFETY;
-		//maxBound.Y += HORIZ_SAFETY;
+		minBound.X -= HORIZ_SAFETY;
+		minBound.Y -= HORIZ_SAFETY;
+		maxBound.X += HORIZ_SAFETY;
+		maxBound.Y += HORIZ_SAFETY;
 		// --- UZDoom way FINISH ---
 
 		// 3. Check if both camera and sprite are within bounds
 		DVector2 camXY = cameraPos.XY();
 		DVector2 sprXY = spritePos.XY();
 
-		bool camInBounds =
-			camXY.X >= minBound.X && camXY.X <= maxBound.X && camXY.Y >= minBound.Y && camXY.Y <= maxBound.Y;
-		bool sprInBounds =
-			sprXY.X >= minBound.X && sprXY.X <= maxBound.X && sprXY.Y >= minBound.Y && sprXY.Y <= maxBound.Y;
+		bool camInBounds = camXY.X >= minBound.X && camXY.X <= maxBound.X && 
+			                 camXY.Y >= minBound.Y && camXY.Y <= maxBound.Y;
+		bool sprInBounds = sprXY.X >= minBound.X && sprXY.X <= maxBound.X && 
+			                 sprXY.Y >= minBound.Y && sprXY.Y <= maxBound.Y;
 
-		if (!camInBounds || !sprInBounds)
-			continue;
+		if (!camInBounds || !sprInBounds) continue;
 
 		// 4. Get 3D floor plane heights at both positions
 		const float floorTop = rover->top.plane->ZatPoint(cameraPos);
@@ -2616,8 +2631,7 @@ bool IsSpriteBehind3DFloorPlane(DVector3 &cameraPos, DVector3 &spritePos, sector
 		if (cameraOnFloor)
 		{
 			// When standing on the 3D floor, only cull if sprite is below
-			if (spritePos.Z < floorBottom - EPSILON)
-				return true;
+			if (spritePos.Z < floorBottom - EPSILON) return true;
 		}
 		else
 		{
@@ -2647,7 +2661,7 @@ bool IsSpriteBehind3DFloorPlaneCachedWrapper(DVector3 &cameraPos, DVector3 &spri
 	// Use caching if enabled
 	if (enableAnamorphCache)
 	{
-		const int                currentMapTimeTick = level.maptime;
+		const int   currentMapTimeTick = level.maptime;
 		a3DFloorPlaneCacheEntry &entry = a3DFloorPlaneCache[thing];
 
 		// Return cached result if valid (updated within last 3 ticks)
@@ -2698,13 +2712,13 @@ struct ObstructionData3DFloor
 	}
 
 	void Accumulate3DFloorObstruction(AActor* thing, AActor* viewer, float fBot, float fTop,
-		float rangeMin, float rangeMax, float viewerFeet, float viewZ,
-		const FVector2& intersectionPoint, float sprBot, float sprTop)
+		                      float rangeMin, float rangeMax, float viewerFeet, float viewZ,
+		                      const FVector2& intersectionPoint, float sprBot, float sprTop)
 	{
 		// Determine sprite classification (matching the 2S logic setup)
 		const bool isLegacyProjectile = (thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
-			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
-			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
+			                            (thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
+			                            (thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
 
 		// THE CORE FIX: Intersection of two vertical segments
 		float intersectMin = MAX(rangeMin, fBot);
@@ -2773,7 +2787,6 @@ struct a3DFloorSideCacheEntry
 	int lastMapTimeUpdateTick = -1;
 	bool cached3DFloorSideResult = true;
 };
-
 static TMap<AActor*, a3DFloorSideCacheEntry> a3DFloorSideCache;
 
 // Utility: get plane height at a 2D point
@@ -2855,7 +2868,7 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 
 						// Pass all data down to accumulator including projectile helper traits
 						obsData.Accumulate3DFloorObstruction(thing, viewer, fBot, fTop, rangeMin, rangeMax,
-							viewerFeet, viewZ, intersectionPoint, sprBot, sprTop);
+							                         viewerFeet, viewZ, intersectionPoint, sprBot, sprTop);
 					}
 				}
 			}
@@ -2922,7 +2935,7 @@ bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thin
 
 
 static int resetCounter = -1;
-void       ResetAnamorphCache()
+void ResetAnamorphCache()
 {
 	// Only reset 1-4 caches per frame to spread out the cost
 	switch (resetCounter % 5)
@@ -2930,21 +2943,24 @@ void       ResetAnamorphCache()
 	case 0:
 		Visibility1sidedCache.Clear(0);
 		Visibility2sidedObstrCache.Clear(0);
-		SpriteCrossed2sidedLineCache.Clear(0);
 		break;
 	case 1:
+		SpriteCrossed2sidedLineCache.Clear(0);
+		SpriteCrossed2sBboxLineCache.Clear(0);
+		break;
+	case 2:
 		SpriteIntersectsLineCache.Clear(0);
 		SpriteBboxFacingCrossed1sCache.Clear(0);
 		break;
-	case 2:
+	case 3:
 		SpriteCrossed1sidedVoidCache.Clear(0);
 		SpriteCrossed1sVoidBboxCache.Clear(0);
 		break;
-	case 3:
+	case 4:
 		SpriteCrossed1sidedLineCache.Clear(0);
 		MidTextureProximityCache.Clear(0);
 		break;
-	case 4:
+	case 5:
 		a3DFloorSideCache.Clear(0);
 		a3DFloorPlaneCache.Clear(0);
 		break;

@@ -1048,12 +1048,15 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	if (isSpriteShadow) depth += 1.f / 65536.f; // always sort shadows behind the sprite.
 
 
-//==========================================================================
-//
-// Begin Anamorphic Forced-Perspective+ projection
-//
-//==========================================================================
+	//==========================================================================
+	// [Darkcrafter07]
+	// Begin Anamorphic Forced-Perspective+ projection
+	// Original Forced-Perspective by Rachael
+	//==========================================================================
 
+	// The only difference "+" adds is that it doesn't leak through 3DFloor floors/flats
+	// Don't worry, the check is very fast and there's literally no comp. speed difference
+	// Also we're trying to straighten sprite light in gl_lightmode 8 and 16 here.
 	if (gl_spriteclip == -1 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
 		// ======= Anamorphic Forced-Perspective+ sprite projecting routine START =======
@@ -1128,19 +1131,19 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		// ======= Anamorphic Forced-Perspective+ sprite projecting routine FINISH =======
 	}
 
-//==========================================================================
-//
-// Finish Anamorphic Forced-Perspective+ projection
-//
-//==========================================================================
+	//==========================================================================
+	//
+	// Finish Anamorphic Forced-Perspective+ projection
+	//
+	//==========================================================================
 
 
 
-//==========================================================================
-//
-// Begin Hybrid Anamorphic Forced-Perspective - Smart projection
-//
-//==========================================================================
+	//==========================================================================
+	// [Darkcrafter07]
+	// Begin Hybrid Anamorphic Forced-Perspective - Smart projection
+	//
+	//==========================================================================
 
 	if (gl_spriteclip == -2 && (thing->renderflags & RF_SPRITETYPEMASK) == RF_FACESPRITE)
 	{
@@ -1345,7 +1348,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 			bool thingCrossed1sVoidLine = SpriteCrossed1sidedVoidLinedefCachedWrapper(thing, r_viewpoint.camera, false);
 			bool thingCrossed1sVoidBbox = SpriteCrossed1sidedVoidBboxFaceCachedWrapper(thing, r_viewpoint.camera, true);
-			bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
+			bool thingIsEmbeddedin2sWall = IsActorTopologyEmbeddedIn2sWall(thing);
+			bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera, false);
+			bool thingCrossed2sBboxLine  = SpriteCrossed2sBboxFaceCachedWrapper(thing, r_viewpoint.camera, true);
 			bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
 			bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
 			bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
@@ -1396,32 +1401,18 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			}
 			// -------------
 
-			// -------------
+			// ------------------------------------------------------------------------------------
 			// We'll have to limit spriteSize to minimize the leaks unfortunately
-			if (spriteSize >= 44.0f)
-			{
-				spriteSize = 44.0f;
-			}
-			// -------------
-
-			// -------------
+			if (spriteSize >= 44.0f)                          spriteSize = 44.0f;
 			// Too many leaks through 2sided obstructions because even default sprite sizes
 			// are too big and cross the linedefs, making them invisible to detection systems.
 			// In this case, we must decrease their sprite sizes to make them reasonable sizes.
-			if (!visible2sideTallEnoughObstr)
-			{
-				spriteSize *= 0.5f;
-			}
-			// -------------
-
-			// -------------
+			if (!visible2sideTallEnoughObstr)                 spriteSize *= 0.5f;
 			// Some sprites like torches can still leak through
 			// thin 2sided walls, especially, if they cross those linedefs
-			if ((!visible2sideTallEnoughObstr || !visible3dfloorSides) && thingCrossed2sidedLine)
-			{
-				spriteSize *= 0.64f;
-			}
-			// -------------
+			if ((!visible2sideTallEnoughObstr || !visible3dfloorSides) && thingCrossed2sBboxLine)
+				                                              spriteSize *= 0.64f;
+			// ------------------------------------------------------------------------------------
 
 			// Initialize spriteSize factors here for them
 			// to be visible in this entire sprite clipping mode scope
@@ -1490,12 +1481,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				if ((isfloatingsprite && !hasSignificantNegativeOffset) || thingCrossed1sidedLine)
 				{
 					// Perform smart clip but don't raise for the cases above
-					PerformSpriteClipAdjustment(thing, thingpos, 0.0);
+					// PerformSpriteClipAdjustment(thing, thingpos, 0.0);   // LZDoom07 way
+					PerformSpriteClipAdjustment(thing, thingpos.XY(), 0.0); // UZDoom way
 				}
 				else
 				{
 					// Perform smart clip on original coordinates
-					PerformSpriteClipAdjustment(thing, thingpos, 0.0);
+					// PerformSpriteClipAdjustment(thing, thingpos, 0.0);   // LZDoom07 way
+					PerformSpriteClipAdjustment(thing, thingpos.XY(), 0.0); // UZDoom way
 					smart_x1 = x1; smart_y1 = y1; smart_z1 = z1;
 					smart_x2 = x2; smart_y2 = y2; smart_z2 = z2;
 				}
@@ -1556,24 +1549,53 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					}
 				}
 
-				smallsprtncrps_factor = 3.4f * (sprPrxFctr * 15.0f);
-				if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
-					smallsprtncrps_factor = 1.0f;
-				else if (!visible2sideMidTex) smallsprtncrps_factor = 0.25f;
+				float bintersect, tintersect;
+				if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
+				else bintersect = 1.0f;
+				if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
+				else tintersect = 1.0f;
+				if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
+				// -------------------- COMPUTE STEEP FACTOR |-> START|
+				bool  isonsteepsurf, isonsteepsurfmild;
+				float steepness              = 5.25f; // detect only very steep surfaces
+				float steepnessfact          = pow(MAX(1.f - bintersect, 1.f - tintersect), steepness);
+				isonsteepsurf                = steepnessfact > 0.0001f;
+				float steepnessmild          = 1.5f; // detect not so steep surfaces too
+				float steepnessmildfact      = pow(MAX(1.f - bintersect, 1.f - tintersect), steepnessmild);
+				isonsteepsurfmild            = steepnessmildfact > 0.0001f;
+				float viewerEyeLevelZ        = viewerBottom + EyeHeight;
+				bool  isSprBotAtEyeLevel     = fabsf(spriteBottom - viewerEyeLevelZ) <= 24.0f;
+				float viewer2x5EyeLevelZ     = viewerBottom + (EyeHeight * 2.5f);
+				bool  isSprBotAt2x5EyeLevel  = fabsf(spriteBottom - viewer2x5EyeLevelZ) <= 24.0f;
+				float viewerHalfEyeLevelZ    = viewerBottom + (EyeHeight * 0.5f);
+				bool  isSprBotAtHalfEyeLevel = fabsf(spriteBottom - viewerHalfEyeLevelZ) <= 12.0f;
 
-				projectiles_factor = 8.0f;
-				if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
-					projectiles_factor = 1.0f;
-				else if (!visible2sideMidTex) projectiles_factor = 0.25f;
+				bool isSprBotAtViewerBot     = fabsf(spriteBottom - viewerBottom) <= 24.0f;
 
-				regularsizmonster_factor1 = 3.64f * (sprPrxFctr * 3.0f);
-				if (!visible1sidesInfTallObstr || !visible2sideTallEnoughObstr || !visible3dfloorSides)
-					regularsizmonster_factor1 = 1.0f;
-				else if (!visible2sideMidTex) regularsizmonster_factor1 = 0.25f;
+				// Why have another "!vis2Obs"? - to uncull false positives in corridor passages
+				bool isSpriteOccluded = (!visible1sidesInfTallObstr || thingCrossed1sVoidLine ||
+					                                                     !visible3dfloorSides ||
+				                                                (!visible2sideTallEnoughObstr ||
+					     (thingCrossed2sBboxLine && isonsteepsurfmild && isSprBotAtEyeLevel)) );
+
+				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;
+				else if (!visible2sideMidTex)      smallsprtncrps_factor = 0.25f;
+				else                               smallsprtncrps_factor = 3.4f;      // unculled
+
+				if      (isSpriteOccluded)         projectiles_factor = 1.0f;
+				else if (!visible2sideMidTex)      projectiles_factor = 0.25f;
+				else                               projectiles_factor = 8.0f;         // unculled
+
+				if      (isSpriteOccluded)         regularsizmonster_factor1 = 1.0f;
+				else if (!visible2sideMidTex)      regularsizmonster_factor1 = 0.25f;
+				else                               regularsizmonster_factor1 = 3.64f; // unculled
 
 				regularsizmonster_factor2 = (isaregularsizedmonster) ?
 					regularsizmonster_factor1 :
 					regularsizmonster_factor1 * 4.0f;
+
+				smallsprtncrps_factor *= (sprPrxFctr * 15.0f);
+				regularsizmonster_factor1 *= (sprPrxFctr * 3.0f);
 
 				float extended_radius1 = (isactorsmallbutnotcorpse) ?
 					spriteSize * smallsprtncrps_factor :     // 3.25x for small noncorpsesprites and 1.0 ocl, 0.025 super occluded
@@ -1595,13 +1617,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 				// Crucial for "thingCrossed1sVoidLine" to be here
 				// otherwise it gets useless below (while it's also needed there as OR in "CrossedAnyWall")
-				if (thingCrossed1sVoidLine || thingFacingBboxCrossed1sided || !isSpriteNOTObstructed)
+				if (isSpriteOccluded)
 				{
 					// Regular Forced-Perspective way
 					radius_for_bias = spriteRadius;
-					spriteSize *= 0.25f;
-					smallsprtncrps_factor *= 0.25f;
-					projectiles_factor *= 0.25f;
+					//spriteSize *= 0.25f;
+					//smallsprtncrps_factor *= 0.25f;
+					//projectiles_factor *= 0.25f;
 					regularsizmonster_factor2 = 0.75f;
 				}
 				else if (isactorsmallbutnotcorpse || islegacyversionprojectile)
@@ -1651,19 +1673,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				//		{
 				//			float distsq = (tpx - vpx)*(tpx - vpx) + (tpy - vpy)*(tpy - vpy);
 				//			float objradiusbias = 1.f - spriteSize / sqrt(distsq);
-				//			minbias = MAX(minbias, objradiusbias);
+				//			minbias = max(minbias, objradiusbias);
 				//		}
 				//	}
 				//}
 				////		=== The pass 2 agressive culling core process - FINISH ===
 
 				//					=== Anamorphosis final culling pass - START ===
-				float bintersect, tintersect;
-				if (z2 < vpz && vbtm < vpz) bintersect = MIN((btm - vpz) / (z2 - vpz), (vbtm - vpz) / (z2 - vpz));
-				else bintersect = 1.0f;
-				if (z1 > vpz && vtop > vpz) tintersect = MIN((top - vpz) / (z1 - vpz), (vtop - vpz) / (z1 - vpz));
-				else tintersect = 1.0f;
-				if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
+
 
 				//                |---------------------------------------------------|
 				//		 ---***===|		CRAZY STEEP ANAMORPHOSIS PROCESS - START	  |===***---
@@ -1672,20 +1689,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				// 0.125 looks good but leaks farther away you go, 0.09 doesn't leak that much but looks worse when close to a sprite
 				// so we need to decrease "increaseAnam" from 0.125 to 0.0 smoothly as the distance exceeds minAnamDist (384.0f)
 				//
-				// -------------------- COMPUTE STEEP FACTOR |-> START|
-				bool  isonsteepsurf, isonsteepsurfmild;
-				float steepness = 5.25f;    // detect only very steep surfaces
-				float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepness);
-				isonsteepsurf = steepnessfact > 0.0001f;
-				float steepnessmild = 1.5f; // detect not so steep surfaces too
-				float steepnessmildfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepnessmild);
-				isonsteepsurfmild = steepnessmildfact > 0.0001f;
-				float viewerEyeLevelZ = viewerBottom + EyeHeight;
-				bool isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= 24.0f;
-				float viewer2x5EyeLevelZ = viewerBottom + (EyeHeight * 2.5f);
-				bool isSprBotAt2x5EyeLevel = fabsf(spriteBottom - viewer2x5EyeLevelZ) <= 24.0f;
-				float viewerHalfEyeLevelZ = viewerBottom + (EyeHeight * 0.5f);
-				bool isSprBotAtHalfEyeLevel = fabsf(spriteBottom - viewerHalfEyeLevelZ) <= 12.0f;
 				// -------------------- THE MULTIPLIER SETUP |-> START|
 				// -- PHASE #1 - determine maximum effect amounts
 				float increaseAnam = 0.0f; // The higher the more the anamorphosis effect is but more leaks
@@ -1698,14 +1701,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				else
 				{
 					// the visible case
-					if (isabonusitem) incrAnamMaximum = 0.175f;   // Bigger amount for small but NOT smaller than bonus
-					else              incrAnamMaximum = 0.075f;   // Smaller amount for all the rest sprites
+					if (isabonusitem) incrAnamMaximum = 0.225f;   // Bigger amount for small but NOT smaller than bonus
+					else              incrAnamMaximum = 0.007f;   // Smaller amount for all the rest sprites
 				}
 				// -- PHASE #2 - determine the distant effect amount fade
 				if ((dist < 1200.0f) && isonsteepsurf)
 				{
-					const float minAnamDist = 384.0f;             // Max effect in this zone
-					const float maxAnamDist = 1200.0f;            // Full effect fade here
+					const float minAnamDist = 96.0f;             // Max effect in this zone
+					const float maxAnamDist = 512.0f;            // Full effect fade here
 					const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
 					if (dist <= minAnamDist)
 					{
@@ -1742,7 +1745,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 					// Values lower aren't sufficient to suppress leaks on big radii sprites like
 					// small sprites - health bonus, torches, etc with increased radii not to fade in far
-					decreaseAnam = 0.075f; // that's why put it simple and do a better occlusion logic
+					decreaseAnam = 0.04f; // that's why put it simple and do a better occlusion logic
 				}
 				// Still some leaks through 2s obstr. Calc isonsteepsurfmild within SprBotAtHalfEyeLev
 				// Fixes some leaks on Doom2 Remake, Map12 and allows for other sprites that aren't
@@ -1756,7 +1759,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				// -------------------- THE MULTIPLIER SETUP |-> FINISH|
 				// ---------PERFORM CRAZY STEEP ANAMORPHOSIS |->  START|
 				// Make sure your 1s, midtxt checks do NOT have FOV check and 2s, 3df - do HAVE it
-				if (CrossedAnyWall)
+				if (isSpriteOccluded)
 				{
 					// Some items like torches still leak through walls if put really close.
 					// Yes, it's safe to summ "decreaseAnam" here because it cuts anamorphosis anyway
@@ -1768,6 +1771,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					// This mode is required to make sprites to draw through flats like crazy.
 					// No it's NOT safe to subtract "increaseAnam" here on clamp but we got it CULLED
 					// and leaks only occur where we need them (DONE ON PURPOSE).
+					//spbias = clamp<float>(min(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 					spbias = clamp<float>(MIN(bintersect, tintersect), minbias, 1.0f) - increaseAnam;
 				}
 				float vpbias = 1.0 - spbias;
@@ -1834,11 +1838,11 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		}
 	}
 
-//==========================================================================
-//
-// Finish Hybrid Anamorphic Forced-Perspective - Smart projection
-//
-//==========================================================================
+	//==========================================================================
+	//
+	// Finish Hybrid Anamorphic Forced-Perspective - Smart projection
+	//
+	//==========================================================================
 
 	// light calculation
 
