@@ -1350,7 +1350,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			bool thingCrossed1sVoidBbox = SpriteCrossed1sidedVoidBboxFaceCachedWrapper(thing, r_viewpoint.camera, true);
 			bool thingIsEmbeddedin2sWall = IsActorTopologyEmbeddedIn2sWall(thing);
 			bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera, false);
-			bool thingCrossed2sBboxLine  = SpriteCrossed2sBboxFaceCachedWrapper(thing, r_viewpoint.camera, true);
+			bool thingCrossed2sBboxWall  = SpriteCrossed2sBboxFaceWallCachedWrapper(thing, r_viewpoint.camera, true);
 			bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
 			bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
 			bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
@@ -1410,7 +1410,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			if (!visible2sideTallEnoughObstr)                 spriteSize *= 0.5f;
 			// Some sprites like torches can still leak through
 			// thin 2sided walls, especially, if they cross those linedefs
-			if ((!visible2sideTallEnoughObstr || !visible3dfloorSides) && thingCrossed2sBboxLine)
+			if ((!visible2sideTallEnoughObstr || !visible3dfloorSides) && thingCrossed2sBboxWall)
 				                                              spriteSize *= 0.64f;
 			// ------------------------------------------------------------------------------------
 
@@ -1527,25 +1527,18 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				//   even a smaller radius anamorphosis amount is enough to provide a good effect.
 				//   also pay attention we decrease radius only on viewer and sprite coplanar situtations!
 				float sprPrxFctr = 1.0f;
-				float sprPrxFctrProj = 1.0f;
 				float sprPrxDistThresh = 674.0f;
-
 				const float invSprPrxDistThresh = 1.0f / sprPrxDistThresh;
-
-				// 1. Close-up coplanar mitigation loop
 				if ((dist < sprPrxDistThresh) && (fabs(btm - vbtm) <= Ztolerance2sided || fabs(btm - vtop) <= Ztolerance2sided))
 				{
-					float distProgress = dist * invSprPrxDistThresh; // Celeron-friendly fast multiplication!
+					float distProgress = dist * invSprPrxDistThresh;
 					sprPrxFctr = 0.075f + (0.25f - 0.075f) * distProgress;
-					sprPrxFctrProj = sprPrxFctr; // Sync close-up behavior
 				}
-
-				// 2. DISTANT HORIZON BLIND-ZONE INTERCEPTOR (Small Items)
 				if (dist >= sprPrxDistThresh && isactorsmallbutnotcorpse)
 				{
 					if (fabs(vpz - btm) < 128.0f)
 					{
-						sprPrxFctr = 0.15f; // Force-clamp the expansion hull for items on flat views
+						sprPrxFctr = 0.15f;
 					}
 				}
 
@@ -1574,9 +1567,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 				// Why have another "!vis2Obs"? - to uncull false positives in corridor passages
 				bool isSpriteOccluded = (!visible1sidesInfTallObstr || thingCrossed1sVoidLine ||
-					                                                     !visible3dfloorSides ||
+					                              !visible2sideMidTex || !visible3dfloorSides ||
 				                                                (!visible2sideTallEnoughObstr ||
-					     (thingCrossed2sBboxLine && isonsteepsurfmild && isSprBotAtEyeLevel)) );
+					     (thingCrossed2sBboxWall && isonsteepsurfmild && isSprBotAtEyeLevel)) );
 
 				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;
 				else if (!visible2sideMidTex)      smallsprtncrps_factor = 0.25f;
@@ -1657,13 +1650,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				//	const float planeProximThresh = 4.0f;
 				//	float viewerTopAdjCullPass2 = viewerBottom + (EyeHeight * 0.5f);
 				//	float spriteTopAdjCullPass2 = spriteTop + (EyeHeight * 0.064f);
-
+				//
 				//	bool isFloorSprite = (spriteBottom - btm) <= planeProximThresh;
 				//	bool isCeilingSprite = (top - spriteTop) <= planeProximThresh;
-
+				//
 				//	bool viewerLookingDown = viewerTopAdjCullPass2 >= spriteTopAdjCullPass2;
 				//	bool viewerLookingUp = viewerTopAdjCullPass2 <= spriteBottom;
-
+				//
 				//	if (((isFloorSprite && viewerLookingDown) || (isCeilingSprite && viewerLookingUp)))
 				//	{
 				//	}
@@ -1691,7 +1684,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				//
 				// -------------------- THE MULTIPLIER SETUP |-> START|
 				// -- PHASE #1 - determine maximum effect amounts
-				float increaseAnam = 0.0f; // The higher the more the anamorphosis effect is but more leaks
+				float increaseAnam = 0.0f;    // The higher the more the anamorphosis effect is but more leaks
 				float incrAnamMaximum = 0.0f; // Bigger sprites need lesser "increaseAnam" amounts, otherwise they leak more
 				if (CrossedAnyWall)
 				{
@@ -1707,8 +1700,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				// -- PHASE #2 - determine the distant effect amount fade
 				if ((dist < 1200.0f) && isonsteepsurf)
 				{
-					const float minAnamDist = 96.0f;             // Max effect in this zone
-					const float maxAnamDist = 512.0f;            // Full effect fade here
+					const float minAnamDist = 96.0f;              // Max effect in this zone
+					const float maxAnamDist = 512.0f;             // Full effect fade here
 					const float max2minAnamDistDiffInv = 1.0f / (maxAnamDist - minAnamDist);
 					if (dist <= minAnamDist)
 					{
@@ -1749,8 +1742,12 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				}
 				// Still some leaks through 2s obstr. Calc isonsteepsurfmild within SprBotAtHalfEyeLev
 				// Fixes some leaks on Doom2 Remake, Map12 and allows for other sprites that aren't
-				// under steep angles (coplanar) to render properly.
-				else if (thingCrossed2sidedLine && (isonsteepsurfmild && isSprBotAtHalfEyeLevel))
+				// under steep angles (coplanar) to render properly. Make sure that
+				// 2xSBbox must have at least 2x bigger radii expansion and 2xS must have shorter radii,
+				// so that 2xSBbox will suppress leaks in the far while 2xS will bust slight crossings
+				// of sprites laying very close to the 2s linedefs at all times.
+				else if ((thingCrossed2sidedLine && (isonsteepsurfmild && isSprBotAtHalfEyeLevel)) || 
+					                                                          thingCrossed2sBboxWall)
 				{
 					// Values lower aren't sufficient to suppress leaks on big radii sprites like
 					// small sprites - health bonus, torches, etc with increased radii not to fade in far

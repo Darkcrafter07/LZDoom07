@@ -64,7 +64,7 @@ bool SpriteCrossed1sidedVoidLinedefCachedWrapper(AActor *thing, AActor *viewer, 
 bool SpriteCrossed1sidedVoidBboxFaceCachedWrapper(AActor *thing, AActor *viewer, bool enablebboxface);
 bool IsActorTopologyEmbeddedIn2sWall(AActor* thing);
 bool SpriteCrossed2sidedLinedefCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace);
-bool SpriteCrossed2sBboxFaceCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace);
+bool SpriteCrossed2sBboxFaceWallCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace);
 bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor* viewer, const DVector3& thingpos);
 bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AActor* thing);
 bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVector3<double>& thingpos);

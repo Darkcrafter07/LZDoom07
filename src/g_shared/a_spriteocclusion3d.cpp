@@ -990,7 +990,7 @@ static FVector3 GetActorPosition3D(const AActor *actor)
 
 // This one is nice for taming "increaseAnam" leaks
 // This one culls sprites if they crossed 2sided lines
-// but if a side of the sprite bounding box facing the viewer - uncull
+// Wrapper disables bbox check here for lite void crossing detection within a short radius
 bool SpriteCrossed2sidedLinedef(AActor *thing, AActor *viewer, bool checkBboxCameraFace)
 {
 	if (!thing || !viewer) return false;
@@ -1016,7 +1016,7 @@ bool SpriteCrossed2sidedLinedef(AActor *thing, AActor *viewer, bool checkBboxCam
 	const bool  isHugeSprite = (spriteSize >= 60.0f);
 
 	// Scale for test point offsets (how far we look around the center)
-	float                      spriteScale = 6.5f; // isMircosprite and other unmentioned
+	float                      spriteScale = 5.5f; // isMircosprite and other unmentioned
 	if      (isTinySprite)     spriteScale = 3.5f;
 	else if (isSmallSprite)    spriteScale = 1.5f;
 	else if (isMediumSprite)   spriteScale = 0.7f;
@@ -1121,6 +1121,188 @@ bool SpriteCrossed2sidedLinedef(AActor *thing, AActor *viewer, bool checkBboxCam
 	return false;
 }
 
+// This one is nice for taming "increaseAnam" leaks
+// This one culls sprites if they crossed 2sided lines but ALSO CULLS if there's a WALL OR MID-TEX IN FRONT!
+// but if a side of the sprite bounding box facing the viewer - uncull option enabled in wrapper
+bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool checkBboxCameraFace)
+{
+	if (!thing || !viewer) return false;
+
+	if (CheckFrustumCullingUNUSED(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+
+	sector_t *thingSector = thing->Sector;
+	if (!thingSector || thingSector->Lines.Size() == 0) return false;
+
+	float viewerX = (float)viewer->X();
+	float viewerY = (float)viewer->Y();
+	float thingX = (float)thing->X();
+	float thingY = (float)thing->Y();
+
+	// === 1. UNIVERSAL SIZE ADAPTATION ===
+	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	const bool  isMicroSprite = (spriteSize < 12.0f);
+	const bool  isTinySprite = (spriteSize >= 12.0f && spriteSize < 18.0f);
+	const bool  isSmallSprite = (spriteSize >= 18.0f && spriteSize < 38.0f);
+	const bool  isMediumSprite = (spriteSize >= 38.0f && spriteSize < 45.0f);
+	const bool  isLargeSprite = (spriteSize >= 45.0f && spriteSize < 60.0f);
+	const bool  isHugeSprite = (spriteSize >= 60.0f);
+
+	// Scale for test point offsets (how far we look around the center)
+	float                      spriteScale = 12.5f; // isMircosprite and other unmentioned
+	if (isTinySprite)          spriteScale = 9.5f;
+	else if (isSmallSprite)    spriteScale = 8.5f;
+	else if (isMediumSprite)   spriteScale = 7.7f;
+	else if (isLargeSprite)    spriteScale = 5.4f;
+	else if (isHugeSprite)     spriteScale = 2.15f;
+
+	float adjustedRadius = thing->radius * spriteScale;
+
+	// Scale for the "Kill Zone" (how close the portal must be to block anamorphosis)
+	float                      strictZoneScale = 12.5f; // isMircosprite and other unmentioned
+	if (isTinySprite)     strictZoneScale = 9.5f;
+	else if (isSmallSprite)    strictZoneScale = 7.5f;
+	else if (isMediumSprite)   strictZoneScale = 5.7f;
+	else if (isLargeSprite)    strictZoneScale = 4.4f;
+	else if (isHugeSprite)     strictZoneScale = 2.15f;
+	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
+
+	// === 2. SETUP DYNAMIC TOTAL AREA BOUNDS (NO MORE RAY-GAP LEAKS) ===
+	float areaMinX = thingX - adjustedRadius; float areaMaxX = thingX + adjustedRadius;
+	float areaMinY = thingY - adjustedRadius; float areaMaxY = thingY + adjustedRadius;
+
+	if (checkBboxCameraFace)
+	{
+		float dx = viewerX - thingX; float dy = viewerY - thingY;
+		float dist = sqrtf(dx * dx + dy * dy);
+		if (dist > 0.0f) { dx /= dist; dy /= dist; }
+
+		float px = -dy; float py = dx;
+		const float sidebboxfacetol = 0.7071f;
+
+		// Calculate frontal wing expansion coordinates
+		float frontX = thingX + (dx * adjustedRadius);
+		float frontY = thingY + (dy * adjustedRadius);
+		float leftX = thingX + (dx * adjustedRadius * sidebboxfacetol) + (px * adjustedRadius * sidebboxfacetol);
+		float leftY = thingY + (dy * adjustedRadius * sidebboxfacetol) + (py * adjustedRadius * sidebboxfacetol);
+		float rightX = thingX + (dx * adjustedRadius * sidebboxfacetol) - (px * adjustedRadius * sidebboxfacetol);
+		float rightY = thingY + (dy * adjustedRadius * sidebboxfacetol) - (py * adjustedRadius * sidebboxfacetol);
+
+		// Clamp the scanned area box strictly to the frontal facing hemisphere bounds
+		areaMinX = MIN(thingX, MIN(frontX, MIN(leftX, rightX)));
+		areaMaxX = MAX(thingX, MAX(frontX, MAX(leftX, rightX)));
+		areaMinY = MIN(thingY, MIN(frontY, MIN(leftY, rightY)));
+		areaMaxY = MAX(thingY, MAX(frontY, MAX(leftY, rightY)));
+	}
+
+	// === 3. TOTAL AREA GEOMETRY SWEEP ===
+	int minBX = level.blockmap.GetBlockX(areaMinX - 16.0f);
+	int maxBX = level.blockmap.GetBlockX(areaMaxX + 16.0f);
+	int minBY = level.blockmap.GetBlockY(areaMinY - 16.0f);
+	int maxBY = level.blockmap.GetBlockY(areaMaxY + 16.0f);
+
+	float sprBot = (float)thing->Z();
+
+	for (int bx = minBX; bx <= maxBX; bx++)
+	{
+		for (int by = minBY; by <= maxBY; by++)
+		{
+			if (!level.blockmap.isValidBlock(bx, by)) continue;
+
+			int *list = level.blockmap.GetLines(bx, by);
+
+			for (int i = 0; list[i] != -1; i++)
+			{
+				line_t *testLine = &level.lines[list[i]];
+
+				// Only 2-sided internal walls
+				if (!(testLine->flags & ML_TWOSIDED)) continue;
+
+				float l1x = (float)testLine->v1->fX(); float l1y = (float)testLine->v1->fY();
+				float l2x = (float)testLine->v2->fX(); float l2y = (float)testLine->v2->fY();
+
+				// Check if this line segment physically cuts into or touches our protective area box boundaries
+				float lineMinX = MIN(l1x, l2x); float lineMaxX = MAX(l1x, l2x);
+				float lineMinY = MIN(l1y, l2y); float lineMaxY = MAX(l1y, l2y);
+
+				if (lineMaxX < areaMinX || lineMinX > areaMaxX || lineMaxY < areaMinY || lineMinY > areaMaxY)
+				{
+					continue; // Line is entirely outside the target volume, bypass
+				}
+
+				// Find a stable evaluation node point along the line inside the block cell
+				float evalX = (l1x + l2x) * 0.5f;
+				float evalY = (l1y + l2y) * 0.5f;
+
+				// ==========================================================================
+				// --- 3.5 ADVANCED MID-TEXTURE PROXIMITY CULL FILTER ---
+				// ==========================================================================
+				// We scan both sides of the intersected line inside our grid net area footprint.
+				// If a valid mid-texture (like your iron grating/bars) exists, hide the sprite immediately.
+				bool lineContainsValidMidTex = false;
+				for (int sideno = 0; sideno < 2; sideno++)
+				{
+					if (sideno == 1 && testLine->backsector == nullptr) continue;
+					if (testLine->sidedef[sideno] == nullptr) continue;
+					FTextureID midtex = testLine->sidedef[sideno]->GetTexture(side_t::mid);
+					if (midtex.isValid() && midtex.GetIndex() > 0)
+					{
+						// === LZDoom07 way START ==============================================
+						if (TexMan[midtex])
+						{
+							lineContainsValidMidTex = true;
+							break;
+						}
+						// === LZDoom07 way FINISH =============================================
+						// === UZDoom way START ================================================
+						//FGameTexture *gtex = TexMan.GameTexture(midtex);
+						//if (gtex && gtex->isValid() && gtex->GetTexture() != nullptr && !gtex->GetName().IsEmpty())
+						//{
+						//	lineContainsValidMidTex = true;
+						//	break;
+						//}
+						// === UZDoom way FINISH ===============================================
+					}
+				}
+
+				if (lineContainsValidMidTex)
+				{
+					return true; // HARD-CULL INSTANT HIDE: Found a grate/fence right inside the area radius bounds!
+				}
+				// ==========================================================================
+
+				// --- UNCONDITIONAL VOLUME OCCLUSION VERDICT (HEIGHT STEPS) ---
+				sector_t* frontSec = testLine->frontsector;
+				sector_t* backSec = testLine->backsector;
+
+				if (frontSec && backSec)
+				{
+					float fFloor = (float)frontSec->floorplane.ZatPoint(evalX, evalY);
+					float bFloor = (float)backSec->floorplane.ZatPoint(evalX, evalY);
+
+					// Identify if the step-up rises relative to the actor's current stand position
+					float nextFloorZ = (thingSector == frontSec) ? bFloor : fFloor;
+
+					// TOTAL SECURITY OVERRIDE:
+					// If ANY part of this 2-sided line inside the protective volume bounds 
+					// turns out to be a rising wall obstacle, drop the culling axe immediately.
+					if (nextFloorZ > (sprBot + 1.0f))
+					{
+						return true; // Unconditional instant hide!
+					}
+				}
+				else
+				{
+					return true; // Structural breakdown defaults to safe cull
+				}
+			}
+		}
+	}
+
+	// The protective volume is completely clean of any rising solid steps or mid-textures
+	return false;
+}
+
 struct SpriteCrossed2SidedLineCacheEntry
 {
 	int  lastMapTimeUpdateTick = -1;
@@ -1165,7 +1347,7 @@ struct SpriteCrossed2sBboxCacheEntry
 };
 static TMap<AActor *, SpriteCrossed2sBboxCacheEntry> SpriteCrossed2sBboxLineCache;
 
-bool SpriteCrossed2sBboxFaceCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace)
+bool SpriteCrossed2sBboxFaceWallCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace)
 {
 	// Fast escape checks
 	if (!thing || !viewer) return false;
@@ -1183,7 +1365,7 @@ bool SpriteCrossed2sBboxFaceCachedWrapper(AActor *thing, AActor *viewer, bool ch
 		}
 
 		// Compute and cache fresh result from non-cached function
-		bool resultSprX2sBboxFaceLine = SpriteCrossed2sidedLinedef(thing, viewer, true); // check bbox face
+		bool resultSprX2sBboxFaceLine = SpriteCrossed2sBboxFaceWallLinedef(thing, viewer, true); // check bbox face
 		entry.cached2sidedSpriteCrossedResult = resultSprX2sBboxFaceLine;
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
 		return resultSprX2sBboxFaceLine;
@@ -1191,7 +1373,7 @@ bool SpriteCrossed2sBboxFaceCachedWrapper(AActor *thing, AActor *viewer, bool ch
 	else
 	{
 		// Original uncached behavior
-		return SpriteCrossed2sidedLinedef(thing, viewer, true);                         // check bbox face
+		return SpriteCrossed2sBboxFaceWallLinedef(thing, viewer, true);                         // check bbox face
 	}
 }
 
