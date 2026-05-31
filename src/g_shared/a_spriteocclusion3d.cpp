@@ -1202,6 +1202,7 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool chec
 	int maxBY = level.blockmap.GetBlockY(areaMaxY + 16.0f);
 
 	float sprBot = (float)thing->Z();
+	float viewerFeet = (float)viewer->Z(); // Fetch viewer base height
 
 	for (int bx = minBX; bx <= maxBX; bx++)
 	{
@@ -1237,8 +1238,6 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool chec
 				// ==========================================================================
 				// --- 3.5 ADVANCED MID-TEXTURE PROXIMITY CULL FILTER ---
 				// ==========================================================================
-				// We scan both sides of the intersected line inside our grid net area footprint.
-				// If a valid mid-texture (like your iron grating/bars) exists, hide the sprite immediately.
 				bool lineContainsValidMidTex = false;
 				for (int sideno = 0; sideno < 2; sideno++)
 				{
@@ -1283,12 +1282,17 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool chec
 					// Identify if the step-up rises relative to the actor's current stand position
 					float nextFloorZ = (thingSector == frontSec) ? bFloor : fFloor;
 
-					// TOTAL SECURITY OVERRIDE:
-					// If ANY part of this 2-sided line inside the protective volume bounds 
-					// turns out to be a rising wall obstacle, drop the culling axe immediately.
-					if (nextFloorZ > (sprBot + 1.0f))
+					// --- THE CEILING/TOP BOUNDS SHIELD FIX ---
+					// Calculate the absolute physical top of the sprite body
+					float sprTop = sprBot + (float)thing->Height;
+
+					// A two-sided line can ONLY be classified as a solid blocking wall 
+					// if its floor level physically rises HIGHER than the top of the sprite itself!
+					// This completely blocks side-stairs and local floor ridges from cutting 
+					// off objects that rest safely on elevated platforms or tables.
+					if (nextFloorZ > (sprTop + 1.0f))
 					{
-						return true; // Unconditional instant hide!
+						return true; // Confirmed real solid blocking wall obstacle -> Hide!
 					}
 				}
 				else
@@ -1299,7 +1303,6 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool chec
 		}
 	}
 
-	// The protective volume is completely clean of any rising solid steps or mid-textures
 	return false;
 }
 
@@ -1734,56 +1737,6 @@ static const FVector2 directionVectors[4] =
 	{-1.0f, 0.0f},  // West
 	{0.0f, -1.0f}   // North
 };
-
-bool IsActorTopologyEmbeddedIn2sWall(AActor* thing)
-{
-	if (!thing || !thing->Sector) return false;
-
-	sector_t* sec = thing->Sector;
-
-	// CRITICAL WALL RECOGNITION: Architectural niches, slits, and wall recesses +
-	// are exceptionally tight clusters of geometry. They rarely have more than 6-8 lines.
-	// If a sector has more than 8 lines, it's a room, a corridor, or an open street.
-	if (sec->Lines.Size() > 8) return false;
-
-	float nativeFloorZ = (float)sec->floorplane.ZatPoint(thing->X(), thing->Y());
-	int structuralBoundaries = 0;
-
-	// Count how many lines of this micro-sector separate it from a drastically 
-	// different vertical environment (either stepped floor OR dropped ceiling).
-	for (unsigned int i = 0; i < sec->Lines.Size(); ++i)
-	{
-		line_t* line = sec->Lines[i];
-		if (!(line->flags & ML_TWOSIDED))
-		{
-			// If it's a 1-sided wall, it's a solid void boundary (perfect niche signature)
-			structuralBoundaries++;
-			continue;
-		}
-
-		sector_t* neighborSec = (line->frontsector == sec) ? line->backsector : line->frontsector;
-		if (!neighborSec) continue;
-
-		float neighborFloorZ = (float)neighborSec->floorplane.ZatPoint(thing->X(), thing->Y());
-		float neighborCeilingZ = (float)neighborSec->ceilingplane.ZatPoint(thing->X(), thing->Y());
-
-		// Use absolute values (fabsf) to detect ANY severe architectural break (recess or step)
-		if (fabsf(nativeFloorZ - neighborFloorZ) >= 12.0f || fabsf(sec->ceilingplane.ZatPoint(thing->X(), thing->Y()) - neighborCeilingZ) >= 12.0f)
-		{
-			structuralBoundaries++;
-		}
-	}
-
-	// IF MORE THAN HALF OF THE LINES ARE SOLID WALLS OR SEVERE HEIGHT REBASED WINDOWS:
-	// It is mathematically isolated inside a structural cage (Niche / Case A).
-	if (sec->Lines.Size() > 0 && structuralBoundaries >= (int)(sec->Lines.Size() / 2))
-	{
-		return true;
-	}
-
-	return false;
-}
-
 
 // Optimized Implementation of CheckLineOfSight2sided with extended radius
 static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)

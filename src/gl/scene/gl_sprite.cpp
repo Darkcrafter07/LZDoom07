@@ -1348,7 +1348,6 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			bool thingCrossed1sidedLine = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 			bool thingCrossed1sVoidLine = SpriteCrossed1sidedVoidLinedefCachedWrapper(thing, r_viewpoint.camera, false);
 			bool thingCrossed1sVoidBbox = SpriteCrossed1sidedVoidBboxFaceCachedWrapper(thing, r_viewpoint.camera, true);
-			bool thingIsEmbeddedin2sWall = IsActorTopologyEmbeddedIn2sWall(thing);
 			bool thingCrossed2sidedLine = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera, false);
 			bool thingCrossed2sBboxWall  = SpriteCrossed2sBboxFaceWallCachedWrapper(thing, r_viewpoint.camera, true);
 			bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
@@ -1751,7 +1750,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				{
 					// Values lower aren't sufficient to suppress leaks on big radii sprites like
 					// small sprites - health bonus, torches, etc with increased radii not to fade in far
-					decreaseAnam = 0.05f;
+					decreaseAnam = 0.005f;
 				}
 				// -------------------- THE MULTIPLIER SETUP |-> FINISH|
 				// ---------PERFORM CRAZY STEEP ANAMORPHOSIS |->  START|

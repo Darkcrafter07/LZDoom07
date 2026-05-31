@@ -35,7 +35,6 @@
 //bool thingCrossed1sidedLine       = SpriteCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 //bool thingCrossed1sVoidLine       = SpriteCrossed1sidedVoidLinedefCachedWrapper(thing, r_viewpoint.camera, false);
 //bool thingCrossed1sVoidBbox       = SpriteCrossed1sidedVoidBboxFaceCachedWrapper(thing, r_viewpoint.camera, true);
-//bool thingIsEmbeddedin2sWall      = IsActorTopologyEmbeddedIn2sWall(thing);
 //bool thingCrossed2sidedLine       = SpriteCrossed2sidedLinedefCachedWrapper(thing, r_viewpoint.camera, false);
 //bool thingCrossed2sBboxLine       = SpriteCrossed2sBboxFaceCachedWrapper(thing, r_viewpoint.camera, true);
 //bool visible1sidesInfTallObstr    = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
@@ -62,7 +61,6 @@ bool SpriteBboxFacingCameraCrossed1sLineCachedWrapper(AActor* thing, AActor* vie
 bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer);
 bool SpriteCrossed1sidedVoidLinedefCachedWrapper(AActor *thing, AActor *viewer, bool enablebboxface);
 bool SpriteCrossed1sidedVoidBboxFaceCachedWrapper(AActor *thing, AActor *viewer, bool enablebboxface);
-bool IsActorTopologyEmbeddedIn2sWall(AActor* thing);
 bool SpriteCrossed2sidedLinedefCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace);
 bool SpriteCrossed2sBboxFaceWallCachedWrapper(AActor *thing, AActor *viewer, bool checkBboxCameraFace);
 bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor* viewer, const DVector3& thingpos);
