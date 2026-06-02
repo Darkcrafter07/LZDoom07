@@ -1243,7 +1243,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			else                        tintersect = 1.0f;
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
 			// -------------------- COMPUTE STEEP FACTOR |-> START|
-			bool  isonsteepsurf, isonsteepsurfmild, isreallysteep;
+			bool  isonsteepsurf, isonsteepsurfmild, ismildsteep, istrulysteep;
 			float steepness = 5.25f; // detect only very steep surfaces
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepness);
 			isonsteepsurf = steepnessfact > 0.0001f;
@@ -1254,13 +1254,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			bool  isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= 24.0f;
 			float viewerHalfEyeLevelZ = viewerBottom + (EyeHeight * 0.5f);
 			bool  isSprBotAtHalfEyeLevel = fabsf(spriteBottom - viewerHalfEyeLevelZ) <= 12.0f;
-			isreallysteep = isonsteepsurfmild && isSprBotAtEyeLevel;
+			ismildsteep = isonsteepsurfmild && isSprBotAtEyeLevel;
 			// ------------------------------------------------------------------------------------
 			if (spriteSize >= 44.0f)           spriteSize = 44.0f; // Limit max sprite size
 			if (!visible2sideTallEnoughObstr)  spriteSize *= 0.5f; // Fix leaks through 2Sobstr
 			// Fix small spr leaks through thin 2sided walls, like bonus, torches etc...
 			if ((!visible2sideTallEnoughObstr || !visible3dfloorSides) && 
-				                  thingCrossed2sBboxWall && isreallysteep)
+				                  thingCrossed2sBboxWall && ismildsteep)
 			{
 				spriteSize = spriteSizInit * 0.64f; spriteRadius = spriteRadInit * 0.64f;
 			}
@@ -1335,11 +1335,16 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					if (fabs(vpz - btm) < 128.0f)     sprPrxFctr = 0.15f;
 				}
 				// isSpriteOccluded must include all 3: sprX1sVoid, sprX1sVoidBbox, sprX1sBbox
-				bool isSpriteOccluded = (!visible1sidesInfTallObstr || thingCrossed1sVoidLine ||
-				     	               thingCrossed1sVoidBbox || thingFacingBboxCrossed1sided || 
-					                              !visible2sideMidTex || !visible3dfloorSides ||
-				                                                (!visible2sideTallEnoughObstr ||
-					                               (thingCrossed2sBboxWall && isreallysteep)) );
+				// and added "isonsteepsurf" via "ADD" to remove false positives in coridors.
+				// Paradoxicaly, adding "isonsteepsurf" keeps invoid spawn lamps of
+				// Project Brutality 3 culled and that's good
+				bool thingCrossedAllKindsOf1sLine = thingCrossed1sVoidLine ||
+                      thingCrossed1sVoidBbox || thingFacingBboxCrossed1sided;
+				bool isSpriteOccluded = (!visible1sidesInfTallObstr || 
+					(thingCrossedAllKindsOf1sLine && isonsteepsurf) ||
+					    !visible2sideMidTex || !visible3dfloorSides ||
+				                      (!visible2sideTallEnoughObstr ||
+					     (thingCrossed2sBboxWall && ismildsteep)) );
 				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;
 				else if (!visible2sideMidTex)      smallsprtncrps_factor = 0.25f;
 				else                               smallsprtncrps_factor = 3.4f;      // unculled
