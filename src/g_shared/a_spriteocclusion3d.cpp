@@ -1,4 +1,4 @@
-// 
+//
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2026 - Vadim Taranov (Darkcrafter07)
@@ -18,7 +18,13 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/
 //
 //--------------------------------------------------------------------------
-//
+//    ---=== Sprite/Particle 3D occlusion system by Darkcrafter07 ===---
+// ... made specifically for Hybrid Forced-Perspective sprite clipping.
+// The code is made for LZDoom07 (fork of LZDoom v3.88b which is GZDoom v3)
+// but contains commented out lines for easy porting to modern code base
+// like GZDoom v4x / UZDoom v4x. Comment out LZDoom07 and uncomment UZDoom.
+// For LZDoom07 use "MIN" and "MAX" and for UZDoom - "min" and "max".
+// -------------------------------------------------------------------------
 
 
 
@@ -367,7 +373,9 @@ bool isExpSprWorthMoreCull = false;
 bool isMicroSprDimExp, isTinySprDimExp, isSmallSprDimExp, isMedSprDimExp, isOtherSprDimExp;
 float spriteSizeExp, spriteRadiusExp; // declare them here and extern in gl_sprite.cpp/hw_sprites.cpp
 bool hasSignificantNegativeOffset; int spriteRasterXdimen, spriteRasterYdimen;
-void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing)
+
+void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing) // LZDoom07 signature
+//void ExpandUndersizedSpriteDimensions(AActor *thing) // UZDoom signature
 {
 	if (!thing) return;
 
@@ -395,7 +403,7 @@ void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing)
 		}
 	}
 	// ----------- OpenGL legacy way (faster) - FINISH --------------
-
+	//
 	// ----------- Renderer independed way (slower) - START --------------
 	//if (TexMan.NumTextures() > 0)
 	//{
@@ -413,37 +421,46 @@ void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing)
 	// ----------- Renderer independed way (slower) - FINISH --------------
 	// === LZDoom07 way - FINISH===================================================================
 
-	// === UZDoom way MODERN - START ==============================================================
-	//int  spriteFileOffset             = 0; // Blank rows at top of texture (from file)
-	//spriteRasterXdimen                = 0; // Total texture width (including blank columns)
-	//spriteRasterYdimen                = 0; // Total texture height (including blank rows)
-	//hasSignificantNegativeOffset = false;
-	//FGameTexture *gtex                         = nullptr;
+	// === UZDoom way - START =====================================================================
+	//int           spriteFileOffset = 0; // Blank rows at top of texture (from file)
+	//int           spriteRasterXdimen = 0; // Total texture width (including blank columns)
+	//int           spriteRasterYdimen = 0; // Total texture height (including blank rows)
+	//bool          hasSignificantNegativeOffset = false;
+	//FGameTexture *gtex = nullptr;
 	//
-	//	// First, check for a direct texture override (picnum)
+	//// First, check for a direct texture override (picnum)
 	//if (thing->picnum.isValid())
 	//{
 	//	gtex = TexMan.GetGameTexture(thing->picnum);
 	//}
 	//else
 	//{
+	//	// In UZDoom, sprites are handled by the Texture Manager using their ID and frame.
+	//	// We fetch the game texture using the sprite index and frame from the actor.
+	//	// thing->sprite is the sprite ID, thing->frame is the frame index.
 	//	gtex = TexMan.GameByIndex(thing->sprite, true); // true for animation check
 	//}
 	//
 	//if (gtex)
 	//{
+	//	// Access the underlying FTexture object
 	//	FTexture *tex = gtex->GetTexture();
 	//
 	//	if (tex)
 	//	{
+	//		// GetWidth/Height automatically account for Scale.X/Scale.Y
 	//		spriteRasterXdimen = tex->GetWidth();
 	//		spriteRasterYdimen = tex->GetHeight();
-	//		spriteFileOffset = tex->GetTopOffset();
-	//		int visibleSpriteHeight      = spriteRasterYdimen - spriteFileOffset;
+	//		spriteFileOffset = tex->TopOffset;
+	//		// Calculate visible sprite height (actual drawn pixels)
+	//		int visibleSpriteHeight = spriteRasterYdimen - spriteFileOffset;
 	//		hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
+	//		// Debug output to verify dimensions
+	//		//Printf("Sprite Resolve: %s | RasterH: %d | TopOff: %d | Visible: %d\n", gtex->GetName().GetChars(),
+	//		//       spriteRasterYdimen, spriteFileOffset, visibleSpriteHeight);
 	//	}
 	//}
-	// === UZDoom way MODERN - FINISH ============================================================
+	// === UZDoom way - FINISH ====================================================================
 
 	const bool isMicroSprite = (spriteSizeExp <= 12.0f);
 	const bool isTinySprite = (spriteSizeExp > 12.0f  && spriteSizeExp <= 18.0f);
@@ -1207,16 +1224,25 @@ bool SpriteCrossed1sBboxVoidLinedef(AActor *thing, AActor *viewer)
 	}
 
 	// 3. SIZE ADAPTATION AND PARTICLE PROTECTION
+	float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	if (spriteSize < 1.0f) spriteSize = 8.0f;
+
 	float       viewerX = (float)viewer->X();
 	float       viewerY = (float)viewer->Y();
-	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
-
+	
 	const bool isMicroSprite = (spriteSize <= 12.0f); // Combine micro/tiny
 	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
 
-	float                      spriteScale = 12.7f;
-	if      (isMicroSprite)    spriteScale = 8.5f;
-	else if (isSmallSprite)    spriteScale = 5.2f;
+	// Here's a thing about THIS PARTICULAR FUNCTION:
+	// The smaller the "spriteScale" the MORE it CULLS
+	float                                                spriteScale = 3.7f;
+	if      (isMicroSprDimExp && isExpSprWorthMoreCull)  spriteScale = 0.5f;
+	else if (isTinySprDimExp  && isExpSprWorthMoreCull)  spriteScale = 0.75f;
+	else if (isSmallSprDimExp && isExpSprWorthMoreCull)  spriteScale = 1.0f;
+	else if (isMedSprDimExp   && isExpSprWorthMoreCull)  spriteScale = 1.2f;
+	else if (isOtherSprDimExp && isExpSprWorthMoreCull)  spriteScale = 0.7f;
+	else if (isMicroSprite)                              spriteScale = 3.5f;
+	else if (isSmallSprite)                              spriteScale = 2.2f;
 
 	float effectiveRadius = thing->radius;
 	if (effectiveRadius < 1.0f) effectiveRadius = 4.0f;
@@ -1912,11 +1938,21 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool &out
 					FTextureID midtex = testLine->sidedef[sideno]->GetTexture(side_t::mid);
 					if (midtex.isValid() && midtex.GetIndex() > 0)
 					{
+						// === LZDoom07 way START ==============================================
 						if (TexMan[midtex])
 						{
 							lineContainsValidMidTex = true;
 							break;
 						}
+						// === LZDoom07 way FINISH =============================================
+						// === UZDoom way START ================================================
+						//FGameTexture *gtex = TexMan.GameTexture(midtex);
+						//if (gtex && gtex->isValid() && gtex->GetTexture() != nullptr && !gtex->GetName().IsEmpty())
+						//{
+						//	lineContainsValidMidTex = true;
+						//	break;
+						//}
+						// === UZDoom way FINISH ===============================================
 					}
 				}
 
@@ -3364,15 +3400,15 @@ bool IsSpriteBehind3DFloorPlane(DVector3 &cameraPos, DVector3 &spritePos, sector
 		GetSectorBounds3DFloors(target, minBound, maxBound);
 
 		// --- LZDoom07 way START ---
-		 minBound -= HORIZ_SAFETY;
-		 maxBound += HORIZ_SAFETY;
+		 //minBound -= HORIZ_SAFETY;
+		 //maxBound += HORIZ_SAFETY;
 		// --- LZDoom07 way FINISH ---
 
 		// --- UZDoom way START ---
-		//minBound.X -= HORIZ_SAFETY;
-		//minBound.Y -= HORIZ_SAFETY;
-		//maxBound.X += HORIZ_SAFETY;
-		//maxBound.Y += HORIZ_SAFETY;
+		minBound.X -= HORIZ_SAFETY;
+		minBound.Y -= HORIZ_SAFETY;
+		maxBound.X += HORIZ_SAFETY;
+		maxBound.Y += HORIZ_SAFETY;
 		// --- UZDoom way FINISH ---
 
 		// 3. Check if both camera and sprite are within bounds

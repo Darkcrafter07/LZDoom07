@@ -1,4 +1,36 @@
+//
+//---------------------------------------------------------------------------
+//
+// Copyright(C) 2026 - Vadim Taranov (Darkcrafter07)
+// All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program.  If not, see http://www.gnu.org/licenses/
+//
+//--------------------------------------------------------------------------
+//    ---=== Sprite/Particle 3D occlusion system by Darkcrafter07 ===---
+// ... made specifically for Hybrid Forced-Perspective sprite clipping.
+// The code is made for LZDoom07 (fork of LZDoom v3.88b which is GZDoom v3)
+// but contains commented out lines for easy porting to modern code base
+// like GZDoom v4x / UZDoom v4x. Comment out LZDoom07 and uncomment UZDoom.
+// For LZDoom07 use "MIN" and "MAX" and for UZDoom - "min" and "max".
+// -------------------------------------------------------------------------
+
+
+
 // a_spriteocclusion3d.h - Sprite/Particle 3D occlusion system by Darkcrafter07
+
+
 
 #pragma once
 
@@ -36,8 +68,8 @@
 // How to call them examples (both LZDoom07 and UZDoom)
 // ====================================================
 //	//Make sure all 1sided checks and MidTxt checks do NOT have FOV(Frustum Culling) and 2sided - HAVE them instead
-//ExpandUndersizedSpriteDimensionsCachedWrapper(thing, spriteSize, spriteRadius, hasSignificantNegativeOffset,
-//                                                                    spriteRasterXdimen, spriteRasterYdimen);
+//ExpandUndersizedSpriteDimensionsCachedWrapper(this, thing); // LZDoom07 signature
+//ExpandUndersizedSpriteDimensionsCachedWrapper(thing); // UZDoom signature
 //if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 //bool viewerCrossed1sLine = ViewerCrossed1sidedLinedefCachedWrapper(thing, r_viewpoint.camera);
 //bool thingFacingBboxCrossed1sided = SpriteBboxFacingCameraCrossed1sLineCachedWrapper(thing, r_viewpoint.camera);
@@ -58,7 +90,8 @@
 extern bool anyWallBefore2Sline;
 extern float Ztolerance2sided, Ztolerance2sidedBot;
 
-void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing);
+void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing); // LZDoom07 signature
+//void ExpandUndersizedSpriteDimensions(AActor *thing); // UZDoom signature
 
 bool IsAnamorphicDistanceCulled(AActor* thing, float gl_anamorphic_spriteclip_distance_cull);
 

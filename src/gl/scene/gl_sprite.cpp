@@ -1149,7 +1149,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float viewerBottom = viewer->Z(); float viewerTop = viewerBottom + EyeHeight;
 		float spriteBottom = thing->Z(); float spriteTop = thing->Top();
 
-		ExpandUndersizedSpriteDimensions(this, thing); // Mods have tiny radius on big sprites
+		ExpandUndersizedSpriteDimensions(this, thing); // Mods have tiny radius on big sprites - LZDoom07 way
+		//ExpandUndersizedSpriteDimensions(thing); // Mods have tiny radius on big sprites - UZDoom way
 		extern bool hasSignificantNegativeOffset, isExpSprWorthMoreCull;
 		extern bool isMicroSprDimExp, isTinySprDimExp, isSmallSprDimExp, isMedSprDimExp, isOtherSprDimExp;
 		extern float spriteSizeExp, spriteRadiusExp; // MAKE SURE that it ASLO expands vanilla -
@@ -1244,13 +1245,16 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			else                        tintersect = 1.0f;
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
 			// -------------------- COMPUTE STEEP FACTOR |-> START|
-			bool  isonsteepsurf, isonsteepsurfmild, ismildsteep;
-			float steepness = 5.25f; // detect only very steep surfaces
+			bool  isonultrasteepsurf, isonsteepsurf, isonsteepsurfmild, ismildsteep;
+			float steepnessultra = 5.25f; // detect only ultra steep surfaces
+			float steepnessultrafact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepnessultra);
+			      isonultrasteepsurf = steepnessultrafact > 0.0001f;
+			float steepness = 2.75f;      // detect simply steep surfaces
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepness);
-			isonsteepsurf = steepnessfact > 0.0001f;
-			float steepnessmild = 1.5f; // detect not so steep surfaces too
+			      isonsteepsurf = steepnessfact > 0.0001f;
+			float steepnessmild = 1.5f;   // detect not so steep surfaces too
 			float steepnessmildfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepnessmild);
-			isonsteepsurfmild = steepnessmildfact > 0.0001f;
+			      isonsteepsurfmild = steepnessmildfact > 0.0001f;
 			float viewerEyeLevelZ = viewerBottom + EyeHeight;
 			//float heightComparisonBounds = (anyWallBefore2Sline) ? 24.0f : 16.0f;
 			//bool  isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= heightComparisonBounds;
@@ -1338,8 +1342,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					if (fabs(vpz - btm) < 128.0f)     sprPrxFctr = 0.15f;
 				}
 				// isSpriteOccluded must include all 3: sprX1sVoid, sprX1sVoidBbox, sprX1sBbox
-				// and added "isonsteepsurf" via "ADD" to remove false positives in coridors.
-				// Paradoxicaly, adding "isonsteepsurf" keeps invoid spawn lamps of
+				// and added "isonultrasteepsurf" via "ADD" to remove false positives in coridors.
+				// Paradoxicaly, adding "isonultrasteepsurf" keeps invoid spawn lamps of
 				// Project Brutality 3 culled and that's good
 				bool thingCrossedAllKindsOf1sLine = thingCrossed1sVoidLine ||
                       thingCrossed1sVoidBbox || thingFacingBboxCrossed1sided;
@@ -1422,7 +1426,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					else              incrAnamMaximum = 0.007f;   // Smaller amount for all the rest sprites
 				}
 				// -- PHASE #2 - determine the distant effect amount fade
-				if ((dist < 1200.0f) && isonsteepsurf)
+				if ((dist < 1200.0f) && isonultrasteepsurf)
 				{
 					// Max effect in minAnamDist, full effect fade in maxAnamDist
 					const float minAnamDist = 96.0f; const float maxAnamDist = 512.0f;
