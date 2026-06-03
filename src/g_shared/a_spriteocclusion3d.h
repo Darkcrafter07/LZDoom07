@@ -55,6 +55,7 @@
 
 
 
+extern bool anyWallBefore2Sline;
 extern float Ztolerance2sided, Ztolerance2sidedBot;
 
 void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing);

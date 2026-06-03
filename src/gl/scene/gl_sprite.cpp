@@ -1114,32 +1114,32 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float spriteRadius = spriteRadInit;
 		float spriteSize = spriteSizInit;
 
-		bool isMicroSprite = (spriteSize <= 8.0f && spriteSize < 12.0f);
-		bool isTinySprite = (spriteSize <= 12.0f && spriteSize < 18.0f);
-		bool isSmallSprite = (spriteSize <= 18.0f);
-		bool isMediumSprite = (spriteSize > 18.0f && spriteSize < 38.0f);
-		bool isLargeSprite = (spriteSize > 38.0f);
+		const bool isMicroSprite = (spriteSize <= 8.0f && spriteSize < 12.0f);
+		const bool isTinySprite = (spriteSize <= 12.0f && spriteSize < 18.0f);
+		const bool isSmallSprite = (spriteSize <= 18.0f);
+		const bool isMediumSprite = (spriteSize > 18.0f && spriteSize < 38.0f);
+		const bool isLargeSprite = (spriteSize > 38.0f);
 
-		bool islegacyversionprojectile =
+		const bool islegacyversionprojectile =
 			(thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
 			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
 			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
-		bool islegacyversionmonster =
+		const bool islegacyversionmonster =
 			(thing->flags & MF_SHOOTABLE) && (thing->flags & MF_COUNTKILL) &&
 			(thing->flags & MF_SOLID) && (thing->flags2 & MF2_PUSHWALL) &&
 			(thing->flags4 & MF4_CANUSEWALLS) && (thing->flags2 & MF2_MCROSS) &&
 			(thing->flags2 & MF2_PASSMOBJ) && (thing->flags3 & MF3_ISMONSTER);
-		bool isfloatingmonster =
+		const bool isfloatingmonster =
 			(thing->flags & MF_SHOOTABLE) && (thing->flags & MF_COUNTKILL) &&
 			(thing->flags & MF_SOLID) && (thing->flags2 & MF2_PUSHWALL) &&
 			(thing->flags4 & MF4_CANUSEWALLS) && (thing->flags2 & MF2_MCROSS) &&
 			(thing->flags2 & MF2_PASSMOBJ) && (thing->flags3 & MF3_ISMONSTER) &&
 			(thing->flags & MF_FLOAT || thing->flags & MF_INFLOAT);
-		bool isfloatingsprite = (thing->flags & MF_FLOAT || thing->flags & MF_INFLOAT);
-		bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
-		bool isactorsmallbutnotcorpse = (spriteSize >= 8.0f && spriteSize <= 18.0f) && !isactoracorpse;
-		bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
-		bool isabonusitem = ((spriteSize >= 16.0f && spriteSize <= 25.0f) &&
+		const bool isfloatingsprite = (thing->flags & MF_FLOAT || thing->flags & MF_INFLOAT);
+		const bool isactoracorpse = (thing->flags & MF_CORPSE) || (thing->flags & MF_ICECORPSE);
+		const bool isactorsmallbutnotcorpse = (spriteSize >= 8.0f && spriteSize <= 18.0f) && !isactoracorpse;
+		const bool isaregularsizedmonster = (islegacyversionmonster && (spriteSize <= 38.0f));
+		const bool isabonusitem = ((spriteSize >= 16.0f && spriteSize <= 25.0f) &&
 			(!islegacyversionmonster || !isfloatingsprite || !isactoracorpse));
 
 		AActor* viewer = r_viewpoint.camera; const DVector3 &vp = r_viewpoint.Pos;
@@ -1164,6 +1164,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		( (spriteRasterXdimen <= 24 && spriteRasterYdimen <= 24) || !hasSignificantNegativeOffset)  );
 		if (useRegularForcedPerspective) // Use Forced-Perspective without occlusion checks, no smart clipping
 		{
+			// Start regular Forced-Perspective
 			float minbias = r_spriteclipanamorphicminbias; minbias = clamp(minbias, 0.3f, 1.0f);
 			// Regular and 3D Floor-Aware Heights
 			float btm = GetActualSpriteFloorZ3DfloorsAndOther(thing->Sector, thingpos, thing) - thing->Floorclip;
@@ -1243,7 +1244,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			else                        tintersect = 1.0f;
 			if (thing->waterlevel >= 1 && thing->waterlevel <= 2) bintersect = tintersect = 1.0f;
 			// -------------------- COMPUTE STEEP FACTOR |-> START|
-			bool  isonsteepsurf, isonsteepsurfmild, ismildsteep, istrulysteep;
+			bool  isonsteepsurf, isonsteepsurfmild, ismildsteep;
 			float steepness = 5.25f; // detect only very steep surfaces
 			float steepnessfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepness);
 			isonsteepsurf = steepnessfact > 0.0001f;
@@ -1251,6 +1252,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float steepnessmildfact = pow(MAX(1.f - bintersect, 1.f - tintersect), steepnessmild);
 			isonsteepsurfmild = steepnessmildfact > 0.0001f;
 			float viewerEyeLevelZ = viewerBottom + EyeHeight;
+			//float heightComparisonBounds = (anyWallBefore2Sline) ? 24.0f : 16.0f;
+			//bool  isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= heightComparisonBounds;
 			bool  isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= 24.0f;
 			float viewerHalfEyeLevelZ = viewerBottom + (EyeHeight * 0.5f);
 			bool  isSprBotAtHalfEyeLevel = fabsf(spriteBottom - viewerHalfEyeLevelZ) <= 12.0f;
@@ -1340,11 +1343,16 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				// Project Brutality 3 culled and that's good
 				bool thingCrossedAllKindsOf1sLine = thingCrossed1sVoidLine ||
                       thingCrossed1sVoidBbox || thingFacingBboxCrossed1sided;
+				// thingCrossed2sBboxWall for leaks of small sprites with big radius expansion
+				// on maps like Doom2 Remake Map12 through 2S obstr, thingCrossed2sBboxFacing
+				// is for reducing leaks on regular cases where regular sizes sprites stand
+				// close to 2S obstrc and especially when viewer is coplanar to them, like
+				// Doom2 Map06, the final bunker door between yellow key and teleporter.
 				bool isSpriteOccluded = (!visible1sidesInfTallObstr || 
 					(thingCrossedAllKindsOf1sLine && isonsteepsurf) ||
 					    !visible2sideMidTex || !visible3dfloorSides ||
 				                      (!visible2sideTallEnoughObstr ||
-					     (thingCrossed2sBboxWall && ismildsteep)) );
+					((thingCrossed2sBboxWall || thingCrossed2sBboxFacing) && ismildsteep)) );
 				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;
 				else if (!visible2sideMidTex)      smallsprtncrps_factor = 0.25f;
 				else                               smallsprtncrps_factor = 3.4f;      // unculled
@@ -1359,8 +1367,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					regularsizmonster_factor1 :
 					regularsizmonster_factor1 * 4.0f;
 				float extended_radius1 = (isactorsmallbutnotcorpse) ?
-					spriteSize * smallsprtncrps_factor :   // 3.64x small noncorpsesprites, 0.25-1.0 ocl
-					spriteSize;                            // 1x for all the rest sprites
+					spriteSize * smallsprtncrps_factor :     // 3.64x small noncorpsesprites, 0.25-1.0 ocl
+					spriteSize;                              // 1x for all the rest sprites
 				float extended_radius2 = (islegacyversionprojectile) ?
 					extended_radius1 * projectiles_factor :  // 8x for proj like explosions and 1x ocl
 					extended_radius1;                        // 1x for all the rest sprites

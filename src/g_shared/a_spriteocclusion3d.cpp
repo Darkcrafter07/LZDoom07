@@ -1745,15 +1745,17 @@ bool SpriteCrossed2sBBoxFaceLineCachedWrapper(AActor *thing, AActor *viewer)
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
 
+
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
-// This one is nice for taming "increaseAnam" leaks
-// This one culls sprites if they crossed 2sided lines but ALSO CULLS if there's a WALL OR MID-TEX IN FRONT!
-// but if a side of the sprite bounding box facing the viewer - uncull option enabled in wrapper
-bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
+// This function tames "increaseAnam" projection leaks by evaluating surrounding 2-sided lines.
+// It culls sprites if they are clipped by a high floor step or blocked by a valid middle texture.
+// Relies on a stable static expanded radius and strict cross-product line-of-sight filtering.
+bool anyWallBefore2Sline = false;
+bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool &outWallFound)
 {
 	if (!thing || !viewer) return false;
 
-	//if (CheckFrustumCullingUNUSED(thing)) return false;
+	//if (CheckFrustumCulling(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	sector_t *thingSector = thing->Sector;
@@ -1766,7 +1768,30 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 	float thingX = (float)thing->X();
 	float thingY = (float)thing->Y();
 
-	// 1. UNIVERSAL SIZE ADAPTATION
+	float EyeHeight = 41.0f;
+	if (viewer->player && viewer->player->mo)
+	{
+		EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+	}
+
+	float viewerBottom = viewer->Z();
+	float viewerTop = viewerBottom + EyeHeight;
+	float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
+	float viewerTopAdj = viewerTop + Ztolerance2sided;
+
+	float spriteBottom, spriteTop;
+	if (thing->flags & MF_SPAWNCEILING)
+	{
+		spriteTop = (float)thing->Z();
+		spriteBottom = spriteTop - (float)thing->Height;
+	}
+	else
+	{
+		spriteBottom = (float)thing->Z();
+		spriteTop = spriteBottom + (float)thing->Height;
+	}
+
+	// 1. UNIVERSAL SIZE ADAPTATION (STATIC BACKUP)
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
 	const bool  isMicroSprite = (spriteSize < 12.0f);
 	const bool  isTinySprite = (spriteSize >= 12.0f && spriteSize < 18.0f);
@@ -1775,9 +1800,9 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 	const bool  isLargeSprite = (spriteSize >= 45.0f && spriteSize < 60.0f);
 	const bool  isHugeSprite = (spriteSize >= 60.0f);
 
-	// Scale for test point offsets (how far we look around the center)
-	float                      spriteScale = 12.5f; // isMircosprite and other unmentioned
-	if (isTinySprite)          spriteScale = 9.5f;
+	// Base Scales for test point offsets - kept static for reliable deep niche capture
+	float                      spriteScale = 12.5f;
+	if      (isTinySprite)     spriteScale = 9.5f;
 	else if (isSmallSprite)    spriteScale = 8.5f;
 	else if (isMediumSprite)   spriteScale = 7.7f;
 	else if (isLargeSprite)    spriteScale = 5.4f;
@@ -1785,14 +1810,19 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 
 	float adjustedRadius = thing->radius * spriteScale;
 
-	// Scale for the "Kill Zone" (how close the portal must be to block anamorphosis)
-	float                      strictZoneScale = 12.5f; // isMircosprite and other unmentioned
+	// Scale for the "Kill Zone"
+	float                      strictZoneScale = 12.5f;
 	if      (isTinySprite)     strictZoneScale = 9.5f;
 	else if (isSmallSprite)    strictZoneScale = 7.5f;
 	else if (isMediumSprite)   strictZoneScale = 5.7f;
 	else if (isLargeSprite)    strictZoneScale = 4.4f;
 	else if (isHugeSprite)     strictZoneScale = 2.15f;
+
 	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
+
+	// Reset the reference parameter bound to this specific execution call.
+	// Never clear the global 'anyWallBefore2Sline' here as it wipes cached entries on trailing steps.
+	outWallFound = false;
 
 	// 2. SETUP DYNAMIC TOTAL AREA BOUNDS (NO MORE RAY-GAP LEAKS)
 	float areaMinX = thingX - adjustedRadius; float areaMaxX = thingX + adjustedRadius;
@@ -1807,7 +1837,6 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 		float px = -dy; float py = dx;
 		const float sidebboxfacetol = 0.7071f;
 
-		// Calculate frontal wing expansion coordinates
 		float frontX = thingX + (dx * adjustedRadius);
 		float frontY = thingY + (dy * adjustedRadius);
 		float leftX = thingX + (dx * adjustedRadius * sidebboxfacetol) + (px * adjustedRadius * sidebboxfacetol);
@@ -1815,7 +1844,6 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 		float rightX = thingX + (dx * adjustedRadius * sidebboxfacetol) - (px * adjustedRadius * sidebboxfacetol);
 		float rightY = thingY + (dy * adjustedRadius * sidebboxfacetol) - (py * adjustedRadius * sidebboxfacetol);
 
-		// Clamp the scanned area box strictly to the frontal facing hemisphere bounds
 		areaMinX = MIN(thingX, MIN(frontX, MIN(leftX, rightX)));
 		areaMaxX = MAX(thingX, MAX(frontX, MAX(leftX, rightX)));
 		areaMinY = MIN(thingY, MIN(frontY, MIN(leftY, rightY)));
@@ -1828,8 +1856,9 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 	int minBY = level.blockmap.GetBlockY(areaMinY - 16.0f);
 	int maxBY = level.blockmap.GetBlockY(areaMaxY + 16.0f);
 
-	float sprBot = (float)thing->Z();
-	float viewerFeet = (float)viewer->Z(); // Fetch viewer base height
+	// Poll metrics for visibility window tolerance calculation
+	int totalLinesEvaluated = 0;
+	int solidWallsEncountered = 0;
 
 	for (int bx = minBX; bx <= maxBX; bx++)
 	{
@@ -1849,18 +1878,30 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 				float l1x = (float)testLine->v1->fX(); float l1y = (float)testLine->v1->fY();
 				float l2x = (float)testLine->v2->fX(); float l2y = (float)testLine->v2->fY();
 
-				// Check if this line segment physically cuts into or touches our protective area box boundaries
+				// Check bounding box overlaps
 				float lineMinX = MIN(l1x, l2x); float lineMaxX = MAX(l1x, l2x);
 				float lineMinY = MIN(l1y, l2y); float lineMaxY = MAX(l1y, l2y);
 
 				if (lineMaxX < areaMinX || lineMinX > areaMaxX || lineMaxY < areaMinY || lineMinY > areaMaxY)
 				{
-					continue; // Line is entirely outside the target volume, bypass
+					continue;
 				}
 
-				// Find a stable evaluation node point along the line inside the block cell
 				float evalX = (l1x + l2x) * 0.5f;
 				float evalY = (l1y + l2y) * 0.5f;
+
+				// --- HARD PROXIMITY GATE (STRICTLY AT THING ZONE) ---
+				float dxToThing = evalX - thingX;
+				float dyToThing = evalY - thingY;
+				float distToThingSq = (dxToThing * dxToThing) + (dyToThing * dyToThing);
+
+				if (distToThingSq > strictZoneSq)
+				{
+					continue;
+				}
+
+				// Only count those 2S lines that got in the responsibility zone
+				totalLinesEvaluated++;
 
 				// 4. ADVANCED MID-TEXTURE PROXIMITY CULL FILTER
 				bool lineContainsValidMidTex = false;
@@ -1871,29 +1912,19 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 					FTextureID midtex = testLine->sidedef[sideno]->GetTexture(side_t::mid);
 					if (midtex.isValid() && midtex.GetIndex() > 0)
 					{
-						// === LZDoom07 way START ==============================================
 						if (TexMan[midtex])
 						{
 							lineContainsValidMidTex = true;
 							break;
 						}
-						// === LZDoom07 way FINISH =============================================
-						// === UZDoom way START ================================================
-						//FGameTexture *gtex = TexMan.GameTexture(midtex);
-						//if (gtex && gtex->isValid() && gtex->GetTexture() != nullptr && !gtex->GetName().IsEmpty())
-						//{
-						//	lineContainsValidMidTex = true;
-						//	break;
-						//}
-						// === UZDoom way FINISH ===============================================
 					}
 				}
 
 				if (lineContainsValidMidTex)
 				{
-					return true; // HARD-CULL INSTANT HIDE: Found a grate/fence right inside the area radius bounds!
+					solidWallsEncountered++;
+					continue; // Go next, gather voices instead of hard return!
 				}
-				// ==========================================================================
 
 				// UNCONDITIONAL VOLUME OCCLUSION VERDICT (HEIGHT STEPS)
 				sector_t* frontSec = testLine->frontsector;
@@ -1901,70 +1932,87 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer)
 
 				if (frontSec && backSec)
 				{
+					bool touchesSpriteSector = (frontSec == thingSector || backSec == thingSector);
+
 					float fFloor = (float)frontSec->floorplane.ZatPoint(evalX, evalY);
 					float bFloor = (float)backSec->floorplane.ZatPoint(evalX, evalY);
 
-					// Identify if the step-up rises relative to the actor's current stand position
-					float nextFloorZ = (thingSector == frontSec) ? bFloor : fFloor;
+					float nextFloorZ = MAX(fFloor, bFloor);
 
-					// --- THE CEILING/TOP BOUNDS SHIELD FIX ---
-					// Calculate the absolute physical top of the sprite body
-					float sprTop = sprBot + (float)thing->Height;
+					float cullingTolerance = touchesSpriteSector ? 32.0f : 1.0f;
 
-					// A two-sided line can ONLY be classified as a solid blocking wall 
-					// if its floor level physically rises HIGHER than the top of the sprite itself!
-					// This completely blocks side-stairs and local floor ridges from cutting 
-					// off objects that rest safely on elevated platforms or tables.
-					if (nextFloorZ > (sprTop + 1.0f))
+					if (nextFloorZ > (spriteTop + cullingTolerance))
 					{
-						return true; // Confirmed real solid blocking wall obstacle -> Hide!
+						solidWallsEncountered++; // This is a hard wall
 					}
 				}
 				else
 				{
-					return true; // Structural breakdown defaults to safe cull
+					solidWallsEncountered++;
 				}
 			}
 		}
 	}
 
-	return false;
+	// --- POLL THE REALLY VISIBLE PART ---
+	if (totalLinesEvaluated > 0)
+	{
+		float wallRatio = (float)solidWallsEncountered / (float)totalLinesEvaluated;
+
+		if (wallRatio >= 0.4f)
+		{
+			outWallFound = true;
+			return true; // Cull it hard: solid walls all around (Doom2 Remake - Map12)
+		}
+	}
+
+	return false; // Visibility window tolerance: free area ahead, do NOT cull!
 }
 
 struct SpriteCrossed2sBboxWallCacheEntry
 {
 	int  lastMapTimeUpdateTick = -1;
 	bool cached2sidedSpriteCrossedResult = false;
+	bool cachedAnyWallBefore2Sline = false;
 };
 static TMap<AActor *, SpriteCrossed2sBboxWallCacheEntry> SpriteCrossed2sBboxWallCache;
 
 bool SpriteCrossed2sBboxFaceWallCachedWrapper(AActor *thing, AActor *viewer)
 {
-	// Fast escape checks
 	if (!thing || !viewer) return false;
 
-	// Use caching if enabled
 	if (enableAnamorphCache)
 	{
-		const int         currentMapTimeTick = level.maptime;
+		const int currentMapTimeTick = level.maptime;
 		SpriteCrossed2sBboxWallCacheEntry &entry = SpriteCrossed2sBboxWallCache[thing];
 
-		// Return cached result if valid (updated within last 3 ticks)
+		// 1. Cache hit: restore flag particulary for THIS sprite
 		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 8)
 		{
+			anyWallBefore2Sline = entry.cachedAnyWallBefore2Sline;
 			return entry.cached2sidedSpriteCrossedResult;
 		}
 
-		// Compute and cache fresh result from non-cached function
-		bool resultSprX2sBboxFaceLine = SpriteCrossed2sBboxFaceWallLinedef(thing, viewer);
+		// 2. Calculation: pass local flag with the 3rd arg
+		bool localWallFound = false;
+		bool resultSprX2sBboxFaceLine = SpriteCrossed2sBboxFaceWallLinedef(thing, viewer, localWallFound);
+
+		// 3. Record in cache: isolate data from rewrite by other sprites
 		entry.cached2sidedSpriteCrossedResult = resultSprX2sBboxFaceLine;
+		entry.cachedAnyWallBefore2Sline = localWallFound;
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+
+		// Export outside in the global bool
+		anyWallBefore2Sline = localWallFound;
 		return resultSprX2sBboxFaceLine;
 	}
 	else
 	{
-		// Original uncached behavior
-		return SpriteCrossed2sBboxFaceWallLinedef(thing, viewer);
+		// Uncached way
+		bool localWallFound = false;
+		bool result = SpriteCrossed2sBboxFaceWallLinedef(thing, viewer, localWallFound);
+		anyWallBefore2Sline = localWallFound;
+		return result;
 	}
 }
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
