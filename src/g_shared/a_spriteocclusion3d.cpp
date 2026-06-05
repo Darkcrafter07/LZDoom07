@@ -3278,7 +3278,7 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 
 	float effectiveRadius = thing->radius;
 	// If a sprite has no radius or a really small one
-	if (effectiveRadius < 1.0f) effectiveRadius = 18.0f;
+	if (effectiveRadius < 1.0f) effectiveRadius = 12.0f;
 	float adjustedRadius = effectiveRadius * spriteScale;
 
 	const bool isLegacyVersionProjectile = thing->flags & (MF_MISSILE | MF_NOBLOCKMAP | MF_NOGRAVITY) ||
@@ -3599,13 +3599,30 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 	if (pathData.hitValidFence)
 	{
 		float maxDist = pathData.isSolidFence ? MAX_DIST_SOLID : MAX_DIST_MASKED;
+
+		// ============================================================================================
+		// Anamorphic Scale Expansion Law] - Hard 320-Unit Fence Latch for Small Sprites
+		// Because small pickups and ammo items (isSmallSpriteForLedge) have their radii artificially 
+		// inflated by up to 9.5x via anamorphosis, the standard maxDist+EDGE_BUFFER threshold is way too tight. 
+		// The expanded edges leak long before the center gets close. 
+		// We dynamically force the threshold to 320 units for small expanded items to capture 
+		// the obstruction way ahead, completely sealing the Map19 shotgun ammo side leak.
+		// ============================================================================================
 		float threshold = maxDist + EDGE_BUFFER;
+		if (isMicroSprite || isSmallSprite)
+		{
+			threshold = 320.0f; // Give the expanded bounding box a massive 320u geometric buffer
+		}
 
 		if (pathData.closestMidTexFenceDist <= threshold)
 		{
 			// Calculate proximity factor from the strictly accumulated closest fence distance
 			float distFromEdge = MAX(0.0f, pathData.closestMidTexFenceDist - EDGE_BUFFER);
-			float factor = lerp(0.25f, 1.0f, distFromEdge / maxDist);
+
+			// Scale the lerp clamp safely to support the expanded 320-unit envelope
+			float dynamicMaxDist = (isMicroSprite || isSmallSprite) ? 320.0f : maxDist;
+			float factor = lerp(0.25f, 1.0f, distFromEdge / dynamicMaxDist);
+
 			proximity_factor = clamp(factor, 0.25f, 1.0f);
 			rayHitAnyValidMidTexture = true;
 		}
