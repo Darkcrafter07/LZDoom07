@@ -2058,8 +2058,8 @@ bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 						if ((dx_int * dx_int + dy_int * dy_int) < strictZoneSq)
 						{
 							// ============================================================================================
-							// [Core Law] - Differentiated 3D Portal Topography Filter
-							// We calculate exact heights right at the line intersection spot to check the delta.
+							// HARDCORE GEOMETRY SPLITTER] - Absolute Map01 vs Map06 Resolver
+							// Completely bypasses floating-point sub-pixel erosion on sector seams.
 							// ============================================================================================
 							float fFloor = (float)testLine->frontsector->floorplane.ZatPoint(ix, iy);
 							float bFloor = (float)testLine->backsector->floorplane.ZatPoint(ix, iy);
@@ -2069,28 +2069,44 @@ bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 							float floorDelta = fabsf(fFloor - bFloor);
 							float ceilingDelta = fabsf(fCeil - bCeil);
 
-							// RULE 1: FLAT SURFACE BYPASS (Safe for Map26 aligned ledges)
-							// If floor and ceiling delta changes are less or equal to 4 units, it's a flat layout seam!
-							if (floorDelta <= 4.0f && ceilingDelta <= 4.0f)
+							float highestFloor = MAX(fFloor, bFloor);
+							float lowestCeil = MIN(fCeil, bCeil);
+
+							// Fetch base structural ground levels
+							float playerFloorZ = (float)viewer->Z();
+							float actorFloorZ = (float)thingSector->floorplane.ZatPoint(ix, iy);
+
+							// --- SPLITTER PATH 1: PURE FLAT CORRIDOR (Map01 Hallway Protection) ---
+							// If the line has ABSOLUTELY ZERO floor change (floorDelta == 0), it is a flat floor seam.
+							// However, on Map06, the 8-unit ledge edge line might return floorDelta == 0 under steep 
+							// grazing angles. To isolate Map01, we verify: if it's dead flat AND sitting at the exact 
+							// same floor level as the player's current boots (highestFloor == playerFloorZ), 
+							// it is 100% a flat hallway light-grid strip. WE BYPASS CULLING INSTANTLY!
+							const float zeroHeightDiff = 2.1f;
+							if (floorDelta < zeroHeightDiff && ceilingDelta < zeroHeightDiff)
 							{
-								continue; // Ignore this flat seam, do NOT reset anamorphosis!
+								if (fabsf(highestFloor - playerFloorZ) < 1.0f)
+								{
+									continue; // Pure flat corridor floor seam detected (Map01), pass safely!
+								}
 							}
 
-							// RULE 2: DROP-OFF / CLIFF BYPASS (Safe for Map02 trenches)
-							// Determine if the floor height drops down relative to the direction towards the player.
-							// If we are looking from a low ditch to a higher object floor, or vice versa, 
-							// evaluate if the step represents a cliff drop-off instead of a rising blocking ledge.
-							float currentSectorFloor = (float)thingSector->floorplane.ZatPoint(ix, iy);
+							// --- SPLITTER PATH 2: CLIFF DROP-OFF / TRENCH (Map02 Deep Ditch Protection) ---
+							// Evaluate direction: if the floor drops DOWN as we step from target towards player 
+							// (the adjacent floor is physically lower than the sprite's standing sector ground).
 							float adjacentSectorFloor = (testLine->frontsector == thingSector) ? bFloor : fFloor;
-
-							// If the height decreases (adjacent floor is LOWER than sprite floor), it's a cliff drop-off!
-							if (adjacentSectorFloor < currentSectorFloor)
+							if (adjacentSectorFloor < (actorFloorZ - zeroHeightDiff))
 							{
-								continue; // Clear open drop-off/cliff detected, do NOT reset anamorphosis!
+								continue; // Clear open cliff drop-off / trench detected (Map02), pass safely!
 							}
 
-							// HARD WALL CONFIRMED: The ledge rises up (Map06) or changes massively, trigger clamp!
-							return true;
+							// --- SPLITTER PATH 3: HARD WALL & LEDGE INTERCEPT (Map06 Ledge Protection) ---
+							// If we passed the corridor bypass and cliff bypass, any remaining elevated line 
+							// or step rising above the player's floor level is a hard boundary structure!
+							if (highestFloor >= (playerFloorZ + 4.0f) || lowestCeil <= (viewer->Z() + 41.0f))
+							{
+								return true; // True structural barrier or 8-unit ledge intercepted (Map06), CULL NOW!
+							}
 						}
 					}
 				}
@@ -3483,69 +3499,73 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			}
 		}
 
-		// === STEP 2: MAIN SCROLLING LOOP ===
+		// === STEP 2: MAIN SCROLLING LOOP (ANGULAR SPLITTER PROTECTION) ===
 		int *list = level.blockmap.GetLines(bx, by);
 		for (int i = 0; list[i] != -1; i++)
 		{
 			line_t *line = &level.lines[list[i]];
 			if (!line || line->frontsector == nullptr) continue;
 
-			// THE SMART CONTEXT FILTER (The Near-Viewer 1S Bugfix)
-			const bool isLine1Sided = (line->backsector == nullptr);
-			if (isLine1Sided)
-			{
-				// If there is no mid-texture context in a 3x3 grid, skip 1S walls immediately (MAP02 specs)
-				if (!nearbyBlockContainsValid2SMidTex) continue;
-
-				// === CRITICAL FIX FOR MAP26 & MAP19 ===
-				// Even if we are near a window context, a 1-sided wall can ONLY be a window frame
-				// if it is close to the target sprite! If the intersection happens right in front 
-				// of the viewer's face, it's just the player's room wall corner. SKIP IT!
-				// We project the vectors to find out the exact intersection point later, 
-				// but we can do a fast ray distance check right here.
-				FVector2 lineStartCheck = { (float)line->v1->fX(), (float)line->v1->fY() };
-				FVector2 lineEndCheck = { (float)line->v2->fX(), (float)line->v2->fY() };
-
-				// Calculate approximate distance from viewer to this 1S line segment
-				// using simple 2D line-to-point math or checking blockmap step 'd'
-				// 'd' is our current distance along the ray scanner!
-				if (d < 144.0f)
-				{
-					continue; // Ignore any 1-sided wall that is within 144 units from the viewer's face
-				}
-			}
-
 			// 9. MULTI-RAY PRECISION OCCLUSION DETECTION WITH VIRTUAL LINEDEF EXTENSION
 			FVector2 lineStart = { (float)line->v1->fX(), (float)line->v1->fY() };
 			FVector2 lineEnd = { (float)line->v2->fX(), (float)line->v2->fY() };
 			FVector2 lineV = lineEnd - lineStart;
 
-			// - LINEDEF PADDING EXTENSION CORE (Doom2 Map19 firing bunker steep fence) -
-			// Virtually lengthen wall line by 16u outwards (looked at steep surfaces)
-			// so that oblique sliding sight rays don't physically bypass its vertices.
 			float lineLen = lineV.Length();
+			FVector2 lineDir = { 0.0f, 0.0f };
 			if (lineLen > 0.1f)
 			{
-				FVector2    lineDir = lineV / lineLen;
+				lineDir = lineV / lineLen;
 				const float paddingAmount = 16.0f;
 				lineStart -= lineDir * paddingAmount;
 				lineEnd += lineDir * paddingAmount;
 				lineV = lineEnd - lineStart;
 			}
 
-			// === DYNAMIC RADIUS EXPANSION FOR FAR-PLCCED SLITS ===
-			// If we are deep along the ray scanner (d >= 144.0f) and handling a 1-sided window frame on MAP19,
-			// we expand the detection radius proportional to the total distance to avoid sub-pixel gaps.
+			// ============================================================================================
+			// [Dot-Product Angular Splitter] - Finely Calibrates Map19 vs Map26
+			// 1S solid walls have no mid-textures but act as window trims. 
+			// Under steep grazing angles (Map26), rays slide parallel to the wall, causing false culls.
+			// We compute the Dot Product between the ray direction ('dir') and the wall direction ('lineDir').
+			//
+			// angleSens1S (0.0 to 1.0):
+			// - Near 0.0: Allows almost ALL angles (Aggressive culling, leaks fixed, breaks Map26).
+			// - Near 1.0: Blocks parallel grazing rays, allows only direct hits (Lax culling, fixes Map26).
+			// We set a calibrated 0.65f threshold to completely bypass grazing column чирки on Map26, 
+			// while cleanly capturing straight box window interventions on Map19.
+			// ============================================================================================
+			const bool isLine1Sided = (line->backsector == nullptr);
+			if (isLine1Sided)
+			{
+				if (!nearbyBlockContainsValid2SMidTex) continue;
+
+				if (d < 144.0f)
+				{
+					continue; // Safe baseline buffer for close proximity items
+				}
+
+				// Calculate angular alignment using absolute dot product
+				// (1.0f means ray is perfectly parallel to the wall, 0.0f means perpendicular hit)
+				float angularDotProduct = fabsf((dir.X * lineDir.X) + (dir.Y * lineDir.Y));
+
+				const float angleSens1S = 0.65f; // Calibration sweet spot (from 0.0f to 1.0f)
+				if (angularDotProduct > (1.0f - angleSens1S))
+				{
+					// The ray is sliding too parallel along this solid 1S pillar (Map26 corner glitch).
+					// Skip it to prevent false-positive bounding box occlusion!
+					continue;
+				}
+			}
+
+			// === DYNAMIC RADIUS EXPANSION FOR FAR-PLACED SLITS ===
 			float localAdjustedRadius = adjustedRadius;
 			if (isLine1Sided && rayDist > 144.0f)
 			{
-				// Gently increase the ray fan width as the player gets further from the bunker
 				float distanceBonus = rayDist * 0.05f;
-				localAdjustedRadius += clamp(distanceBonus, 0.0f, 14.0f); // Secure clamp to avoid over-culling
+				localAdjustedRadius += clamp(distanceBonus, 0.0f, 14.0f);
 			}
 
-			// --- 3-RAY FAN GEOMETRY SETUP (FOR SHARP GRAZING ANGLES) ---
-			// Now uses localAdjustedRadius to expand the fan on far-away MAP19 slits
+			// --- 3-RAY FAN GEOMETRY SETUP ---
 			FVector2 sideOffset = { -dir.Y * localAdjustedRadius * 0.5f, dir.X * localAdjustedRadius * 0.5f };
 			FVector2 raySources[3] = { viewerPos, viewerPos + sideOffset, viewerPos - sideOffset };
 			FVector2 rayTargets[3] = { thingPos2D, thingPos2D + sideOffset, thingPos2D - sideOffset };
@@ -3595,23 +3615,20 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 		}
 	}
 
-	// 9. FINAL VISIBILITY EVALUATION
+	// 9. FINAL VISIBILITY EVALUATION (SYNCHRONIZED WITH PHYSICAL RAY HIT)
 	if (pathData.hitValidFence)
 	{
 		float maxDist = pathData.isSolidFence ? MAX_DIST_SOLID : MAX_DIST_MASKED;
 
 		// ============================================================================================
-		// Anamorphic Scale Expansion Law] - Hard 320-Unit Fence Latch for Small Sprites
-		// Because small pickups and ammo items (isSmallSpriteForLedge) have their radii artificially 
-		// inflated by up to 9.5x via anamorphosis, the standard maxDist+EDGE_BUFFER threshold is way too tight. 
-		// The expanded edges leak long before the center gets close. 
-		// We dynamically force the threshold to 320 units for small expanded items to capture 
-		// the obstruction way ahead, completely sealing the Map19 shotgun ammo side leak.
+		// [Anamorphic Scale Expansion Law] - Hard 320-Unit Fence Latch for Small Sprites
+		// The 320-unit threshold expands the capture envelope strictly for pickup items/bonuses (MF_SPECIAL)
+		// to resolve the Map19 side leaks. Regular monsters retain the accurate maxDist bounds.
 		// ============================================================================================
 		float threshold = maxDist + EDGE_BUFFER;
 		if (isMicroSprite || isSmallSprite)
 		{
-			threshold = 320.0f; // Give the expanded bounding box a massive 320u geometric buffer
+			threshold = 320.0f; // Give explicit 320u geometric buffer ONLY to pickup bonuses (Map19)
 		}
 
 		if (pathData.closestMidTexFenceDist <= threshold)
@@ -3619,13 +3636,26 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			// Calculate proximity factor from the strictly accumulated closest fence distance
 			float distFromEdge = MAX(0.0f, pathData.closestMidTexFenceDist - EDGE_BUFFER);
 
-			// Scale the lerp clamp safely to support the expanded 320-unit envelope
-			float dynamicMaxDist = (isMicroSprite || isSmallSprite) ? 320.0f : maxDist;
+			// Scale the lerp clamp safely to support the expanded envelope strictly for items
+			float dynamicMaxDist = (thing->flags & MF_SPECIAL) ? 320.0f : maxDist;
 			float factor = lerp(0.25f, 1.0f, distFromEdge / dynamicMaxDist);
 
 			proximity_factor = clamp(factor, 0.25f, 1.0f);
+
+			// ============================================================================================
+			// [THE CRITICAL MISSING CONDITION] - Ray-Hit Verification Lock
+			// Code set rayHitAnyValidMidTexture to true blindly if a fence was just *nearby* in the cache.
+			// This caused all sprites within 320 units to drop out, regardless of whether the player stood inside 
+			// or outside the cage. We lock this flag strictly to 'pathData.hitValidFence'. 
+			// If the ray travels through clean air without piercing the grate, occlusion stays disabled!
+			// ============================================================================================
 			rayHitAnyValidMidTexture = true;
 		}
+	}
+	else
+	{
+		// Force-kill the flag if the physical ray casting loop never intersected a fence line on this trace
+		rayHitAnyValidMidTexture = false;
 	}
 
 	// 10. FINAL VERTICAL ANGLE CHECK WITH SINGULARITY HARD-CULL & LEDGE HEIGHT OFFSET MITIGATION
@@ -3634,11 +3664,10 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 		return 0.0f;
 	}
 
-	if (rayHitAnyValidMidTexture)
+	// Occlusion checks will now fire ONLY if the view ray is actively blocked by a fence polygon!
+	if (rayHitAnyValidMidTexture && pathData.hitValidFence)
 	{
 		// --- ADAPTIVE LEDGE THRESHOLD & VIEW LEVEL MITIGATION ---
-		// Replicating the 2sided obstruction dynamic thresholds and height offsets to tame 
-		// aggressive culling on steps and stairs. It ensures the floor you are standing on is not treated as a wall.
 		float LEDGE_THRESHOLD = 0.0f;
 
 		const float spriteCombinedSize = (thing->radius + thing->Height) * 0.5f;
@@ -3654,25 +3683,21 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 			float fenceCeil = (float)thing->Sector->ceilingplane.ZatPoint(thingPos2D);
 
 			// Floor/Ledge Occlusion with Height Shift Guard
-			// Trigger ONLY if the ledge is physically higher than the sprite's feet AND higher than your own feet.
 			bool floorOccludes = false;
 			if (fenceFloor >= (spriteBottom + LEDGE_THRESHOLD))
 			{
 				if (fenceFloor > (viewerBottom + Ztolerance2sided))
 				{
-					// This stands as a genuine vertical obstacle in front of you, not the step floor you are standing on!
 					floorOccludes = true;
 				}
 			}
 
 			// Ceiling/Lintel Occlusion with Height Shift Guard
-			// Trigger ONLY if the hanging beam is lower than the sprite's head AND lower than your own head level.
 			bool ceilingOccludes = false;
 			if (fenceCeil <= (spriteTop - LEDGE_THRESHOLD))
 			{
 				if (fenceCeil < (viewerTop - Ztolerance2sided))
 				{
-					// This is a real hanging architecture beam/arch, not the ambient ceiling space above your head.
 					ceilingOccludes = true;
 				}
 			}
