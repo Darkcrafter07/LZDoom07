@@ -1258,10 +1258,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			float viewerEyeLevelZ = viewerBottom + EyeHeight;
 			//float heightComparisonBounds = (anyWallBefore2Sline) ? 24.0f : 16.0f;
 			//bool  isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= heightComparisonBounds;
-			bool  isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= 24.0f;
+			bool  isSprBotAtEyeLevel = fabsf(spriteBottom - viewerEyeLevelZ) <= 48.0f;
 			float viewerHalfEyeLevelZ = viewerBottom + (EyeHeight * 0.5f);
 			bool  isSprBotAtHalfEyeLevel = fabsf(spriteBottom - viewerHalfEyeLevelZ) <= 12.0f;
 			ismildsteep = isonsteepsurfmild && isSprBotAtEyeLevel;
+			//float anamSpriteMidHeight = (spriteSize <= 32.0f) ? (thing->Height*0.5f) : 32.0f;
+			//bool isSprBotFacingExactlyAtEyeLevel = fabsf((spriteBottom + anamSpriteMidHeight) - viewerEyeLevelZ) <= 16.0f;
+			//bool disableBboxFacingInDeepTrenches = (fabsf(spriteBottom - viewerEyeLevelZ) > (anamSpriteMidHeight + 2.0f));
+			//bool isPathPureOpenCliffOrWindow = (bintersect >= 0.88f && tintersect >= 0.88f);
 			// ------------------------------------------------------------------------------------
 			if (spriteSize >= 44.0f)           spriteSize = 44.0f; // Limit max sprite size
 			if (!visible2sideTallEnoughObstr)  spriteSize *= 0.5f; // Fix leaks through 2Sobstr
@@ -1352,11 +1356,14 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				// is for reducing leaks on regular cases where regular sizes sprites stand
 				// close to 2S obstrc and especially when viewer is coplanar to them, like
 				// Doom2 Map06, the final bunker door between yellow key and teleporter.
-				bool isSpriteOccluded = (!visible1sidesInfTallObstr || 
+				bool isSpriteOccluded = (!visible1sidesInfTallObstr ||
 					(thingCrossedAllKindsOf1sLine && isonsteepsurf) ||
-					    !visible2sideMidTex || !visible3dfloorSides ||
-				                      (!visible2sideTallEnoughObstr ||
-					((thingCrossed2sBboxWall || thingCrossed2sBboxFacing) && ismildsteep)) );
+					!visible2sideMidTex || !visible3dfloorSides ||
+					(!visible2sideTallEnoughObstr ||
+					// "thingCrossed2sBboxWall" culls too much but we're good without it now
+					// thanks to improved "visible2sideTallEnoughObstr" to bust leaks on D2Re Map12
+					//((thingCrossed2sBboxWall || thingCrossed2sBboxFacing) && ismildsteep)));
+					((thingCrossed2sBboxFacing) && ismildsteep)));
 				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;
 				else if (!visible2sideMidTex)      smallsprtncrps_factor = 0.25f;
 				else                               smallsprtncrps_factor = 3.4f;      // unculled

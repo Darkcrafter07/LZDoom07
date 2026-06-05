@@ -387,7 +387,7 @@ void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing) // LZDoom07 
 	spriteRasterXdimen = 0;        // Total texture width (including blank columns)
 	spriteRasterYdimen = 0;        // Total texture height (including blank rows)
 	hasSignificantNegativeOffset = false; // Reset the output reference directly
-
+	//
 	// ----------- OpenGL legacy way (faster) - START --------------
 	if (spr->gltexture && spr->gltexture->tex)
 	{
@@ -1778,11 +1778,179 @@ bool SpriteCrossed2sidedLineSimpleCachedWrapper(AActor *thing, AActor *viewer)
 // This one is nice for taming "increaseAnam" leaks
 // This one culls sprites if they crossed 2sided lines
 // but if a side of the sprite bounding box facing the viewer - uncull
+
+// More strict original version that chops everything around:
+//bool SpriteBboxFacingCameraCrossed2sLineOLD(AActor *thing, AActor *viewer)
+//{
+//	if (!thing || !viewer) return false;
+//
+//	//if (CheckFrustumCullingUNUSED(thing)) return false;
+//	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+//
+//	const bool checkBboxCameraFace = true;
+//
+//	sector_t *thingSector = thing->Sector;
+//	if (!thingSector || thingSector->Lines.Size() == 0) return false;
+//
+//	float viewerX = (float)viewer->X();
+//	float viewerY = (float)viewer->Y();
+//	float thingX = (float)thing->X();
+//	float thingY = (float)thing->Y();
+//
+//	// 1. UNIVERSAL SIZE ADAPTATION
+//	float spriteSize = (thing->radius + thing->Height) * 0.5f;
+//	if (spriteSize <= 12.0f) spriteSize = 12.0f;
+//	const bool  isMicroSprite = (spriteSize < 12.0f);
+//	const bool  isTinySprite = (spriteSize >= 12.0f && spriteSize < 18.0f);
+//	const bool  isSmallSprite = (spriteSize >= 18.0f && spriteSize < 38.0f);
+//	const bool  isMediumSprite = (spriteSize >= 38.0f && spriteSize < 45.0f);
+//	const bool  isLargeSprite = (spriteSize >= 45.0f && spriteSize < 60.0f);
+//	const bool  isHugeSprite = (spriteSize >= 60.0f);
+//
+//	// Scale for test point offsets (how far we look around the center)
+//	float                      spriteScale = 10.5f;     // isMircosprite and other unmentioned
+//	if      (isTinySprite)   { spriteScale = 5.5f; }
+//	else if (isSmallSprite)  { spriteScale = 2.5f; }
+//	else if (isMediumSprite) { spriteScale = 1.2f; }
+//	else if (isLargeSprite)  { spriteScale = 0.3f; }
+//	else if (isHugeSprite)   { spriteScale = 0.15f; }
+//
+//	float adjustedRadius = thing->radius * spriteScale;
+//
+//	// Scale for the "Kill Zone" (how close the portal must be to block anamorphosis)
+//	float                      strictZoneScale = 10.5f; // isMircosprite and other unmentioned
+//	if      (isTinySprite)   { strictZoneScale = 8.5f; }
+//	else if (isSmallSprite)  { strictZoneScale = 5.0f; }
+//	else if (isMediumSprite) { strictZoneScale = 3.2f; }
+//	else if (isLargeSprite)  { strictZoneScale = 2.5f; }
+//	else if (isHugeSprite)   { strictZoneScale = 1.5f; }
+//	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
+//
+//	// 2. SETUP TEST POINTS (Both modes use the same adjustedRadius)
+//	float testPts[5][2];
+//	int   numPoints = 0;
+//
+//	if (checkBboxCameraFace)
+//	{
+//		// MODE A: FACING SIDE + CENTER
+//		float dx = viewerX - thingX;
+//		float dy = viewerY - thingY;
+//		float dist = sqrt(dx * dx + dy * dy);
+//		if (dist > 0.0f) { dx /= dist; dy /= dist; }
+//
+//		// Center
+//		testPts[0][0] = thingX; testPts[0][1] = thingY;
+//
+//		// Determine the most facing point using adjustedRadius
+//		if (fabs(dx) > fabs(dy))
+//		{
+//			testPts[1][0] = (dx > 0) ? thingX + adjustedRadius : thingX - adjustedRadius;
+//			testPts[1][1] = thingY;
+//		}
+//		else
+//		{
+//			testPts[1][0] = thingX;
+//			testPts[1][1] = (dy > 0) ? thingY + adjustedRadius : thingY - adjustedRadius;
+//		}
+//		numPoints = 2;
+//	}
+//	else
+//	{
+//		// MODE B: FULL STAR (CENTER + 4 SIDES)
+//		testPts[0][0] = thingX;                  testPts[0][1] = thingY;
+//		testPts[1][0] = thingX + adjustedRadius; testPts[1][1] = thingY;
+//		testPts[2][0] = thingX - adjustedRadius; testPts[2][1] = thingY;
+//		testPts[3][0] = thingX;                  testPts[3][1] = thingY + adjustedRadius;
+//		testPts[4][0] = thingX;                  testPts[4][1] = thingY - adjustedRadius;
+//		numPoints = 5;
+//	}
+//
+//	// 3. PORTAL SCANNING (FBlockmap + Level version)
+//	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0);
+//	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0);
+//	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0);
+//	int maxBY = level.blockmap.GetBlockY(thingY + adjustedRadius + 16.0);
+//
+//	for (int bx = minBX; bx <= maxBX; bx++)
+//	{
+//		for (int by = minBY; by <= maxBY; by++)
+//		{
+//			if (!level.blockmap.isValidBlock(bx, by)) continue;
+//
+//			// Get lines indexes in this block
+//			int *list = level.blockmap.GetLines(bx, by);
+//
+//			// Iterate list till "-1" is met
+//			for (int i = 0; list[i] != -1; i++)
+//			{
+//				line_t *testLine = &level.lines[list[i]];
+//
+//				if (!(testLine->flags & ML_TWOSIDED)) continue;
+//
+//				float l1x = (float)testLine->v1->fX();
+//				float l1y = (float)testLine->v1->fY();
+//				float l2x = (float)testLine->v2->fX();
+//				float l2y = (float)testLine->v2->fY();
+//
+//				for (int j = 0; j < numPoints; j++)
+//				{
+//					float ix, iy;
+//					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], l1x, l1y, l2x, l2y, ix, iy))
+//					{
+//						float dx_int = ix - thingX;
+//						float dy_int = iy - thingY;
+//
+//						// If portal is intersected inside a sprite "Kill Zone"
+//						if ((dx_int * dx_int + dy_int * dy_int) < strictZoneSq)
+//						{
+//							return true; // Intersection found, return TRUE to reset increaseAnam
+//						}
+//					}
+//				}
+//			}
+//		}
+//	}
+//	return false;
+//}
+
+//	--------------------------------------------------------------------------------------------
+//	METHOD 1 : SpriteBboxFacingCameraCrossed2sLine(The Directional Sight - Line Intersect Filter)
+//	--------------------------------------------------------------------------------------------
+//* APPROACH : Narrow - phase view - aligned ray casting(Razor - Sharp Sniper).
+//	* LOGIC :
+//	Completely omits the actor's center mass. It casts a single, precise vector ray targeting 
+//	EXCLUSIVELY the closest bounding box edge node directly facing the player's screen-space matrix.
+//* PRIMARY RESPONSIBILITY :
+//    Safeguards sub - pixel corner junctions, door trim edges, and close - quarters window borders
+//    (Map02 tight wooden corners) where expanded sprite limbs try to crawl through solid wood / metal.
+//* THE THREE - WAY TOPOGRAPHY RESOLVER :
+//	To prevent the tight ray from false - clamping on long - range open terrain, it runs an instant
+//	low - level sector height evaluation(ZatPoint) right at the sub - pixel intersection spot :
+//
+//FLAT SEAM FILTER :
+//  If floorDelta <= 4.0f && ceilingDelta <= 4.0f, the line is a flat layout seam on a high
+//  ledge(Map26).It skips processing, keeping anamorphosis fully active.
+//
+//CLIFF DROP - OFF PASS :
+//  If adjacentSectorFloor < currentSectorFloor, the height decreases towards the player.
+//	The engine recognizes this is a wide - open cliff drop or window trench(Map02).
+//	It completely disables culling, returning FALSE to keep the item visible.
+//
+//HARD LEDGE LOCK :
+//  If the floor steps UP(adjacent > current) and changes massively, it is a real vertical
+//  barrier(Map06 8 - unit border).It immediately returns TRUE to clamp the projection leak.
+//
+// Method 1 acts as the smart
+// perspective filter that understands the difference between a solid door and an open window. 
+//====================================================================================================
+
+// This function checks the strictly closest facing bounding box node of the sprite.
+// It applies a high-precision vertical sector delta filter to isolate real blocking walls 
+// from flat room ledges (Map26) and deep drop-off trenches (Map02).
 bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 {
 	if (!thing || !viewer) return false;
 
-	//if (CheckFrustumCullingUNUSED(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	const bool checkBboxCameraFace = true;
@@ -1796,7 +1964,8 @@ bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 	float thingY = (float)thing->Y();
 
 	// 1. UNIVERSAL SIZE ADAPTATION
-	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	if (spriteSize <= 12.0f) spriteSize = 12.0f;
 	const bool  isMicroSprite = (spriteSize < 12.0f);
 	const bool  isTinySprite = (spriteSize >= 12.0f && spriteSize < 18.0f);
 	const bool  isSmallSprite = (spriteSize >= 18.0f && spriteSize < 38.0f);
@@ -1805,68 +1974,59 @@ bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 	const bool  isHugeSprite = (spriteSize >= 60.0f);
 
 	// Scale for test point offsets (how far we look around the center)
-	float                      spriteScale = 10.5f;     // isMircosprite and other unmentioned
-	if      (isTinySprite)   { spriteScale = 5.5f; }
-	else if (isSmallSprite)  { spriteScale = 2.5f; }
-	else if (isMediumSprite) { spriteScale = 1.2f; }
-	else if (isLargeSprite)  { spriteScale = 0.3f; }
-	else if (isHugeSprite)   { spriteScale = 0.15f; }
+	// The RULE: the lesser the spriteScale - the MORE it culls
+	float                      spriteScale = 7.1f; // isMircosprite and other unmentioned
+	if      (isTinySprite)     spriteScale = 4.1f;
+	else if (isSmallSprite)    spriteScale = 1.2f;
+	else if (isMediumSprite)   spriteScale = 0.5f;
+	else if (isLargeSprite)    spriteScale = 0.3f;
+	else if (isHugeSprite)     spriteScale = 0.07f;
 
 	float adjustedRadius = thing->radius * spriteScale;
 
 	// Scale for the "Kill Zone" (how close the portal must be to block anamorphosis)
-	float                      strictZoneScale = 10.5f; // isMircosprite and other unmentioned
-	if      (isTinySprite)   { strictZoneScale = 8.5f; }
-	else if (isSmallSprite)  { strictZoneScale = 5.0f; }
-	else if (isMediumSprite) { strictZoneScale = 3.2f; }
-	else if (isLargeSprite)  { strictZoneScale = 2.5f; }
-	else if (isHugeSprite)   { strictZoneScale = 1.5f; }
+	// The Rule: the bigger the strictZoneScale - the MORE it culls
+	float                      strictZoneScale = 12.5f; // isMircosprite and other unmentioned
+	if      (isTinySprite)     strictZoneScale = 10.5f;
+	else if (isSmallSprite)    strictZoneScale = 8.0f;
+	else if (isMediumSprite)   strictZoneScale = 7.2f;
+	else if (isLargeSprite)    strictZoneScale = 6.5f;
+	else if (isHugeSprite)     strictZoneScale = 4.5f;
 	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
 
-	// 2. SETUP TEST POINTS (Both modes use the same adjustedRadius)
-	float testPts[5][2];
-	int   numPoints = 0;
+	// 2. SETUP TEST POINTS (Strict Single-Node Facing Logic)
+	float testPts[1][2]; // Single, high-precision facing edge node
+	int   numPoints = 1;
 
 	if (checkBboxCameraFace)
 	{
-		// MODE A: FACING SIDE + CENTER
 		float dx = viewerX - thingX;
 		float dy = viewerY - thingY;
-		float dist = sqrt(dx * dx + dy * dy);
+		float dist = sqrtf(dx * dx + dy * dy);
 		if (dist > 0.0f) { dx /= dist; dy /= dist; }
 
-		// Center
-		testPts[0][0] = thingX; testPts[0][1] = thingY;
-
-		// Determine the most facing point using adjustedRadius
+		// Compute strictly the closest face edge that directly targets the camera view vector
 		if (fabs(dx) > fabs(dy))
 		{
-			testPts[1][0] = (dx > 0) ? thingX + adjustedRadius : thingX - adjustedRadius;
-			testPts[1][1] = thingY;
+			testPts[0][0] = (dx > 0) ? thingX + adjustedRadius : thingX - adjustedRadius;
+			testPts[0][1] = thingY;
 		}
 		else
 		{
-			testPts[1][0] = thingX;
-			testPts[1][1] = (dy > 0) ? thingY + adjustedRadius : thingY - adjustedRadius;
+			testPts[0][0] = thingX;
+			testPts[0][1] = (dy > 0) ? thingY + adjustedRadius : thingY - adjustedRadius;
 		}
-		numPoints = 2;
 	}
 	else
 	{
-		// MODE B: FULL STAR (CENTER + 4 SIDES)
-		testPts[0][0] = thingX;                  testPts[0][1] = thingY;
-		testPts[1][0] = thingX + adjustedRadius; testPts[1][1] = thingY;
-		testPts[2][0] = thingX - adjustedRadius; testPts[2][1] = thingY;
-		testPts[3][0] = thingX;                  testPts[3][1] = thingY + adjustedRadius;
-		testPts[4][0] = thingX;                  testPts[4][1] = thingY - adjustedRadius;
-		numPoints = 5;
+		testPts[0][0] = thingX; testPts[0][1] = thingY;
 	}
 
 	// 3. PORTAL SCANNING (FBlockmap + Level version)
-	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0);
-	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0);
-	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0);
-	int maxBY = level.blockmap.GetBlockY(thingY + adjustedRadius + 16.0);
+	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0f);
+	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0f);
+	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0f);
+	int maxBY = level.blockmap.GetBlockY(thingY + adjustedRadius + 16.0f);
 
 	for (int bx = minBX; bx <= maxBX; bx++)
 	{
@@ -1874,15 +2034,13 @@ bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 		{
 			if (!level.blockmap.isValidBlock(bx, by)) continue;
 
-			// Get lines indexes in this block
 			int *list = level.blockmap.GetLines(bx, by);
-
-			// Iterate list till "-1" is met
 			for (int i = 0; list[i] != -1; i++)
 			{
 				line_t *testLine = &level.lines[list[i]];
 
 				if (!(testLine->flags & ML_TWOSIDED)) continue;
+				if (!testLine->frontsector || !testLine->backsector) continue;
 
 				float l1x = (float)testLine->v1->fX();
 				float l1y = (float)testLine->v1->fY();
@@ -1897,10 +2055,42 @@ bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 						float dx_int = ix - thingX;
 						float dy_int = iy - thingY;
 
-						// If portal is intersected inside a sprite "Kill Zone"
 						if ((dx_int * dx_int + dy_int * dy_int) < strictZoneSq)
 						{
-							return true; // Intersection found, return TRUE to reset increaseAnam
+							// ============================================================================================
+							// [Core Law] - Differentiated 3D Portal Topography Filter
+							// We calculate exact heights right at the line intersection spot to check the delta.
+							// ============================================================================================
+							float fFloor = (float)testLine->frontsector->floorplane.ZatPoint(ix, iy);
+							float bFloor = (float)testLine->backsector->floorplane.ZatPoint(ix, iy);
+							float fCeil = (float)testLine->frontsector->ceilingplane.ZatPoint(ix, iy);
+							float bCeil = (float)testLine->backsector->ceilingplane.ZatPoint(ix, iy);
+
+							float floorDelta = fabsf(fFloor - bFloor);
+							float ceilingDelta = fabsf(fCeil - bCeil);
+
+							// RULE 1: FLAT SURFACE BYPASS (Safe for Map26 aligned ledges)
+							// If floor and ceiling delta changes are less or equal to 4 units, it's a flat layout seam!
+							if (floorDelta <= 4.0f && ceilingDelta <= 4.0f)
+							{
+								continue; // Ignore this flat seam, do NOT reset anamorphosis!
+							}
+
+							// RULE 2: DROP-OFF / CLIFF BYPASS (Safe for Map02 trenches)
+							// Determine if the floor height drops down relative to the direction towards the player.
+							// If we are looking from a low ditch to a higher object floor, or vice versa, 
+							// evaluate if the step represents a cliff drop-off instead of a rising blocking ledge.
+							float currentSectorFloor = (float)thingSector->floorplane.ZatPoint(ix, iy);
+							float adjacentSectorFloor = (testLine->frontsector == thingSector) ? bFloor : fFloor;
+
+							// If the height decreases (adjacent floor is LOWER than sprite floor), it's a cliff drop-off!
+							if (adjacentSectorFloor < currentSectorFloor)
+							{
+								continue; // Clear open drop-off/cliff detected, do NOT reset anamorphosis!
+							}
+
+							// HARD WALL CONFIRMED: The ledge rises up (Map06) or changes massively, trigger clamp!
+							return true;
 						}
 					}
 				}
@@ -1949,6 +2139,25 @@ bool SpriteCrossed2sBBoxFaceLineCachedWrapper(AActor *thing, AActor *viewer)
 
 
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+//--------------------------------------------------------------------------------------------
+//METHOD 2: SpriteCrossed2sBboxFaceWallLinedef(The Area Density Sweeper)
+//--------------------------------------------------------------------------------------------
+//* APPROACH : Broad - phase AABB bounding box volume scanning(Carpet Bombing).
+//* LOGIC :
+//	Scans the ENTIRE expanded square layout around the actor via a blockmap geometry sweep.
+//	It calculates a factual "wallRatio" based on the volumetric density of all lines
+//	encountered inside the bounding area.
+//* PRIMARY RESPONSIBILITY :
+//  Target - locks massive structural blocks, huge 3D columns, moving vertical crushers(Map06),
+//  and giant solid walls(Map12).It ensures that full - body sprites are hidden monolithically
+//  behind massive geometry without dropouts.
+//* LIMITATION :
+//	Blind to precise corridor corners and narrow diagonal seams because tiny decorative floor
+//	layout slits dilute its percentage ratio, causing it to occasionally miss critical corner edges.
+//
+// Method 2 handles the heavy physical architectural mass.
+//--------------------------------------------------------------------------------------------
+
 // This function tames "increaseAnam" projection leaks by evaluating surrounding 2-sided lines.
 // It culls sprites if they are clipped by a high floor step or blocked by a valid middle texture.
 // Relies on a stable static expanded radius and strict cross-product line-of-sight filtering.
@@ -2409,9 +2618,10 @@ struct ObstructionData2Sided
 		float highestGameStep = 24.0f;
 		float diffOfHigestStepAndHorizon = EyeHeight - highestGameStep;
 		bool isPlatformTooHigh = (sprTopAdj - diffOfHigestStepAndHorizon + Ztolerance2sided) <= floorHeightInitial ||
-			                  (sprBottomAdj + diffOfHigestStepAndHorizon + Ztolerance2sided) >= ceilingHeightInitial;
+			(sprBottomAdj + diffOfHigestStepAndHorizon + Ztolerance2sided) >= ceilingHeightInitial;
 
-		// ===
+		
+		// This block below fixes leaks on Doom2 Remake Map12
 		// Calculate exact quadratic distances from the viewer to the intersection line and to the sprite
 		FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
 		FVector2 tP = { (float)thing->X(), (float)thing->Y() };
@@ -2429,67 +2639,33 @@ struct ObstructionData2Sided
 			t_intersect = clamp<float>(t_intersect, 0.0f, 1.0f);
 		}
 
-		// Aim slightly higher than the feet but below the strict center 
-		// to catch small item sprites earlier through tight vertical window gaps.
-		float targetVisibilityZ = spriteBottom + ((spriteTop - spriteBottom) * 0.35f);
-
 		// Linearly interpolate the exact mathematical height of the view ray at the intersection point.
-		float rayAbsoluteZAtLine = viewerTop + (targetVisibilityZ - viewerTop) * t_intersect;
+		float rayAbsoluteZAtLine = viewerTop + (spriteMid - viewerTop) * t_intersect;
 
 		// Determine physical blocking heights of the step window
 		float highestFloor = floorHeightInitial;
 
-		// Re-evaluate static topography boundaries inside the method for localized branch differentiation
-		float viewerSectorFloor = (float)viewer->Sector->floorplane.ZatPoint(viewer->X(), viewer->Y());
-		float thingSectorFloor = (float)thing->Sector->floorplane.ZatPoint(thing->X(), thing->Y());
-		float staticFloorDelta = (float)fabs(viewerSectorFloor - thingSectorFloor);
+		// RULE 2: THE ENHANCED TARGET-LOCKED OBSTRUCTION LAW
+		// A line blocks visibility only if its floor rises above the calculated line-of-sight ray.
+		// To prevent close-to-viewer lines from falsely culling deep items (Map02 trench), we accumulate 
+		// the obstruction bounds ONLY if the blocking line sits reasonably close to the target actor.
+		bool rayIsBlockedByFloorLedge = (highestFloor >= rayAbsoluteZAtLine - 8.0f);
+		bool rayIsBlockedByCeilingBeam = (ceilingHeightInitial <= rayAbsoluteZAtLine + 8.0f);
 
-		// Developer configuration switch override match
-		const bool clearWindowObstrPath = true;
-
-		// Target specific room layouts (like Map02 trench) to separate strict clipping from lax culling
-		if (clearWindowObstrPath && (staticFloorDelta > 16.0f) && (staticFloorDelta <= 72.0f))
+		if (rayIsBlockedByFloorLedge || rayIsBlockedByCeilingBeam)
 		{
-			// ============================================================================================
-			// BRANCH A: HIGH-PRECISION STRICT GEOMETRY PASSTHROUGH (Optimized for trench window beams)
-			// Tightens the safety buffer to ensure asymmetrical or sub-pixel edge lines (like the left beam)
-			// are forced to cull properly without triggering a false rescue drop-out.
-			// ============================================================================================
-			bool rayIsBlockedByFloorLedge = (highestFloor >= rayAbsoluteZAtLine - 1.0f);
-			bool rayIsBlockedByCeilingBeam = (ceilingHeightInitial <= rayAbsoluteZAtLine + 1.0f);
+			// Calculate distance from the line intersect to the target sprite center
+			float lineToThingDistSq = (clamped - tP).LengthSquared();
 
-			if (!rayIsBlockedByFloorLedge && !rayIsBlockedByCeilingBeam)
+			// Only allow the line to lock a hard permanent obstruction if it is near the target's portal cluster.
+			// 16384.0f equals a stable 128-unit radius envelope around the actor.
+			if (lineToThingDistSq <= 16384.0f || (thing->Sector == sector))
 			{
-				// THE PATH IS OPEN! FORCE-DISABLE PORTAL OCCLUSION!
-				maxFloor = MINCOORD2SIDED;
-				minCeiling = MAXCOORD2SIDED;
-				valid = true;
-				return;
+				this->maxFloor = MAX(this->maxFloor, floorHeightInitial);
+				this->minCeiling = MIN(this->minCeiling, ceilingHeightInitial);
+				this->valid = true;
 			}
 		}
-		else
-		{
-			// ============================================================================================
-			// BRANCH B: STANDARD LAX VERTICAL PORTAL EVALUATION (Safe fallback for regular layouts)
-			// Uses the original 8-unit rescue buffer to smooth out view bobbing and minor flickering.
-			// ============================================================================================
-			bool rayIsBlockedByFloorLedge = (highestFloor >= rayAbsoluteZAtLine - 8.0f);
-			bool rayIsBlockedByCeilingBeam = (ceilingHeightInitial <= rayAbsoluteZAtLine + 8.0f);
-
-			if (!rayIsBlockedByFloorLedge && !rayIsBlockedByCeilingBeam)
-			{
-				// THE PATH IS OPEN! FORCE-DISABLE PORTAL OCCLUSION!
-				maxFloor = MINCOORD2SIDED;
-				minCeiling = MAXCOORD2SIDED;
-				valid = true;
-				return;
-			}
-		}
-
-		// If the vertical ray is genuinely blocked by physical geometry, log the factual bounds
-		maxFloor = MAX(this->maxFloor, floorHeightInitial);
-		minCeiling = MIN(this->minCeiling, ceilingHeightInitial);
-		valid = true;
 	}
 
 	bool IsSpriteVisible2sided(AActor* viewer, AActor* thing, const FVector3& pos, float height) const
@@ -3082,16 +3258,17 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 	{
 		effectiveHeight = 56.0f; // Force standard monster height context
 	}
-	const float spriteSize = (thing->radius + effectiveHeight) * 0.5f;
+	float spriteSize = (thing->radius + effectiveHeight) * 0.5f;
 	const bool  isLargeSprite = (spriteSize > 40.0f);
 
 	// SIZE ADAPTATION AND PARTICLE PROTECTION
+	if (spriteSize <= 12.0f) spriteSize = 12.0f;
 	const bool isMicroSprite = (spriteSize <= 12.0f);
 	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
 
 	float                   spriteScale = 3.7f;
-	if (isMicroSprite) spriteScale = 2.5f;
-	else if (isSmallSprite) spriteScale = 2.0f;
+	if      (isMicroSprite) spriteScale = 8.5f;
+	else if (isSmallSprite) spriteScale = 8.0f;
 
 	float effectiveRadius = thing->radius;
 	// If a sprite has no radius or a really small one
