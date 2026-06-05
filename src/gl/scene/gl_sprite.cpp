@@ -1361,7 +1361,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					!visible2sideMidTex || !visible3dfloorSides ||
 					(!visible2sideTallEnoughObstr ||
 					// "thingCrossed2sBboxWall" culls too much but we're good without it now
-					// thanks to improved "visible2sideTallEnoughObstr" to bust leaks on D2Re Map12
+					// thanks to improved "visible2sideTallEnoughObstr" to bust leaks on
+					// D2Re Map12 and Doom 2 Map19 RedStone.
 					//((thingCrossed2sBboxWall || thingCrossed2sBboxFacing) && ismildsteep)));
 					((thingCrossed2sBboxFacing) && ismildsteep)));
 				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;

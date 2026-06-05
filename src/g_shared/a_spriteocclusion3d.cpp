@@ -2097,6 +2097,7 @@ bool SpriteBboxFacingCameraCrossed2sLine(AActor *thing, AActor *viewer)
 			}
 		}
 	}
+
 	return false;
 }
 
@@ -2641,23 +2642,28 @@ struct ObstructionData2Sided
 
 		// Linearly interpolate the exact mathematical height of the view ray at the intersection point.
 		float rayAbsoluteZAtLine = viewerTop + (spriteMid - viewerTop) * t_intersect;
-
-		// Determine physical blocking heights of the step window
 		float highestFloor = floorHeightInitial;
 
-		// RULE 2: THE ENHANCED TARGET-LOCKED OBSTRUCTION LAW
-		// A line blocks visibility only if its floor rises above the calculated line-of-sight ray.
-		// To prevent close-to-viewer lines from falsely culling deep items (Map02 trench), we accumulate 
-		// the obstruction bounds ONLY if the blocking line sits reasonably close to the target actor.
 		bool rayIsBlockedByFloorLedge = (highestFloor >= rayAbsoluteZAtLine - 8.0f);
 		bool rayIsBlockedByCeilingBeam = (ceilingHeightInitial <= rayAbsoluteZAtLine + 8.0f);
 
-		if (rayIsBlockedByFloorLedge || rayIsBlockedByCeilingBeam)
+		// ============================================================================================
+		// Coplanar Ledge Gate] - Bypasses Blind Spots on Map19 Ceiling Steps (C320 vs C288)
+		// When the ceiling abruptly jumps up (e.g. from 288 to 320), the loose rayIsBlocked checks 
+		// evaluate the line as completely transparent, leaving 'valid' as false and skipping occlusion.
+		// We enforce a hard structural law: if the line's floor layout (highestFloor) stands physically 
+		// HIGHER than the viewer's absolute feet (viewerBottom) AND we are inside the target's proximity,
+		// it represents a solid lower barrier that blocks expanded bounding box edges. We FORCE register it.
+		// ============================================================================================
+		bool isCoplanarLedgeObstructingBottom = (highestFloor > (viewerBottom + Ztolerance2sidedBot)) &&
+			(highestFloor >= (spriteBottom - 16.0f));
+
+		if (rayIsBlockedByFloorLedge || rayIsBlockedByCeilingBeam || isCoplanarLedgeObstructingBottom)
 		{
 			// Calculate distance from the line intersect to the target sprite center
 			float lineToThingDistSq = (clamped - tP).LengthSquared();
 
-			// Only allow the line to lock a hard permanent obstruction if it is near the target's portal cluster.
+			// Only allow the line to lock a hard permanent obstruction if it sits near the target's portal cluster.
 			// 16384.0f equals a stable 128-unit radius envelope around the actor.
 			if (lineToThingDistSq <= 16384.0f || (thing->Sector == sector))
 			{
@@ -3266,9 +3272,9 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 	const bool isMicroSprite = (spriteSize <= 12.0f);
 	const bool isSmallSprite = (spriteSize > 12.0f && spriteSize <= 38.0f);
 
-	float                   spriteScale = 3.7f;
-	if      (isMicroSprite) spriteScale = 8.5f;
-	else if (isSmallSprite) spriteScale = 8.0f;
+	float                   spriteScale = 5.7f;
+	if      (isMicroSprite) spriteScale = 9.5f;
+	else if (isSmallSprite) spriteScale = 9.0f;
 
 	float effectiveRadius = thing->radius;
 	// If a sprite has no radius or a really small one
