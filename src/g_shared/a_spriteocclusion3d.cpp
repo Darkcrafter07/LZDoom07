@@ -806,16 +806,177 @@ bool SpriteCrossed1sidedLinedefCachedWrapper(AActor *thing, AActor *viewer)
 
 
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+// The old, culling harder and gives more false positives culls, kept for history
 // If only one side of a sprite bbox closest to and facing the viewer crossed a 1sided line
+//bool SpriteBboxFacingCameraCrossed1sLineOLD(AActor *thing, AActor *viewer)
+//{
+//	if (!thing || !viewer) return false;
+//
+//	// The FOV check is VERY BAD for 1 sided stuff!
+//	//if (CheckFrustumCullingUNUSED(thing)) return false;
+//	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+//
+//	// 1. SPATIAL POOLING
+//	static TMap<uint64_t, bool> spatial1sPool;
+//	static int                  last1sPoolTick = -1;
+//	if (last1sPoolTick != level.maptime)
+//	{
+//		spatial1sPool.Clear();
+//		last1sPoolTick = level.maptime;
+//	}
+//
+//	float thingX = (float)thing->X();
+//	float thingY = (float)thing->Y();
+//	float viewerX = (float)viewer->X();
+//	float viewerY = (float)viewer->Y();
+//
+//	const float fovInv = 1.0f / 90.0f; // for 90 degrees FOV
+//	const float blockmapGridSizInv = 1.0f / 16.0f; // for 16x16 grid size
+//
+//	// KEY: Using 16-unit grid.
+//	// Added coarse angle (90 deg steps) to key so results change when you orbit the sprite
+//	int      gridX = (int)floorf(thingX * blockmapGridSizInv);
+//	int      gridY = (int)floorf(thingY * blockmapGridSizInv);
+//	int      angleKey = (int)(viewer->Angles.Yaw.Degrees * fovInv);     // LZDoom07 way
+//	//int      angleKey = (int)(viewer->Angles.Yaw.Degrees() * fovInv); // UZDoom way
+//	uint64_t spatialKey = ((uint64_t)gridX << 32) | ((uint32_t)gridY << 8) | (uint8_t)angleKey;
+//
+//	if (spatial1sPool.CheckKey(spatialKey)) return spatial1sPool[spatialKey];
+//
+//	// 2. FACING DIRECTION CALCULATION
+//	// Vector from sprite to viewer
+//	float dx = viewerX - thingX;
+//	float dy = viewerY - thingY;
+//	float vDist = sqrt(dx * dx + dy * dy);
+//	if (vDist > 0.0f)
+//	{
+//		dx /= vDist; dy /= vDist;
+//	}
+//
+//	// 3. SIZE ADAPTATION
+//	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+//	const bool  isTinySprite  = (spriteSize < 18.0f);
+//	const bool  isLargeSprite = (spriteSize >= 45.0f);
+//
+//	float                                                spriteScale = 7.5f;
+//	if      (isMicroSprDimExp && isExpSprWorthMoreCull)  spriteScale = 16.0f;
+//	else if (isTinySprDimExp  && isExpSprWorthMoreCull)  spriteScale = 13.5f;
+//	else if (isSmallSprDimExp && isExpSprWorthMoreCull)  spriteScale = 11.0f;
+//	else if (isMedSprDimExp   && isExpSprWorthMoreCull)  spriteScale = 6.5f;
+//	else if (isOtherSprDimExp && isExpSprWorthMoreCull)  spriteScale = 5.5f;
+//	else if (isTinySprite)                               spriteScale = 3.5f;
+//	else if (isLargeSprite)                              spriteScale = 2.5f;
+//	else                                                 spriteScale = 3.5f;
+//
+//	float adjustedRadius = thing->radius * spriteScale;
+//
+//	float                                                strictZoneScale = 7.5f;
+//	if      (isMicroSprDimExp && isExpSprWorthMoreCull)  strictZoneScale = 16.0f;
+//	else if (isTinySprDimExp  && isExpSprWorthMoreCull)  strictZoneScale = 13.5f;
+//	else if (isSmallSprDimExp && isExpSprWorthMoreCull)  strictZoneScale = 11.0f;
+//	else if (isMedSprDimExp   && isExpSprWorthMoreCull)  strictZoneScale = 6.5f;
+//	else if (isOtherSprDimExp && isExpSprWorthMoreCull)  strictZoneScale = 5.5f;
+//	else if (isTinySprite)                               strictZoneScale = 3.5f;
+//	else if (isLargeSprite)                              strictZoneScale = 5.5f;
+//	else                                                 strictZoneScale = 4.0f;
+//
+//	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
+//
+//	// 4. SELECTIVE TEST POINTS (Facing Only)
+//	// We only test the center and the side most facing the camera
+//	float testPts[2][2];
+//	testPts[0][0] = thingX; testPts[0][1] = thingY; // Always test center
+//
+//	// Pick the point on the bbox radius that is closest to the viewer
+//	testPts[1][0] = thingX + (dx * adjustedRadius);
+//	testPts[1][1] = thingY + (dy * adjustedRadius);
+//
+//	// 5. LOCAL SCANNING
+//	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0f);
+//	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0f);
+//	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0f);
+//	int maxBY = level.blockmap.GetBlockY(thingY + adjustedRadius + 16.0f);
+//
+//	bool result = false;
+//	int  linesCount = 0;
+//
+//	for (int bx = minBX; bx <= maxBX && !result; bx++)
+//	{
+//		for (int by = minBY; by <= maxBY && !result; by++)
+//		{
+//			if (!level.blockmap.isValidBlock(bx, by)) continue;
+//			int *list = level.blockmap.GetLines(bx, by);
+//			for (int i = 0; list[i] != -1 && linesCount < 64; i++)
+//			{
+//				line_t *line = &level.lines[list[i]];
+//				linesCount++;
+//				if (line->backsector != nullptr) continue;
+//
+//				float l1x = (float)line->v1->fX();
+//				float l1y = (float)line->v1->fY();
+//				float l2x = (float)line->v2->fX();
+//				float l2y = (float)line->v2->fY();
+//
+//				for (int j = 0; j < 2; j++) // Only 2 points: center and facing edge
+//				{
+//					float ix, iy;
+//					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], 
+//						                                           l1x, l1y, l2x, l2y, ix, iy))
+//					{
+//						float dx_int = ix - thingX;
+//						float dy_int = iy - thingY;
+//						if ((dx_int * dx_int + dy_int * dy_int) < strictZoneSq)
+//						{
+//							result = true;
+//							break;
+//						}
+//					}
+//				}
+//			}
+//		}
+//	}
+//
+//	spatial1sPool[spatialKey] = result;
+//	return result;
+//}
+
+// THE PROBLEM WITH THE ORIGINAL IMPLEMENTATION :
+// The legacy code simply verified line intersections blindly.On raised sectors(like Doom 2 Map01
+//	imp podiums), rays tracing from the camera to the sprite center would hit 1 - sided void walls
+//	located BEHIND or UNDERNEATH the actor.This caused severe false - positive culling, making
+//	monsters completely vanish while standing in wide - open views.
+//
+//	HOW THIS ENHANCED VECTOR FILTER FIXES IT :
+// We calculate a displacement vector from the sprite's absolute center to the exact wall
+// intersection point(ix, iy), and then compute its DOT PRODUCT against the view direction vector.
+//
+// CRITICAL PROGRAMMING LAWS FOR THIS FUNCTION :
+//
+// 1. You MUST NOT allow culling if the dot product is POSITIVE.A positive dot product means
+// the wall intersection occurs in the background, strictly BEHIND the sprite's physical center.
+// Background walls MUST NEVER obstruct foreground objects!
+//
+// 2. You MUST NOT compute raw camera - to - wall vs camera - to - sprite linear scalar distances.
+// Due to bounding - box radial inflation(adjustedRadius), the tested edge nodes regularly
+// cross behind thin walls when orbiting, which breaks simple distance sorting and causes
+// unstable frame - to - frame sprite flickering / blinking.
+//
+// 3. You MUST check the dot product to isolate geometry orientation.If 'dotProduct <= 0.0f',
+// the wall is verified to sit strictly BETWEEN the viewer and the sprite.Only then is it
+// mathematically SAFE to flag the node as occluded and proceed with culling.
+//
+// 4. You MUST implement radius - clamping padding for the outer edge node(j == 1).If a void wall
+// merely skims the artificial outer boundaries of the expanded sprite scale but DOES NOT
+// penetrate the core physical radius, you MUST bypass culling to maintain flawless rendering
+// stability around sharp wall corners.
+//  Verifies if a sprite's bbox edges cross a 1-sided void line relative to the viewer
 bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 {
 	if (!thing || !viewer) return false;
 
-	// The FOV check is VERY BAD for 1 sided stuff!
-	//if (CheckFrustumCullingUNUSED(thing)) return false;
 	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
-	// 1. SPATIAL POOLING
+	// --- 1. SPATIAL POOLING AND CACHING ---
 	static TMap<uint64_t, bool> spatial1sPool;
 	static int                  last1sPoolTick = -1;
 	if (last1sPoolTick != level.maptime)
@@ -829,35 +990,32 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 	float viewerX = (float)viewer->X();
 	float viewerY = (float)viewer->Y();
 
-	const float fovInv = 1.0f / 90.0f; // for 90 degrees FOV
-	const float blockmapGridSizInv = 1.0f / 16.0f; // for 16x16 grid size
+	const float fovInv = 1.0f / 90.0f;             
+	const float blockmapGridSizInv = 1.0f / 16.0f; 
 
-	// KEY: Using 16-unit grid.
-	// Added coarse angle (90 deg steps) to key so results change when you orbit the sprite
 	int      gridX = (int)floorf(thingX * blockmapGridSizInv);
 	int      gridY = (int)floorf(thingY * blockmapGridSizInv);
-	int      angleKey = (int)(viewer->Angles.Yaw.Degrees * fovInv);     // LZDoom07 way
+	int      angleKey = (int)(viewer->Angles.Yaw.Degrees * fovInv); // LZDoom07 way
 	//int      angleKey = (int)(viewer->Angles.Yaw.Degrees() * fovInv); // UZDoom way
 	uint64_t spatialKey = ((uint64_t)gridX << 32) | ((uint32_t)gridY << 8) | (uint8_t)angleKey;
 
 	if (spatial1sPool.CheckKey(spatialKey)) return spatial1sPool[spatialKey];
 
-	// 2. FACING DIRECTION CALCULATION
-	// Vector from sprite to viewer
+	// --- 2. FACING DIRECTION (VIEW VECTOR) ---
 	float dx = viewerX - thingX;
 	float dy = viewerY - thingY;
-	float vDist = sqrt(dx * dx + dy * dy);
+	float vDist = sqrtf((dx * dx) + (dy * dy));
 	if (vDist > 0.0f)
 	{
 		dx /= vDist; dy /= vDist;
 	}
 
-	// 3. SIZE ADAPTATION
+	// --- 3. ADAPTIVE BOUNDING BOX SCALING ---
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
 	const bool  isTinySprite  = (spriteSize < 18.0f);
 	const bool  isLargeSprite = (spriteSize >= 45.0f);
 
-	float                                                spriteScale = 7.5f;
+	float spriteScale = 7.5f;
 	if      (isMicroSprDimExp && isExpSprWorthMoreCull)  spriteScale = 16.0f;
 	else if (isTinySprDimExp  && isExpSprWorthMoreCull)  spriteScale = 13.5f;
 	else if (isSmallSprDimExp && isExpSprWorthMoreCull)  spriteScale = 11.0f;
@@ -869,7 +1027,7 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 
 	float adjustedRadius = thing->radius * spriteScale;
 
-	float                                                strictZoneScale = 7.5f;
+	float strictZoneScale = 7.5f;
 	if      (isMicroSprDimExp && isExpSprWorthMoreCull)  strictZoneScale = 16.0f;
 	else if (isTinySprDimExp  && isExpSprWorthMoreCull)  strictZoneScale = 13.5f;
 	else if (isSmallSprDimExp && isExpSprWorthMoreCull)  strictZoneScale = 11.0f;
@@ -881,16 +1039,14 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 
 	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
 
-	// 4. SELECTIVE TEST POINTS (Facing Only)
-	// We only test the center and the side most facing the camera
+	// --- 4. EXPLICIT TEST NODES ---
+	// testPts[0] is the center, testPts[1] is the edge pushed towards the camera
 	float testPts[2][2];
-	testPts[0][0] = thingX; testPts[0][1] = thingY; // Always test center
-
-	// Pick the point on the bbox radius that is closest to the viewer
-	testPts[1][0] = thingX + (dx * adjustedRadius);
+	testPts[0][0] = thingX; testPts[0][1] = thingY; 
+	testPts[1][0] = thingX + (dx * adjustedRadius); 
 	testPts[1][1] = thingY + (dy * adjustedRadius);
 
-	// 5. LOCAL SCANNING
+	// --- 5. BLOCKMAP INTERSECTION SCANNING ---
 	int minBX = level.blockmap.GetBlockX(thingX - adjustedRadius - 16.0f);
 	int maxBX = level.blockmap.GetBlockX(thingX + adjustedRadius + 16.0f);
 	int minBY = level.blockmap.GetBlockY(thingY - adjustedRadius - 16.0f);
@@ -905,6 +1061,7 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 		{
 			if (!level.blockmap.isValidBlock(bx, by)) continue;
 			int *list = level.blockmap.GetLines(bx, by);
+			
 			for (int i = 0; list[i] != -1 && linesCount < 64; i++)
 			{
 				line_t *line = &level.lines[list[i]];
@@ -916,18 +1073,37 @@ bool SpriteBboxFacingCameraCrossed1sLine(AActor *thing, AActor *viewer)
 				float l2x = (float)line->v2->fX();
 				float l2y = (float)line->v2->fY();
 
-				for (int j = 0; j < 2; j++) // Only 2 points: center and facing edge
+				for (int j = 0; j < 2; j++) 
 				{
 					float ix, iy;
 					if (SpriteIntersectsLinedef(viewerX, viewerY, testPts[j][0], testPts[j][1], 
 						                                           l1x, l1y, l2x, l2y, ix, iy))
 					{
-						float dx_int = ix - thingX;
-						float dy_int = iy - thingY;
-						if ((dx_int * dx_int + dy_int * dy_int) < strictZoneSq)
+						// Vector from sprite center to the intersection point
+						float s_to_int_dx = ix - thingX;
+						float s_to_int_dy = iy - thingY;
+
+						// DOT PRODUCT FILTER: Project the intersection vector onto the view vector (dx, dy).
+						// If the dot product is positive, the wall intersection happens BEHIND the sprite 
+						// relative to the camera direction. We must NEVER cull based on background walls.
+						float dotProduct = (s_to_int_dx * dx) + (s_to_int_dy * dy);
+
+						if (dotProduct <= 0.0f) // The wall is strictly between the camera and the sprite
 						{
-							result = true;
-							break;
+							float distToIntersectionSq = (s_to_int_dx * s_to_int_dx) + (s_to_int_dy * s_to_int_dy);
+							
+							if (distToIntersectionSq < strictZoneSq)
+							{
+								// Buffer padding: If we are testing the facing edge node (j == 1), 
+								// ensure the wall didn't just clip the outer edge of the expanded radius.
+								if (j == 1 && distToIntersectionSq < (thing->radius * thing->radius))
+								{
+									continue; 
+								}
+
+								result = true;
+								break;
+							}
 						}
 					}
 				}
@@ -2124,6 +2300,7 @@ struct ObstructionData2Sided
 		}
 		float sprBottomAdj = spriteBottom + Ztolerance2sidedBot;
 		float sprTopAdj = spriteTop + Ztolerance2sided;
+		float spriteMid = spriteBottom + ((spriteTop - spriteBottom) * 0.5f);
 
 		//Printf("Viewer Info -> Bottom: %.2f | Top: %.2f | EyeHeight: %.2f | Class: %s\n", viewerBottom, viewerTop, EyeHeight, viewer->GetClass()->TypeName.GetChars());
 
@@ -2234,36 +2411,84 @@ struct ObstructionData2Sided
 		bool isPlatformTooHigh = (sprTopAdj - diffOfHigestStepAndHorizon + Ztolerance2sided) <= floorHeightInitial ||
 			                  (sprBottomAdj + diffOfHigestStepAndHorizon + Ztolerance2sided) >= ceilingHeightInitial;
 
+		// ===
+		// Calculate exact quadratic distances from the viewer to the intersection line and to the sprite
+		FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
+		FVector2 tP = { (float)thing->X(), (float)thing->Y() };
+		float d2LineSq = (vP - clamped).LengthSquared();
+		float d2ThingSq = (vP - tP).LengthSquared();
 
-		// determine which sprites are located slightly above on elevated platforms
-		bool isViewerBottomLowerThanSpriteBottom = viewerBottomAdj <= sprBottomAdj;  // we need some Z tolerance here
-		bool isThatElevatedSpriteStillSeen = isViewerBottomLowerThanSpriteBottom && (viewerTopAdj <= sprBottomAdj);
-		// sprites that are located slightly above cut suspiciously too much so we raise ceilings by current viewerTopAdj Z coordinates
-		float spritesHigherThanViewerOnElevPlatf = (isThatElevatedSpriteStillSeen) ? 1.25f : 1.0f;
+		// RULE 1: YOU MUST NOT CULL IF THE TWO-SIDED LINE IS LOCATED BEHIND THE SPRITE
+		if (d2LineSq > (d2ThingSq + 16.0f)) return;
 
-		// the same we're doing when determinig which sprites are located slightly below but when observed from the top of elevations
-		bool isViewerBottomHigherThanSpriteTop1 = viewerBottomAdj >= sprTopAdj;  // we need some Z tolerance here
-		bool isThatLoweredSpriteStillSeen = isViewerBottomHigherThanSpriteTop1 && (viewerTopAdj >= sprTopAdj);
-		// sprites that are located below and observed from the top of elevations, lower floors by current viewerTopAdj Z coordinates
-		float spritesLowerThanViewerObservedFromElevPlatf = (isThatLoweredSpriteStillSeen) ? 0.8f : 1.0f;
+		// Calculate linear percentage (t) of where the intersection line sits along the sight ray (0.0 to 1.0)
+		float t_intersect = 0.0f;
+		if (d2ThingSq > 0.1f)
+		{
+			t_intersect = sqrtf(d2LineSq / d2ThingSq);
+			t_intersect = clamp<float>(t_intersect, 0.0f, 1.0f);
+		}
 
-		// My previous logic makes it leak for a short while if viewer Z is changed rapidly
-		//float ceilingHeightAdj1 = ceilingHeightInitial * spritesHigherThanViewerOnElevPlatf;
-		//float floorHeightAdj1 = floorHeightInitial * spritesLowerThanViewerObservedFromElevPlatf;
+		// Aim slightly higher than the feet but below the strict center 
+		// to catch small item sprites earlier through tight vertical window gaps.
+		float targetVisibilityZ = spriteBottom + ((spriteTop - spriteBottom) * 0.35f);
 
-		// Good mechanism but still leaks on rapd
-		// Use fixed offset in units instead of multiplication
-		float elevationOffset = (isThatElevatedSpriteStillSeen) ? 16.0f : 0.0f;
-		float loweringOffset = (isThatLoweredSpriteStillSeen) ? 16.0f : 0.0f;
-		// Raise ceiling or lower floor by the constants and not by the % of height
-		float ceilingHeightAdj1 = ceilingHeightInitial + elevationOffset;
-		float floorHeightAdj1 = floorHeightInitial - loweringOffset;
+		// Linearly interpolate the exact mathematical height of the view ray at the intersection point.
+		float rayAbsoluteZAtLine = viewerTop + (targetVisibilityZ - viewerTop) * t_intersect;
 
-		minCeiling = MIN(minCeiling, ceilingHeightAdj1);
-		maxCeiling = MAX(maxCeiling, ceilingHeightAdj1);
-		minFloor = MIN(minFloor, floorHeightAdj1);
-		maxFloor = MAX(maxFloor, floorHeightAdj1);
+		// Determine physical blocking heights of the step window
+		float highestFloor = floorHeightInitial;
 
+		// Re-evaluate static topography boundaries inside the method for localized branch differentiation
+		float viewerSectorFloor = (float)viewer->Sector->floorplane.ZatPoint(viewer->X(), viewer->Y());
+		float thingSectorFloor = (float)thing->Sector->floorplane.ZatPoint(thing->X(), thing->Y());
+		float staticFloorDelta = (float)fabs(viewerSectorFloor - thingSectorFloor);
+
+		// Developer configuration switch override match
+		const bool clearWindowObstrPath = true;
+
+		// Target specific room layouts (like Map02 trench) to separate strict clipping from lax culling
+		if (clearWindowObstrPath && (staticFloorDelta > 16.0f) && (staticFloorDelta <= 72.0f))
+		{
+			// ============================================================================================
+			// BRANCH A: HIGH-PRECISION STRICT GEOMETRY PASSTHROUGH (Optimized for trench window beams)
+			// Tightens the safety buffer to ensure asymmetrical or sub-pixel edge lines (like the left beam)
+			// are forced to cull properly without triggering a false rescue drop-out.
+			// ============================================================================================
+			bool rayIsBlockedByFloorLedge = (highestFloor >= rayAbsoluteZAtLine - 1.0f);
+			bool rayIsBlockedByCeilingBeam = (ceilingHeightInitial <= rayAbsoluteZAtLine + 1.0f);
+
+			if (!rayIsBlockedByFloorLedge && !rayIsBlockedByCeilingBeam)
+			{
+				// THE PATH IS OPEN! FORCE-DISABLE PORTAL OCCLUSION!
+				maxFloor = MINCOORD2SIDED;
+				minCeiling = MAXCOORD2SIDED;
+				valid = true;
+				return;
+			}
+		}
+		else
+		{
+			// ============================================================================================
+			// BRANCH B: STANDARD LAX VERTICAL PORTAL EVALUATION (Safe fallback for regular layouts)
+			// Uses the original 8-unit rescue buffer to smooth out view bobbing and minor flickering.
+			// ============================================================================================
+			bool rayIsBlockedByFloorLedge = (highestFloor >= rayAbsoluteZAtLine - 8.0f);
+			bool rayIsBlockedByCeilingBeam = (ceilingHeightInitial <= rayAbsoluteZAtLine + 8.0f);
+
+			if (!rayIsBlockedByFloorLedge && !rayIsBlockedByCeilingBeam)
+			{
+				// THE PATH IS OPEN! FORCE-DISABLE PORTAL OCCLUSION!
+				maxFloor = MINCOORD2SIDED;
+				minCeiling = MAXCOORD2SIDED;
+				valid = true;
+				return;
+			}
+		}
+
+		// If the vertical ray is genuinely blocked by physical geometry, log the factual bounds
+		maxFloor = MAX(this->maxFloor, floorHeightInitial);
+		minCeiling = MIN(this->minCeiling, ceilingHeightInitial);
 		valid = true;
 	}
 
@@ -2534,49 +2759,117 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 			}
 			else
 			{
-				// --- 3. TUNNEL BLOCKMAP SCAN ---
-				// Step along the sight line to find all transit sectors (trenches, steps, etc.)
-				FVector2 dir = toSprite * rayDistInv;
-				const float stepSize = 128.0f; // Step by block-map units
-				FVector2 currentPos = viewerPos;
+				// --- 3. TUNNEL BLOCKMAP SCAN (EXPLICIT FORWARD/BACKWARD FORK) ---
+				// Considers window cases but may leak more if enabled
+				const bool clearWindowObstrPath = true;
+
+				// Calculate the structural sector floor delta via ZatPoint to bypass dynamic Z shifts (jumping).
+				float viewerSectorFloor = (float)viewer->Sector->floorplane.ZatPoint(viewer->X(), viewer->Y());
+				float thingSectorFloor = (float)thing->Sector->floorplane.ZatPoint(thing->X(), thing->Y());
+				float staticFloorDelta = (float)fabs(viewerSectorFloor - thingSectorFloor);
+
+				FVector2 dir;
+				FVector2 currentPos;
+				const float stepSize = 128.0f;
 				int lastBX = -1, lastBY = -1;
 
-				for (float d = 0; d <= rayDist + stepSize; d += stepSize)
+				// Condition rule: Trigger backward tracing only if the global override is active,
+				// there is a topographical split (delta > 16), AND both sectors are coplanar 
+				// within a standard 72-unit vertical room scale tier (delta <= 72).
+				if (clearWindowObstrPath && (staticFloorDelta > 16.0f) && (staticFloorDelta <= 72.0f))
 				{
-					int bx = level.blockmap.GetBlockX(currentPos.X);
-					int by = level.blockmap.GetBlockY(currentPos.Y);
-					currentPos += dir * stepSize;
+					// ============================================================================================
+					// APPROACH A: NEW BACKWARD TRACING METHOD (Optimized for deep trenches and high windows)
+					// Traces from target sprite backwards to viewer to clear front-facing window frames instantly.
+					// ============================================================================================
+					dir = -toSprite * rayDistInv;
+					currentPos = testPoint;
 
-					if (!level.blockmap.isValidBlock(bx, by)) continue;
-					if (bx == lastBX && by == lastBY) continue; // Skip already processed blocks
-					lastBX = bx; lastBY = by;
-
-					int* list = level.blockmap.GetLines(bx, by);
-					for (int i = 0; list[i] != -1; i++)
+					for (float d = 0; d <= rayDist + stepSize; d += stepSize)
 					{
-						line_t* line = &level.lines[list[i]];
-						const FVector2 lineStart = GetVertexPosition(line->v1);
-						const FVector2 lineEnd = GetVertexPosition(line->v2);
-						FVector2 intersectionPoint;
+						int bx = level.blockmap.GetBlockX(currentPos.X);
+						int by = level.blockmap.GetBlockY(currentPos.Y);
+						currentPos += dir * stepSize;
 
-						if (!LineIntersectsSegment2sided(viewerPos, testPoint, lineStart, lineEnd, intersectionPoint))
-							continue;
+						if (!level.blockmap.isValidBlock(bx, by)) continue;
+						if (bx == lastBX && by == lastBY) continue;
+						lastBX = bx; lastBY = by;
 
-						const FVector2 clamped =
+						int* list = level.blockmap.GetLines(bx, by);
+						for (int i = 0; list[i] != -1; i++)
 						{
-							clamp<float>(intersectionPoint.X, MINCOORD2SIDED, MAXCOORD2SIDED),
-							clamp<float>(intersectionPoint.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
-						};
+							line_t* line = &level.lines[list[i]];
+							const FVector2 lineStart = GetVertexPosition(line->v1);
+							const FVector2 lineEnd = GetVertexPosition(line->v2);
+							FVector2 intersectionPoint;
 
-						// Gather vertical obstruction data from the intersected lines
-						if (line->flags & ML_TWOSIDED)
-						{
-							if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
-							if (line->backsector)  obsData.Update2sidedTallObstructions(thing, viewer, line->backsector, clamped);
+							if (!LineIntersectsSegment2sided(viewerPos, testPoint, lineStart, lineEnd, intersectionPoint))
+								continue;
+
+							const FVector2 clamped =
+							{
+								clamp<float>(intersectionPoint.X, MINCOORD2SIDED, MAXCOORD2SIDED),
+								clamp<float>(intersectionPoint.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
+							};
+
+							if (line->flags & ML_TWOSIDED)
+							{
+								if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+								if (line->backsector) obsData.Update2sidedTallObstructions(thing, viewer, line->backsector, clamped);
+							}
+							else if (line->frontsector)
+							{
+								obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+							}
 						}
-						else if (line->frontsector)
+					}
+				}
+				else
+				{
+					// ============================================================================================
+					// APPROACH B: ORIGINAL FORWARD TRACING METHOD (Safe for aligned floors, dynamic actions, Map12)
+					// Traces conventionally from player out to actor, ensuring close solid walls block first.
+					// Runs as fallback if delta is tight, if sectors aren't coplanar (> 72), OR if switch is FALSE.
+					// ============================================================================================
+					dir = toSprite * rayDistInv;
+					currentPos = viewerPos;
+
+					for (float d = 0; d <= rayDist + stepSize; d += stepSize)
+					{
+						int bx = level.blockmap.GetBlockX(currentPos.X);
+						int by = level.blockmap.GetBlockY(currentPos.Y);
+						currentPos += dir * stepSize;
+
+						if (!level.blockmap.isValidBlock(bx, by)) continue;
+						if (bx == lastBX && by == lastBY) continue;
+						lastBX = bx; lastBY = by;
+
+						int* list = level.blockmap.GetLines(bx, by);
+						for (int i = 0; list[i] != -1; i++)
 						{
-							obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+							line_t* line = &level.lines[list[i]];
+							const FVector2 lineStart = GetVertexPosition(line->v1);
+							const FVector2 lineEnd = GetVertexPosition(line->v2);
+							FVector2 intersectionPoint;
+
+							if (!LineIntersectsSegment2sided(viewerPos, testPoint, lineStart, lineEnd, intersectionPoint))
+								continue;
+
+							const FVector2 clamped =
+							{
+								clamp<float>(intersectionPoint.X, MINCOORD2SIDED, MAXCOORD2SIDED),
+								clamp<float>(intersectionPoint.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
+							};
+
+							if (line->flags & ML_TWOSIDED)
+							{
+								if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+								if (line->backsector) obsData.Update2sidedTallObstructions(thing, viewer, line->backsector, clamped);
+							}
+							else if (line->frontsector)
+							{
+								obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+							}
 						}
 					}
 				}
