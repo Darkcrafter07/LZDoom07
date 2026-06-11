@@ -40,7 +40,10 @@
 #include "wglext.h"
 
 #include "win32iface.h"
-#include "win32gliface.h"
+
+// already contained in "win32glvid.h"
+// #include "win32gliface.h"
+
 //#include "gl/gl_intern.h"
 #include "x86.h"
 #include "templates.h"
@@ -61,8 +64,11 @@
 #include "gl/system/gl_framebuffer.h"
 #include "gl/system/gl_swframebuffer.h"
 
-extern HWND			Window;
-EXTERN_CVAR(Bool, vid_hdr)
+#include "gl/system/gl_interface.h"
+
+#include "win32glvid.h"
+
+
 
 extern "C" {
     __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
@@ -72,6 +78,7 @@ extern "C" {
 void gl_CalculateCPUSpeed();
 extern int NewWidth, NewHeight, NewBits, DisplayBits;
 extern bool vid_hdr_active;
+extern void gl_LoadExtensions();
 
 // these get used before GLEW is initialized so we have to use separate pointers with different names
 PFNWGLCHOOSEPIXELFORMATARBPROC myWglChoosePixelFormatARB; // = (PFNWGLCHOOSEPIXELFORMATARBPROC)wglGetProcAddress("wglChoosePixelFormatARB");
@@ -87,77 +94,6 @@ CUSTOM_CVAR(Bool, gl_debug, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOINI
 
 EXTERN_CVAR(Bool, vr_enable_quadbuffered)
 EXTERN_CVAR(Int, vid_refreshrate)
-
-
-//==========================================================================
-//
-// 
-//
-//==========================================================================
-
-class Win32GLVideo : public IVideo
-{
-public:
-	Win32GLVideo(int parm);
-	virtual ~Win32GLVideo();
-
-	EDisplayType GetDisplayType() { return DISPLAY_Both; }
-	void SetWindowedScale(float scale);
-	void StartModeIterator(int bits, bool fs);
-	bool NextMode(int *width, int *height, bool *letterbox);
-	bool GoFullscreen(bool yes);
-	DFrameBuffer *CreateFrameBuffer (int width, int height, bool bgra, bool fs, DFrameBuffer *old);
-	virtual bool SetResolution(int width, int height, int bits);
-	void DumpAdapters();
-	bool InitHardware(HWND Window, int multisample);
-	void Shutdown();
-	bool SetFullscreen(const char *devicename, int w, int h, int bits, int hz);
-
-	HDC m_hDC;
-
-protected:
-	struct ModeInfo
-	{
-		ModeInfo(int inX, int inY, int inBits, int inRealY, int inRefresh)
-			: next(NULL),
-			width(inX),
-			height(inY),
-			bits(inBits),
-			refreshHz(inRefresh),
-			realheight(inRealY)
-		{}
-		ModeInfo *next;
-		int width, height, bits, refreshHz, realheight;
-	} *m_Modes;
-
-	ModeInfo *m_IteratorMode;
-	int m_IteratorBits;
-	bool m_IteratorFS;
-	bool m_IsFullscreen;
-	int m_trueHeight;
-	int m_DisplayWidth, m_DisplayHeight, m_DisplayBits, m_DisplayHz;
-	HMODULE hmRender;
-
-	char m_DisplayDeviceBuffer[CCHDEVICENAME];
-	char *m_DisplayDeviceName;
-	HMONITOR m_hMonitor;
-
-	HWND m_Window;
-	HGLRC m_hRC;
-
-	HWND InitDummy();
-	void ShutdownDummy(HWND dummy);
-	bool SetPixelFormat();
-	bool SetupPixelFormat(int multisample);
-
-	void GetDisplayDeviceName();
-	void MakeModesList();
-	void AddMode(int x, int y, int bits, int baseHeight, int refreshHz);
-	void FreeModes();
-public:
-	int GetTrueHeight() { return m_trueHeight; }
-
-};
 
 //==========================================================================
 //
@@ -520,6 +456,53 @@ DFrameBuffer *Win32GLVideo::CreateFrameBuffer(int width, int height, bool bgra, 
 
 //==========================================================================
 //
+// Underimplemented and unused
+//
+//==========================================================================
+
+void Win32GLVideo::RecreateOpenGLContext(int width, int height, int bits)
+{
+	// Destroy the old context
+	if (m_hRC)
+	{
+		wglMakeCurrent(NULL, NULL);
+		wglDeleteContext(m_hRC);
+		m_hRC = NULL;
+	}
+
+	// For GL1 mode (FX5500), use the old context creation method
+	if (gl.gl1path)
+	{
+		m_hRC = wglCreateContext(m_hDC);
+	}
+	else
+	{
+		// For GL2+, use modern context creation
+		if (myWglCreateContextAttribsARB != NULL)
+		{
+			int prof = WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
+			int ctxAttribs[] = {
+				WGL_CONTEXT_MAJOR_VERSION_ARB, 2,
+				WGL_CONTEXT_MINOR_VERSION_ARB, 0,
+				WGL_CONTEXT_FLAGS_ARB, 0,
+				WGL_CONTEXT_PROFILE_MASK_ARB, prof,
+				0
+			};
+			m_hRC = myWglCreateContextAttribsARB(m_hDC, 0, ctxAttribs);
+		}
+		else
+		{
+			m_hRC = wglCreateContext(m_hDC);
+		}
+	}
+
+	// Reinitialize OpenGL extensions
+	gl_LoadExtensions();
+
+}
+
+//==========================================================================
+//
 // 
 //
 //==========================================================================
@@ -757,11 +740,17 @@ bool Win32GLVideo::SetupPixelFormat(int multisample)
 	std::vector<int> attributes;
 	int pixelFormat;
 	unsigned int numFormats;
-	float attribsFloat[] = {0.0f, 0.0f};
-	
+	float attribsFloat[] = { 0.0f, 0.0f };
+
 	deskDC = GetDC(GetDesktopWindow());
 	colorDepth = GetDeviceCaps(deskDC, BITSPIXEL);
 	ReleaseDC(GetDesktopWindow(), deskDC);
+
+	// If we're in GL 1.5 mode (FX 5500), skip modern pixel format selection entirely
+	if (gl.gl1path)
+	{
+		goto oldmethod; // Jump directly to compatibility mode
+	}
 
 	if (myWglChoosePixelFormatARB)
 	{
@@ -814,7 +803,7 @@ bool Win32GLVideo::SetupPixelFormat(int multisample)
 			Printf("R_OPENGL: Couldn't choose pixel format. Retrying in compatibility mode\n");
 			goto oldmethod;
 		}
-	
+
 		if (vid_hdr && numFormats == 0) // This card/driver doesn't support the rgb16f pixel format. Fall back to 8bpc
 		{
 			Printf("R_OPENGL: This card/driver does not support RGBA16F. HDR will not work.\n");
@@ -873,6 +862,19 @@ bool Win32GLVideo::SetupPixelFormat(int multisample)
 		};
 
 		pixelFormat = ChoosePixelFormat(m_hDC, &pfd);
+		if (!pixelFormat)
+		{
+			// If even the basic format fails, try with stencil buffer disabled
+			pfd.cStencilBits = 0;
+			pixelFormat = ChoosePixelFormat(m_hDC, &pfd);
+			if (!pixelFormat)
+			{
+				vid_renderer = 0;
+				I_Error("R_OPENGL: Couldn't find any compatible pixel format. Your hardware may not support OpenGL.\n");
+				return false;
+			}
+		}
+
 		DescribePixelFormat(m_hDC, pixelFormat, sizeof(pfd), &pfd);
 
 		if (pfd.dwFlags & PFD_GENERIC_FORMAT)

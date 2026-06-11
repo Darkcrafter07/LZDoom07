@@ -86,6 +86,10 @@
 
 #include "optwin32.h"
 
+#include "m_argv.h"
+#include "gl/system/gl_cvars.h"
+
+
 // MACROS ------------------------------------------------------------------
 
 #ifdef _MSC_VER
@@ -590,6 +594,8 @@ BOOL CALLBACK IWADBoxCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
 
 		// Check the current video settings.
 		SendDlgItemMessage( hDlg, vid_renderer ? IDC_WELCOME_OPENGL : IDC_WELCOME_SOFTWARE, BM_SETCHECK, BST_CHECKED, 0 );
+		// [Darkcrafter07] - Restore button state from the lzdoom.ini via native CVar on launcher startup
+		SendDlgItemMessage(hDlg, IDC_WELCOME_GL1COMPAT, BM_SETCHECK, gl_usegl1mode ? BST_CHECKED : BST_UNCHECKED, 0);
 		SendDlgItemMessage( hDlg, IDC_WELCOME_FULLSCREEN, BM_SETCHECK, fullscreen ? BST_CHECKED : BST_UNCHECKED, 0 );
 
 		// [SP] This is our's
@@ -642,6 +648,16 @@ BOOL CALLBACK IWADBoxCallback(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPa
 			disableautoload = SendDlgItemMessage( hDlg, IDC_WELCOME_NOAUTOLOAD, BM_GETCHECK, 0, 0 ) == BST_CHECKED;
 			autoloadlights = SendDlgItemMessage( hDlg, IDC_WELCOME_LIGHTS, BM_GETCHECK, 0, 0 ) == BST_CHECKED;
 			autoloadbrightmaps = SendDlgItemMessage( hDlg, IDC_WELCOME_BRIGHTMAPS, BM_GETCHECK, 0, 0 ) == BST_CHECKED;
+			// [Darkcrafter07] - OpenGL1 compatibility mode selector for ancient video cards
+			gl_usegl1mode = SendDlgItemMessage(hDlg, IDC_WELCOME_GL1COMPAT, BM_GETCHECK, 0, 0) == BST_CHECKED;
+			if (gl_usegl1mode)
+			{
+				// In case user already ran it with this flag, remove the old value first
+				Args->RemoveArgs("-glversion");
+				Args->AppendArg("-glversion");
+				Args->AppendArg("1");
+			}
+
 			ctrl = GetDlgItem (hDlg, IDC_IWADLIST);
 			EndDialog(hDlg, SendMessage (ctrl, LB_GETCURSEL, 0, 0));
 		}

@@ -158,9 +158,23 @@ void gl_LoadExtensions()
 	const char *version = Args->CheckValue("-glversion");
 	realglversion = strtod(glversion, NULL);
 
+	//if (version == NULL)
+	//{
+	//	version = glversion;
+	//}
+
 	if (version == NULL)
 	{
-		version = glversion;
+		
+		if (gl_usegl1mode) // If comline arg not passed, check the cvar
+		{
+			version = "1";
+			Printf("OpenGL1 compat mode enabled via lzdoom.ini/launcher.\n");
+		}
+		else
+		{
+			version = glversion;
+		}
 	}
 	else
 	{
