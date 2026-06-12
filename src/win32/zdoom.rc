@@ -15,65 +15,6 @@
 #undef APSTUDIO_READONLY_SYMBOLS
 
 /////////////////////////////////////////////////////////////////////////////
-// Russian (Russia) resources
-
-#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_RUS)
-LANGUAGE LANG_RUSSIAN, SUBLANG_DEFAULT
-#pragma code_page(1251)
-
-/////////////////////////////////////////////////////////////////////////////
-//
-// RT_MANIFEST
-//
-
-1                       RT_MANIFEST             "zdoom.exe.manifest"
-
-
-/////////////////////////////////////////////////////////////////////////////
-//
-// Version
-//
-
-VS_VERSION_INFO VERSIONINFO
- FILEVERSION 3,90,27,0
- PRODUCTVERSION 3,90,27,0
- FILEFLAGSMASK 0x3fL
-#ifdef _DEBUG
- FILEFLAGS 0x3L
-#else
- FILEFLAGS 0x2L
-#endif
- FILEOS 0x40004L
- FILETYPE 0x1L
- FILESUBTYPE 0x0L
-BEGIN
-    BLOCK "StringFileInfo"
-    BEGIN
-        BLOCK "040904b0"
-        BEGIN
-            VALUE "Comments", "Thanks to id Software for creating DOOM and then releasing the source code. Thanks also to TeamTNT for creating BOOM, which ZDoom is partially based on. Includes code based on the Cajun Bot 0.97 by Martin Collberg."
-            VALUE "CompanyName", " "
-            VALUE "FileDescription", "LZDoom"
-            VALUE "FileVersion", "<v3.90.27-XP>"
-            VALUE "InternalName", "LZDoom"
-            VALUE "LegalCopyright", "Copyright © 1993-1996 id Software, 1998-2010 Randy Heit, 2002-2010 Christoph Oelckers, et al."
-            VALUE "LegalTrademarks", "DoomR is a Registered Trademark of id Software, Inc."
-            VALUE "OriginalFilename", "lzdoom.exe"
-            VALUE "ProductName", "LZDoom"
-            VALUE "ProductVersion", "<v3.90.27-XP>"
-        END
-    END
-    BLOCK "VarFileInfo"
-    BEGIN
-        VALUE "Translation", 0x409, 1200
-    END
-END
-
-#endif    // Russian (Russia) resources
-/////////////////////////////////////////////////////////////////////////////
-
-
-/////////////////////////////////////////////////////////////////////////////
 // English (United States) resources
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
@@ -86,26 +27,68 @@ LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
 // TEXTINCLUDE
 //
 
-1 TEXTINCLUDE 
+1 TEXTINCLUDE
 BEGIN
     "resource.h\0"
 END
 
-2 TEXTINCLUDE 
+2 TEXTINCLUDE
 BEGIN
     "#include ""afxres.h""\r\n"
-    "#include ""../version.h""\r\r\n"
-    "#include ""../gitinfo.h""\r\r\n"
+    "#include ""../version.h""\r\n"
+    "#include ""../gitinfo.h""\r\n"
     "#include ""zdoom.rc2""\0"
 END
 
-3 TEXTINCLUDE 
+3 TEXTINCLUDE
 BEGIN
-    "\0"
+    "#ifndef NO_MANIFEST\r\n"
+    "    CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST ""zdoom.exe.manifest""\r\n"
+    "#endif\r\n"
+    "\r\n"
+    "/////////////////////////////////////////////////////////////////////////////\r\n"
+    "//\r\n"
+    "// Version\r\n"
+    "//\r\n"
+    "#define RC_FILEVERSION2 GIT_DESCRIPTION\r\n"
+    "\r\n"
+    "VS_VERSION_INFO VERSIONINFO\r\n"
+    " FILEVERSION RC_FILEVERSION\r\n"
+    " PRODUCTVERSION RC_PRODUCTVERSION\r\n"
+    " FILEFLAGSMASK 0x3fL\r\n"
+    "#ifdef _DEBUG\r\n"
+    " FILEFLAGS 0x3L\r\n"
+    "#else\r\n"
+    " FILEFLAGS 0x2L\r\n"
+    "#endif\r\n"
+    " FILEOS 0x40004L\r\n"
+    " FILETYPE 0x1L\r\n"
+    " FILESUBTYPE 0x0L\r\n"
+    "BEGIN\r\n"
+    "    BLOCK ""StringFileInfo""\r\n"
+    "    BEGIN\r\n"
+    "        BLOCK ""040904b0""\r\n"
+    "        BEGIN\r\n"
+    "            VALUE ""Comments"", ""Thanks to id Software for creating DOOM and then releasing the source code. Thanks also to TeamTNT for creating BOOM, which ZDoom is partially based on. Includes code based on the Cajun Bot 0.97 by Martin Collberg. GZDoom by Christoph Oelckers, LZDoom by drfrag, LZDoom07 by Darkcrafter07.""\r\n"
+    "            VALUE ""CompanyName"", "" ""\r\n"
+    "            VALUE ""FileDescription"", ""LZDoom07""\r\n"
+    "            VALUE ""FileVersion"", RC_FILEVERSION2\r\n"
+    "            VALUE ""InternalName"", ""LZDoom07""\r\n"
+    "            VALUE ""LegalCopyright"", ""Copyright © 1993-1996 id Software, 1998-2010 Randy Heit, 2002-2010 Christoph Oelckers, et al.""\r\n"
+    "            VALUE ""LegalTrademarks"", ""Doom® is a Registered Trademark of id Software, Inc.""\r\n"
+    "            VALUE ""OriginalFilename"", ""lzdoom.exe""\r\n"
+    "            VALUE ""ProductName"", ""LZDoom07""\r\n"
+    "            VALUE ""ProductVersion"", GIT_VERSION\r\n"
+    "        END\r\n"
+    "    END\r\n"
+    "    BLOCK ""VarFileInfo""\r\n"
+    "    BEGIN\r\n"
+    "        VALUE ""Translation"", 0x409, 1200\r\n"
+    "    END\r\n"
+    "END\r\n"
 END
 
 #endif    // APSTUDIO_INVOKED
-
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -212,7 +195,7 @@ END
 IDD_CRASHDIALOG DIALOGEX 0, 0, 415, 308
 STYLE DS_SETFONT | DS_MODALFRAME | DS_SETFOREGROUND | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT | WS_EX_APPWINDOW
-CAPTION "LZDoom Very Fatal Error"
+CAPTION "LZDoom07 Very Fatal Error"
 FONT 8, "MS Shell Dlg", 400, 0, 0x0
 BEGIN
     CONTROL         "",IDC_CRASHTAB,"SysTabControl32",WS_TABSTOP,4,4,404,280

@@ -29,15 +29,15 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "Comments", "Thanks to id Software for creating DOOM and then releasing the source code. Thanks also to TeamTNT for creating BOOM, which ZDoom is partially based on. Includes code based on the Cajun Bot 0.97 by Martin Collberg."
+            VALUE "Comments", "Thanks to id Software for creating DOOM and then releasing the source code. Thanks also to TeamTNT for creating BOOM, which ZDoom is partially based on. Includes code based on the Cajun Bot 0.97 by Martin Collberg. GZDoom by Christoph Oelckers, LZDoom by drfrag, LZDoom07 by Darkcrafter07."
             VALUE "CompanyName", " "
-            VALUE "FileDescription", "LZDoom"
+            VALUE "FileDescription", "LZDoom07"
             VALUE "FileVersion", RC_FILEVERSION2
-            VALUE "InternalName", "LZDoom"
+            VALUE "InternalName", "LZDoom07"
             VALUE "LegalCopyright", "Copyright © 1993-1996 id Software, 1998-2010 Randy Heit, 2002-2010 Christoph Oelckers, et al."
             VALUE "LegalTrademarks", "DoomR is a Registered Trademark of id Software, Inc."
             VALUE "OriginalFilename", "lzdoom.exe"
-            VALUE "ProductName", "LZDoom"
+            VALUE "ProductName", "LZDoom07"
             VALUE "ProductVersion", GIT_DESCRIPTION
         END
     END
