@@ -498,23 +498,35 @@ void GLSprite::Draw(int pass)
 					// 2. Bind mask. Pass the same parameters that we do for the base texture
 					gl_RenderState.SetMaterial(bm, CLAMP_XY, translation, OverrideShader, !!(RenderStyle.Flags & STYLEF_RedIsAlpha));
 
-					// The brightmap effect remains at full strength until lightlevel >= 128.
-					// After that, it linearly decreases to 15% at lightlevel 255.
+					// Calculate total current light level for the sprite slice including extra light
+					int totalLight = lightlevel + rel;
+					if (totalLight > 255) totalLight = 255;
+					if (totalLight < 0) totalLight = 0;
 
-					float lightFactor;
-					if (lightlevel < 128)
+					float intensityFactor;
+					if (totalLight < 96)
 					{
-						// Full effect below 128
-						lightFactor = 1.0f; 
+						// Full effect below 96 light level to prevent early dimming
+						intensityFactor = 1.0f;
 					}
 					else
 					{
-						// Linear decrease from 1.0 (at 128) to 0.15 (at 255)
-						lightFactor = 1.0f - (float)(lightlevel - 128) / (255.0f - 128.0f);
-						lightFactor = 0.15f + 0.85f * lightFactor;  // Ensure minimum 15% glow
+						// Optimized inverse light factor for the 96-255 range using multiplication
+						const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
+						float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
+
+						// Add a subtle ~2.5% parabola bump to mid-range without overbrightening high values
+						factor = factor + 0.1f * factor * (1.0f - factor);
+
+						// Scale intensity to smoothly drop from 1.0 (at 96) down to 0.01 (at 255)
+						intensityFactor = (factor * 0.99f) + 0.01f;
 					}
 
-					int intensity = (int)(255 * lightFactor);
+					if (intensityFactor > 1.0f) intensityFactor = 1.0f;
+					if (intensityFactor < 0.0f) intensityFactor = 0.0f;
+
+					// Convert float factor back to standard 0-255 range for the drawer
+					int intensity = (int)(255.0f * intensityFactor);
 					mDrawer->SetColor(intensity, rel, Colormap, trans);
 
 					gl_RenderState.Apply();
@@ -1045,7 +1057,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	}
 
 	depth = (float)((x - r_viewpoint.Pos.X) * r_viewpoint.TanCos + (y - r_viewpoint.Pos.Y) * r_viewpoint.TanSin);
-	if (isSpriteShadow) depth += 1.f / 65536.f; // always sort shadows behind the sprite.
+	//if (isSpriteShadow) depth += 1.f / 65536.f; // always sort shadows behind the sprite.
+	const float sprShadDepthSortInv = 1.0f / 65536.0f;
+	if (isSpriteShadow) depth += sprShadDepthSortInv; // always sort shadows behind the sprite.
 
 	//==========================================================================
 	// [Darkcrafter07] - Original Forced-Perspective by Rachael
@@ -1362,7 +1376,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 					(!visible2sideTallEnoughObstr ||
 					// "thingCrossed2sBboxWall" culls too much but we're good without it now
 					// thanks to improved "visible2sideTallEnoughObstr" to bust leaks on
-					// D2Re Map12 and Doom 2 Map19 RedStone.
+					// D2Re Map12 and Doom 2 Map19 RedStone
 					//((thingCrossed2sBboxWall || thingCrossed2sBboxFacing) && ismildsteep)));
 					((thingCrossed2sBboxFacing) && ismildsteep)));
 				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;

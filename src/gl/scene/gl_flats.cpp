@@ -475,15 +475,45 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
 		break;
 
-		case GLPASS_BRIGHTMAP_LEGACY:
-        FMaterial *bm = gltexture->GetBrightmapLegacy();
-        if (bm)
-        {
-            gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
-            gl_SetPlaneTextureRotation(&plane, bm); 
-            DrawSubsectors(pass, false, false);
-            gl_RenderState.EnableTextureMatrix(false);
-        }
+	case GLPASS_BRIGHTMAP_LEGACY:
+		FMaterial *bm = gltexture->GetBrightmapLegacy();
+		if (bm)
+		{
+			// Calculate total current light level including extra light modifications
+			int totalLight = lightlevel + rel;
+			if (totalLight > 255) totalLight = 255;
+			if (totalLight < 0) totalLight = 0;
+
+			float intensityFactor;
+			if (totalLight < 96)
+			{
+				// Full effect below 96 light level to prevent early dimming
+				intensityFactor = 1.0f;
+			}
+			else
+			{
+				// Optimized inverse light factor for the 96-255 range using multiplication
+				const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
+				float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
+
+				// Add a subtle ~2.5% parabola bump to mid-range without overbrightening high values
+				factor = factor + 0.1f * factor * (1.0f - factor);
+
+				// Scale intensity to smoothly drop from 1.0 (at 96) down to 0.01 (at 255)
+				intensityFactor = (factor * 0.99f) + 0.01f;
+			}
+
+			if (intensityFactor > 1.0f) intensityFactor = 1.0f;
+			if (intensityFactor < 0.0f) intensityFactor = 0.0f;
+
+			// Apply calculated intensity as modulation color
+			gl_RenderState.SetColor(intensityFactor, intensityFactor, intensityFactor, 1.0f);
+
+			gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
+			gl_SetPlaneTextureRotation(&plane, bm);
+			DrawSubsectors(pass, false, false);
+			gl_RenderState.EnableTextureMatrix(false);
+		}
 		break;
 	}
 	gl_RenderState.SetAddColor(0);

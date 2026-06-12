@@ -250,18 +250,19 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 				}
 
 				// Multiply brightmap mask by parent colors (Base * Brightmap / 255)
-				float r = (float)(buffer[idx] * parentBuf[idx]) / 255.0f;
-				float g = (float)(buffer[idx + 1] * parentBuf[idx + 1]) / 255.0f;
-				float b = (float)(buffer[idx + 2] * parentBuf[idx + 2]) / 255.0f;
+				const float invMaxDoomLightLevel = 1.0f / 255.0f;
+				float r = (float)(buffer[idx] * parentBuf[idx]) * invMaxDoomLightLevel;
+				float g = (float)(buffer[idx + 1] * parentBuf[idx + 1]) * invMaxDoomLightLevel;
+				float b = (float)(buffer[idx + 2] * parentBuf[idx + 2]) * invMaxDoomLightLevel;
 
 				// Calculate parent's alpha ratio (0.0 to 1.0)
-				float alphaRatio = (float)parentBuf[idx + 3] / 255.0f;
+				float alphaRatio = (float)parentBuf[idx + 3] * invMaxDoomLightLevel;
 
 				// Calculate luminance (Rec.709) for desaturation
 				float luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
 
-				// Mixing: 80% color + 20% luma (desaturate by 20%)
-				float saturationFactor = 0.8f;
+				// Mixing: 95% color + 5% luma (desaturate by 5%)
+				float saturationFactor = 0.95f;
 
 				// Final color calculation with saturation adjustment
 				float finalR = luma + (r - luma) * saturationFactor;

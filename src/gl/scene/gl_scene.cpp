@@ -82,7 +82,7 @@ CVAR(Float, gl_mask_threshold, 0.5f,CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Float, gl_mask_sprite_threshold, 0.5f,CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_sort_textures, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
-// *legacy* It dimed impossible to have software-renderer alike camera glow
+// *legacy* It deemed impossible to have software-renderer alike camera glow
 // in fixed-pipeline old OpenGL1 or OpenGL2 without using shader. Well, here we go.
 // The CVAR is unused in this file but declared here, and later gets the job done
 // by spawning a special dynlight with a zscript flashlight alike mod.
@@ -468,7 +468,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 		gl_drawinfo->drawlists[GLDL_MASKEDFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
 
 		// 5. Draw Dynamic/Multipass Geometry Lists
-		// We have to limit draw only by those lists that contain exactly only walls and flats
+		// We have to limit draw only by those lists that contain exactly only walls, flats and 3DModels
 		if (gl_drawinfo->dldrawlists != nullptr)
 		{
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);

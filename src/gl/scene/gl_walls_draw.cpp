@@ -540,6 +540,34 @@ void GLWall::Draw(int pass)
 		FMaterial *bm = gltexture->GetBrightmapLegacy();
 		if (bm)
 		{
+			// Get the current wall lighting level
+			int wallLight = this->lightlevel;
+
+			float intensityFactor;
+			if (wallLight < 96)
+			{
+				// Full effect below 96 light level to prevent early dimming
+				intensityFactor = 1.0f;
+			}
+			else
+			{
+				// Optimized inverse light factor for the 96-255 range using multiplication
+				const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
+				float factor = 1.0f - ((float)(wallLight - 96) * rangeFactorInv);
+
+				// Add a subtle ~2.5% parabola bump to mid-range without overbrightening high values
+				factor = factor + 0.1f * factor * (1.0f - factor);
+
+				// Scale intensity to smoothly drop from 1.0 (at 96) down to 0.01 (at 255)
+				intensityFactor = (factor * 0.99f) + 0.01f;
+			}
+
+			if (intensityFactor > 1.0f) intensityFactor = 1.0f;
+			if (intensityFactor < 0.0f) intensityFactor = 0.0f;
+
+			// Apply calculated intensity as modulation color
+			gl_RenderState.SetColor(intensityFactor, intensityFactor, intensityFactor, 1.0f);
+
 			gl_RenderState.SetMaterial(bm, flags & 3, 0, -1, false);
 			RenderWall(RWF_TEXTURED);
 		}
