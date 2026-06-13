@@ -64,7 +64,7 @@ enum Drawpasses
 	GLPASS_LIGHTTEX_FOGGY,	// lighttexture pass on foggy surfaces (forces all lights to be additive)
 	GLPASS_FOGBOUNDARY,    // Apply fog to dynamically lit surfaces
 
-	GLPASS_BRIGHTEN,	// additional brightening pass for GL1x/GL2x legacy code (unused yet)
+	GLPASS_BRIGHTEN_LEGACY_LIGHTTEX,	// additional brightening pass for GL1x/GL2x legacy code (unused yet)
 	GLPASS_BRIGHTMAP_LEGACY, // GL1x/GL2x legacy brightmap simulation effect
 
 };
@@ -189,6 +189,10 @@ struct FDrawInfo
 	};
 
 	bool temporary;
+
+	// GL1x/GL2x legacy dynamic lights overbright
+	bool gl_IsLegacyGLBrighteningPass = false;
+	bool gl_IsFoggyPass = false; // Flag to notify geometry that we are drawing a fog list right now
 
 
 

@@ -861,6 +861,7 @@ void GLWall::RenderFogBoundaryCompat()
 //
 //==========================================================================
 
+// Doesn't need to boost dynlight overbright intensity unlike walls
 void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 {
 	Plane p;
@@ -1204,20 +1205,6 @@ void GLSceneDrawer::RenderMultipassStuff()
 	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
-
-	// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Start ---
-	// Run fully independent brightening pass to draw projected light spots on clean surfaces
-	if (GLRenderer->mLightCount && !FixedColormap)
-	{
-		// Execute GLPASS_BRIGHTEN_LEGACY_LIGHTTEX for walls to get nice overbright centers
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-		// Execute GLPASS_BRIGHTEN_LEGACY_LIGHTTEX for flats as well to match the wall overbright glow!
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-	}
-	// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Finish ---
 
 	// Fourth pass: apply fog as translucent overlay for foggy surfaces
 	gl_RenderState.EnableFog(false);  // Ensure fog is disabled

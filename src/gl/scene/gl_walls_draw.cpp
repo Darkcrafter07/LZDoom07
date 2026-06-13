@@ -525,13 +525,9 @@ void GLWall::Draw(int pass)
 	case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX:
 		if (seg->sidedef != nullptr)
 		{
-			// 1. Setup multi-pass overbright blending compatible with OpenGL 1.1
 			gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
 			glDepthFunc(GL_EQUAL);
 			glDepthMask(false);
-
-			// 2. KEEP ORIGINAL WALL MATERIAL: We DO NOT bind the buggy glLight mask texture!
-			// This guarantees the overbright pass aligns with wall bricks perfectly at any distance.
 			gl_RenderState.SetMaterial(gltexture, CLAMP_NONE, 0, -1, false);
 
 			FLightNode *node = (!(seg->sidedef->Flags & WALLF_POLYOBJ)) ?
@@ -541,15 +537,21 @@ void GLWall::Draw(int pass)
 			memcpy(save, tcs, sizeof(tcs)); // Save original wall coordinates
 
 			float baseFactor = clamp((float)gl_legacylightoverbrightwalls, 0.0f, 0.2f);
-			if (baseFactor > 1.0f) baseFactor = 1.0f;
-			if (baseFactor < 0.0f) baseFactor = 0.0f;
+
+			// --- FOG BOOSTER MULTIPLIER ---
+			// If we are currently processing a foggy drawlist, we amplify the baseFactor 
+			// by 3.0f to completely counteract the heavy dark fog overlay attenuation!
+			float passIntensityMultiplier = 1.5f;
+			if (gl_drawinfo && gl_drawinfo->gl_IsFoggyPass)
+			{
+				passIntensityMultiplier = 1.5f * 3.0f; // Tripple the punch for foggy walls!
+			}
 
 			while (node)
 			{
 				FDynamicLight *light = node->lightsource;
 				if (light && light->IsActive() && light->GetRadius() > 0.0f)
 				{
-					// Force disable hardware fog to prevent distant vertex jittering artifacts
 					gl_RenderState.EnableFog(false);
 					gl_RenderState.BlendEquation(GL_FUNC_ADD);
 
@@ -559,39 +561,41 @@ void GLWall::Draw(int pass)
 					float ly = (float)light->Y();
 					float lz = (float)light->Z();
 
-					// 3. HARDWARE GOURAUD SHADING HACK (OpenGL 1.1)
-					// We manually feed the wall geometry to the GPU using glBegin/glEnd.
-					// We compute smooth exponential light falloff per EACH of the 4 wall vertices
-					// based on the true 3D distance to the plasma projectile/torch!
-					float vtx[] =
-					{
-						glseg.x1, (float)zbottom[0], glseg.y1,
-						glseg.x1, (float)ztop[0],    glseg.y1,
-						glseg.x2, (float)ztop[1],    glseg.y2,
-						glseg.x2, (float)zbottom[1], glseg.y2
+					float x1 = (float)glseg.x1;
+					float y1 = (float)glseg.y1;
+					float x2 = (float)glseg.x2;
+					float y2 = (float)glseg.y2;
+
+					float zb0 = (float)zbottom[0];
+					float zt0 = (float)ztop[0];
+					float zt1 = (float)ztop[1];
+					float zb1 = (float)zbottom[1];
+
+					float vtx[] = {
+						x1, zb0, y1,
+						x1, zt0, y1,
+						x2, zt1, y2,
+						x2, zb1, y2
 					};
 
-					// --- FIRST PASS WITH LINEAR RADIUS EXPANSION ---
+					gl_RenderState.Apply();
+					glEnable(GL_TEXTURE_2D);
+					glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+					// --- FIRST PASS ---
 					glBegin(GL_QUADS);
 					for (int i = 0; i < 4; i++)
 					{
-						float vx = vtx[i * 3];
-						float vz = vtx[i * 3 + 1];
-						float vy = vtx[i * 3 + 2];
-
-						float dx = vx - lx;
-						float dy = vy - ly;
-						float dz = vz - lz;
+						float vx = vtx[i * 3]; float vz = vtx[i * 3 + 1]; float vy = vtx[i * 3 + 2];
+						float dx = vx - lx; float dy = vy - ly; float dz = vz - lz;
 						float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
 
 						float intensity = 0.0f;
 						if (dist2 < radiusSq)
 						{
-							// Linear falloff expands the visible radius much wider!
 							float dist = sqrtf(dist2);
-
-							// We boost the factor to push maximum brightness deeper into the radius
-							intensity = (1.0f - (dist / radius)) * baseFactor * 1.5f;
+							// Apply our smart context-aware pass intensity multiplier
+							intensity = (1.0f - (dist / radius)) * baseFactor * passIntensityMultiplier;
 						}
 
 						if (intensity > 1.0f) intensity = 1.0f;
@@ -607,21 +611,15 @@ void GLWall::Draw(int pass)
 					glBegin(GL_QUADS);
 					for (int i = 0; i < 4; i++)
 					{
-						float vx = vtx[i * 3];
-						float vz = vtx[i * 3 + 1];
-						float vy = vtx[i * 3 + 2];
-
-						float dx = vx - lx;
-						float dy = vy - ly;
-						float dz = vz - lz;
+						float vx = vtx[i * 3]; float vz = vtx[i * 3 + 1]; float vy = vtx[i * 3 + 2];
+						float dx = vx - lx; float dy = vy - ly; float dz = vz - lz;
 						float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
 
 						float intensity = 0.0f;
 						if (dist2 < radiusSq)
 						{
 							float dist = sqrtf(dist2);
-							// Stack another intense linear layer to melt the center into pure white bloom
-							intensity = (1.0f - (dist / radius)) * baseFactor * 1.5f;
+							intensity = (1.0f - (dist / radius)) * baseFactor * passIntensityMultiplier;
 						}
 
 						if (intensity > 1.0f) intensity = 1.0f;
@@ -640,9 +638,11 @@ void GLWall::Draw(int pass)
 			vertcount = 0;
 
 			gl_RenderState.EnableFog(true);
+			gl_RenderState.Apply();
 			glDepthMask(true);
 			glDepthFunc(GL_LESS);
 			gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+			glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		}
 		break;
 

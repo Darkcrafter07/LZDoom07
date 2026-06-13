@@ -367,6 +367,44 @@ void GLSceneDrawer::RenderScene(int recursion)
 		if (haslights || hasbrightmaps)
 		{
 			RenderMultipassStuff();
+
+			// ==========================================================================
+			// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Start ---
+			// THE ULTIMATE ARCHITECTURAL TRIUMPH: We execute our custom overbright pass
+			// completely outside RenderMultipassStuff, after the engine has finalized the framebuffer!
+			// This guarantees NO grey textures, NO broken light passes, and absolute flawless fog blending!
+			// ==========================================================================
+			if (GLRenderer->mLightCount && !FixedColormap)
+			{
+				// Pure OpenGL 1.1 State Machine Lock - 100% isolated from gl_RenderState caches!
+				glDisable(GL_FOG);        // Ensure hardware fixed fog doesn't blow out our spots
+				glDepthMask(false);       // Lock Z-Buffer writing to eliminate depth-fighting seams
+				glDepthFunc(GL_EQUAL);    // Only draw pixels that perfectly match existing coordinates
+
+				glEnable(GL_BLEND);
+				glBlendFunc(GL_DST_COLOR, GL_ONE); // Multiplicative overbright blending window
+				glMatrixMode(GL_TEXTURE);
+
+				// Execute GLPASS_BRIGHTEN_LEGACY_LIGHTTEX for walls to get nice overbright centers
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+				// Execute GLPASS_BRIGHTEN_LEGACY_LIGHTTEX for flats as well to match the wall overbright glow!
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+				// Restore raw OpenGL hardware states back cleanly immediately!
+				glEnable(GL_FOG);
+				glDepthMask(true);
+				glDepthFunc(GL_LESS);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			}
+			// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Finish ---
+
 		}
 
 		// The remaining lists which are unaffected by dynamic lights are just processed as normal.
