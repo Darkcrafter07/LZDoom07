@@ -48,6 +48,8 @@
 #include "gl/utility/gl_templates.h"
 #include "gl/renderer/gl_quaddrawer.h"
 
+#include "gl/compatibility/gl_20.h"
+
 EXTERN_CVAR(Bool, gl_seamless)
 
 //==========================================================================
@@ -520,20 +522,128 @@ void GLWall::Draw(int pass)
 		RenderWall(RWF_TEXTURED);
 		break;
 
-	case GLPASS_BRIGHTEN:
-		// Brightening pass
-		// Unused, unstable but why not keep it?
-		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
-		glDepthFunc(GL_EQUAL);
-		glDepthMask(false);
+	case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX:
+		if (seg->sidedef != nullptr)
+		{
+			// 1. Setup multi-pass overbright blending compatible with OpenGL 1.1
+			gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+			glDepthFunc(GL_EQUAL);
+			glDepthMask(false);
 
-		// Apply brightening to the wall
-		gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-		RenderWall(RWF_TEXTURED);
+			// 2. KEEP ORIGINAL WALL MATERIAL: We DO NOT bind the buggy glLight mask texture!
+			// This guarantees the overbright pass aligns with wall bricks perfectly at any distance.
+			gl_RenderState.SetMaterial(gltexture, CLAMP_NONE, 0, -1, false);
 
-		glDepthMask(true);
-		glDepthFunc(GL_LESS);
-		gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+			FLightNode *node = (!(seg->sidedef->Flags & WALLF_POLYOBJ)) ?
+				seg->sidedef->lighthead : (sub ? sub->lighthead : nullptr);
+
+			texcoord save[4];
+			memcpy(save, tcs, sizeof(tcs)); // Save original wall coordinates
+
+			float baseFactor = clamp((float)gl_legacylightoverbrightwalls, 0.0f, 0.2f);
+			if (baseFactor > 1.0f) baseFactor = 1.0f;
+			if (baseFactor < 0.0f) baseFactor = 0.0f;
+
+			while (node)
+			{
+				FDynamicLight *light = node->lightsource;
+				if (light && light->IsActive() && light->GetRadius() > 0.0f)
+				{
+					// Force disable hardware fog to prevent distant vertex jittering artifacts
+					gl_RenderState.EnableFog(false);
+					gl_RenderState.BlendEquation(GL_FUNC_ADD);
+
+					float radius = light->GetRadius();
+					float radiusSq = radius * radius;
+					float lx = (float)light->X();
+					float ly = (float)light->Y();
+					float lz = (float)light->Z();
+
+					// 3. HARDWARE GOURAUD SHADING HACK (OpenGL 1.1)
+					// We manually feed the wall geometry to the GPU using glBegin/glEnd.
+					// We compute smooth exponential light falloff per EACH of the 4 wall vertices
+					// based on the true 3D distance to the plasma projectile/torch!
+					float vtx[] =
+					{
+						glseg.x1, (float)zbottom[0], glseg.y1,
+						glseg.x1, (float)ztop[0],    glseg.y1,
+						glseg.x2, (float)ztop[1],    glseg.y2,
+						glseg.x2, (float)zbottom[1], glseg.y2
+					};
+
+					// --- FIRST PASS WITH LINEAR RADIUS EXPANSION ---
+					glBegin(GL_QUADS);
+					for (int i = 0; i < 4; i++)
+					{
+						float vx = vtx[i * 3];
+						float vz = vtx[i * 3 + 1];
+						float vy = vtx[i * 3 + 2];
+
+						float dx = vx - lx;
+						float dy = vy - ly;
+						float dz = vz - lz;
+						float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
+
+						float intensity = 0.0f;
+						if (dist2 < radiusSq)
+						{
+							// Linear falloff expands the visible radius much wider!
+							float dist = sqrtf(dist2);
+
+							// We boost the factor to push maximum brightness deeper into the radius
+							intensity = (1.0f - (dist / radius)) * baseFactor * 1.5f;
+						}
+
+						if (intensity > 1.0f) intensity = 1.0f;
+						if (intensity < 0.0f) intensity = 0.0f;
+
+						glTexCoord2f(tcs[i].u, tcs[i].v);
+						glColor4f(intensity, intensity, intensity, 1.0f);
+						glVertex3f(vx, vz, vy);
+					}
+					glEnd();
+
+					// --- SECOND PASS OVERBRIGHT HIGHLIGHT BOOSTER ---
+					glBegin(GL_QUADS);
+					for (int i = 0; i < 4; i++)
+					{
+						float vx = vtx[i * 3];
+						float vz = vtx[i * 3 + 1];
+						float vy = vtx[i * 3 + 2];
+
+						float dx = vx - lx;
+						float dy = vy - ly;
+						float dz = vz - lz;
+						float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
+
+						float intensity = 0.0f;
+						if (dist2 < radiusSq)
+						{
+							float dist = sqrtf(dist2);
+							// Stack another intense linear layer to melt the center into pure white bloom
+							intensity = (1.0f - (dist / radius)) * baseFactor * 1.5f;
+						}
+
+						if (intensity > 1.0f) intensity = 1.0f;
+						if (intensity < 0.0f) intensity = 0.0f;
+
+						glTexCoord2f(tcs[i].u, tcs[i].v);
+						glColor4f(intensity, intensity, intensity, 1.0f);
+						glVertex3f(vx, vz, vy);
+					}
+					glEnd();
+				}
+				node = node->nextLight;
+			}
+
+			memcpy(tcs, save, sizeof(tcs)); // Restore layout
+			vertcount = 0;
+
+			gl_RenderState.EnableFog(true);
+			glDepthMask(true);
+			glDepthFunc(GL_LESS);
+			gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+		}
 		break;
 
 	case GLPASS_BRIGHTMAP_LEGACY:

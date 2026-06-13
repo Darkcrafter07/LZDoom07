@@ -26,36 +26,16 @@
 **
 ** Fallback code for ancient hardware
 ** This file collects everything larger that is only needed for
-** OpenGL 1.2 and 2.0x family, NO shaders required.
+** OpenGL v1.1 and v2.0x family, NO shaders required.
 **
 */
 
-#include "gl/system/gl_system.h"
-#include "menu/menu.h"
-#include "tarray.h"
-#include "doomtype.h"
-#include "m_argv.h"
-#include "zstring.h"
-#include "i_system.h"
-#include "v_text.h"
-#include "r_utility.h"
-#include "g_levellocals.h"
-#include "actorinlines.h"
-#include "g_levellocals.h"
-#include "gl/dynlights/gl_dynlight.h"
-#include "gl/utility/gl_geometric.h"
-#include "gl/renderer/gl_renderer.h"
-#include "gl/renderer/gl_lightdata.h"
-#include "gl/system/gl_interface.h"
-#include "gl/system/gl_cvars.h"
-#include "gl/renderer/gl_renderstate.h"
-#include "gl/scene/gl_drawinfo.h"
-#include "gl/scene/gl_scenedrawer.h"
-#include "gl/data/gl_vertexbuffer.h"
-
+#include "gl_20.h"
 
 CVAR(Bool, gl_lights_additive, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)
+CVAR(Float, gl_legacylightoverbrightflats, 0.125f, CVAR_ARCHIVE)   // Intensity multiplier for flats
+CVAR(Float, gl_legacylightoverbrightwalls, 0.125f, CVAR_ARCHIVE)   // Intensity multiplier for walls
 
 //==========================================================================
 //
@@ -900,7 +880,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			continue;
 		}
 
-		// we must do the side check here because gl_SetupLight needs the correct plane orientation
+		// We must do the side check here because gl_SetupLight needs the correct plane orientation
 		// which we don't have for Legacy-style 3D-floors
 		double planeh = plane.plane.ZatPoint(light->Pos);
 		if (gl_lights_checkside && ((planeh < light->Z() && ceiling) || (planeh > light->Z() && !ceiling)))
@@ -915,9 +895,26 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			node = node->nextLight;
 			continue;
 		}
+
+		// --- FIX: OVERRIDE FORCED DARKNESS WITH CVAR INTENSITY CONTROL FOR BRIGHTEN PASS ---
+		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
+		{
+			// Safe bounds check for the external overbright intensity CVAR
+			float overbrightFactor = clamp((float)gl_legacylightoverbrightflats, 0.0f, 0.2f);
+			if (overbrightFactor > 1.0f) overbrightFactor = 1.0f;
+			if (overbrightFactor < 0.0f) overbrightFactor = 0.0f;
+
+			// Force standard additive blending and inject your custom brightness scale factor
+			gl_RenderState.BlendEquation(GL_FUNC_ADD);
+			gl_RenderState.SetColor(overbrightFactor, overbrightFactor, overbrightFactor, 1.0f);
+			gl_RenderState.SetObjectColor(0xffffffff);
+		}
+
 		gl_RenderState.Apply();
 
 		FFlatVertex *ptr = GLRenderer->mVBO->GetBuffer();
+		FFlatVertex *startPtr = ptr; // Keep a pointer to the start of the fan polygon for the second pass
+
 		for (unsigned int k = 0; k < sub->numlines; k++)
 		{
 			vertex_t *vt = sub->firstline[k].v1;
@@ -927,11 +924,46 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			t1 = { ptr->x, ptr->z, ptr->y };
 			FVector3 nearToVert = t1 - nearPt;
 
-			ptr->u = ((nearToVert | right) * scale) + 0.5f;
-			ptr->v = ((nearToVert | up) * scale) + 0.5f;
+			// --- FIX: LINEAR COMPENSATED TEXTURE PROJECTION FOR GLPASS_BRIGHTEN_LEGACY_LIGHTTEX ---
+			if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
+			{
+				float radius = light->GetRadius();
+				if (radius <= 0.0f) radius = 1.0f;
+
+				// Core embedded float constants (Scale = 2.0f, Offset = 0.0f)
+				// Hardcoded directly inside the function to completely replace old CVARs
+				const float staticScaleX = 2.0f;
+				const float staticScaleY = 2.0f;
+				const float staticOffsetX = 0.0f;
+				const float staticOffsetY = 0.0f;
+
+				float customScaleX = 1.0f / (radius * staticScaleX);
+				float customScaleY = 1.0f / (radius * staticScaleY);
+
+				// Map vertices pixel-to-pixel relative to PivotPoint nearPt using perfect 0.5f base layout centring
+				ptr->u = ((nearToVert | right) * customScaleX) + 0.5f + staticOffsetX;
+				ptr->v = ((nearToVert | up) * customScaleY) + 0.5f + staticOffsetY;
+			}
+			else
+			{
+				// Keep native Graf Zahl texture space projection mapping for standard passes
+				ptr->u = ((nearToVert | right) * scale) + 0.5f;
+				ptr->v = ((nearToVert | up) * scale) + 0.5f;
+			}
 			ptr++;
 		}
+
+		// FIRST PASS: Multiplies existing floor texture by the projected light mask shape
 		GLRenderer->mVBO->RenderCurrent(ptr, GL_TRIANGLE_FAN);
+
+		// FIXED OVERBRIGHT MULTI-PASS BOOSTER: If we are in the brightening pass, 
+		// we immediately push the exact same VBO fan buffer onto the GPU a SECOND time!
+		// This guarantees that the overbright intensity stacks per-each-light, perfectly matching the walls!
+		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
+		{
+			GLRenderer->mVBO->RenderCurrent(startPtr, GL_TRIANGLE_FAN);
+		}
+
 		node = node->nextLight;
 	}
 }
@@ -944,29 +976,48 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 
 void GLFlat::DrawLightsCompat(int pass)
 {
-	// Set fog for this pass
-	mDrawer->SetFog(lightlevel, gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor), &Colormap, true);
+	// Set fog and global coloring for this pass
+	if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE)
+	{
+		// Force-disable fixed hardware fog to fully eliminate the lipstick effect
+		gl_RenderState.EnableFog(false);
+
+		// Force vertices to pure white to avoid colored grease lines on floors/ceilings
+		gl_RenderState.SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		gl_RenderState.SetObjectColor(0xffffffff);
+	}
+	else
+	{
+		mDrawer->SetFog(lightlevel, gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor), &Colormap, true);
+	}
 
 	// Draw the subsectors belonging to this sector
 	for (int i = 0; i < sector->subsectorcount; i++)
 	{
 		subsector_t * sub = sector->subsectors[i];
-		if (gl_drawinfo->ss_renderflags[sub->Index()] & renderflags)
+		if (sub)
 		{
-			DrawSubsectorLights(sub, pass);
+			// Bypass ss_renderflags filter completely for our overbright pass!
+			if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX || (gl_drawinfo->ss_renderflags[sub->Index()] & renderflags))
+			{
+				DrawSubsectorLights(sub, pass);
+			}
 		}
 	}
 
-	// Draw the subsectors assigned to it due to missing textures
-	if (!(renderflags&SSRF_RENDER3DPLANES))
+	// Draw the subsectors assigned to it due to missing textures / render hacks
+	if (!(renderflags & SSRF_RENDER3DPLANES))
 	{
-		gl_subsectorrendernode * node = (renderflags&SSRF_RENDERFLOOR) ?
+		gl_subsectorrendernode * node = (renderflags & SSRF_RENDERFLOOR) ?
 			gl_drawinfo->GetOtherFloorPlanes(sector->sectornum) :
 			gl_drawinfo->GetOtherCeilingPlanes(sector->sectornum);
 
 		while (node)
 		{
-			DrawSubsectorLights(node->sub, pass);
+			if (node->sub)
+			{
+				DrawSubsectorLights(node->sub, pass);
+			}
 			node = node->next;
 		}
 	}
@@ -1153,6 +1204,20 @@ void GLSceneDrawer::RenderMultipassStuff()
 	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
+
+	// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Start ---
+	// Run fully independent brightening pass to draw projected light spots on clean surfaces
+	if (GLRenderer->mLightCount && !FixedColormap)
+	{
+		// Execute GLPASS_BRIGHTEN_LEGACY_LIGHTTEX for walls to get nice overbright centers
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+		// Execute GLPASS_BRIGHTEN_LEGACY_LIGHTTEX for flats as well to match the wall overbright glow!
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+	}
+	// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Finish ---
 
 	// Fourth pass: apply fog as translucent overlay for foggy surfaces
 	gl_RenderState.EnableFog(false);  // Ensure fog is disabled

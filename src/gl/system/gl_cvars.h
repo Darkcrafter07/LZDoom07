@@ -64,5 +64,7 @@ EXTERN_CVAR(Bool, gl_debug_breakpoint)
 
 EXTERN_CVAR(Bool, gl_camglowlight)
 EXTERN_CVAR(Bool, gl_usegl1mode)
+EXTERN_CVAR(Float, gl_legacylightoverbrightflats)
+EXTERN_CVAR(Float, gl_legacylightoverbrightwalls)
 
 #endif // _GL_INTERN_H

@@ -56,6 +56,8 @@
 #include "gl/utility/gl_templates.h"
 #include "gl/renderer/gl_quaddrawer.h"
 
+#include "gl/compatibility/gl_20.h"
+
 #ifdef _DEBUG
 CVAR(Int, gl_breaksec, -1, 0)
 #endif
@@ -444,30 +446,21 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		gl_RenderState.EnableTextureMatrix(false);
 		break;
 
-	case GLPASS_BRIGHTEN:
-		// Brightening pass
-		// Unused, unstable but why not keep it?
-		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
+	case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX:
+		// Cleaned up legacy overbright brightening pass for flats
+		// Uses low-level DrawLightsCompat routine integrated with fixed constants
+		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
 		glDepthFunc(GL_EQUAL);
 		glDepthMask(false);
 
-		// Apply brightening to the flat
-		mDrawer->SetColor(lightlevel, rel, Colormap, 1.0f);
-		mDrawer->SetFog(lightlevel, rel, &Colormap, false);
-		if (!gltexture->tex->isFullbright())
-			gl_RenderState.SetObjectColor(FlatColor | 0xff000000);
-
-		if (sector->special != GLSector_Skybox)
+		// Bind the native dynamic light texture filter mask (glLight)
+		if (gl_SetupLightTexture())
 		{
-			gl_RenderState.SetMaterial(gltexture, CLAMP_NONE, 0, -1, false);
-			gl_SetPlaneTextureRotation(&plane, gltexture);
-			DrawSubsectors(pass, false, false);
-			gl_RenderState.EnableTextureMatrix(false);
-		}
-		else
-		{
-			gl_RenderState.SetMaterial(gltexture, CLAMP_XY, 0, -1, false);
-			DrawSkyboxSector(pass, false);
+			if (this->sector && this->sector->special != GLSector_Skybox)
+			{
+				// Execute light pass loops. Light stacking now happens per-light inside DrawSubsectorLights!
+				DrawLightsCompat(pass);	// Triggers our clean, seamless, scaled DrawSubsectorLights loop
+			}
 		}
 
 		glDepthMask(true);
