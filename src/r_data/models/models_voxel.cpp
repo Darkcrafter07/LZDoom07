@@ -1,4 +1,4 @@
-// 
+// models_voxels.cpp
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2010-2016 Christoph Oelckers
@@ -339,6 +339,28 @@ void FVoxelModel::BuildVertexBuffer(FModelRenderer *renderer)
 		FModelVertex *vertptr = vbuf->LockVertexBuffer(mVertices.Size());
 		unsigned int *indxptr = vbuf->LockIndexBuffer(mIndices.Size());
 
+		// [Darkcrafter07]: REAL-TIME VERTEX GEOMETRY HEIGHT SCANNER FOR VOXELS!
+		// We scan the prepared mVertices vector chunk to extract the exact 3D limits constraints.
+		float rawMeshMinY = 1000000.0f;
+		float rawMeshMaxY = -1000000.0f;
+		this->trueVisualHeight = 0.0f;
+		this->trueVisualRadius = 0.0f;
+
+		for (unsigned int i = 0; i < mVertices.Size(); i++)
+		{
+			if (mVertices[i].y < rawMeshMinY) rawMeshMinY = mVertices[i].y;
+			if (mVertices[i].y > rawMeshMaxY) rawMeshMaxY = mVertices[i].y;
+
+			// [Darkcrafter07]: TRUE RADIUS VERTEX SCANNER FOR VOXELS!
+			float horizDist = sqrtf((mVertices[i].x * mVertices[i].x) + (mVertices[i].z * mVertices[i].z));
+			if (horizDist > this->trueVisualRadius) this->trueVisualRadius = horizDist;
+		}
+
+		// Lock down the final precise vertical delta extracted from voxel vertices data
+		float heightDelta = rawMeshMaxY - rawMeshMinY;
+		if (heightDelta < 0.0f) heightDelta = 0.0f;
+		this->trueVisualHeight = heightDelta;
+
 		memcpy(vertptr, &mVertices[0], sizeof(FModelVertex)* mVertices.Size());
 		memcpy(indxptr, &mIndices[0], sizeof(unsigned int)* mIndices.Size());
 
@@ -353,7 +375,6 @@ void FVoxelModel::BuildVertexBuffer(FModelRenderer *renderer)
 		mIndices.ShrinkToFit();
 	}
 }
-
 
 //===========================================================================
 //

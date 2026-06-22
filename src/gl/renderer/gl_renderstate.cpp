@@ -116,6 +116,7 @@ void FRenderState::Reset()
 	mSplitBottomPlane.Set(0.0f, 0.0f, 0.0f, 0.0f);
 	mClipLine.Set(0.0f, 0.0f, 0.0f, 0.0f);
 	mDynColor.Set(0.0f, 0.0f, 0.0f, 0.0f);
+	mSecondaryColor.Set(0.0f, 0.0f, 0.0f, 0.0f);
 	mEffectState = 0;
 	activeShader = nullptr;
 	mProjectionMatrix.loadIdentity();

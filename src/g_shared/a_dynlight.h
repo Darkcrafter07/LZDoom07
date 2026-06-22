@@ -192,6 +192,11 @@ struct FDynamicLight
 {
 	friend class FLightDefaults;
 
+	inline DVector3 PosAbsolute(int portalgroup) const
+	{
+		return Pos;
+	}
+
 	inline DVector3 PosRelative(int portalgroup) const
 	{
 		return Pos + Displacements.getOffset(Sector->PortalGroup, portalgroup);

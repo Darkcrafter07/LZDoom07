@@ -26,7 +26,8 @@
 **
 ** Fallback code for ancient hardware
 ** This file collects everything larger that is only needed for
-** OpenGL v1.1 and v2.0x family, NO shaders required.
+** OpenGL v1.1 is required (1997+ cards?), the same file for GL2x path.
+** The difference GL2 makes is no blurry textures thanks to NPOT support.
 **
 */
 
@@ -34,8 +35,10 @@
 
 CVAR(Bool, gl_lights_additive, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)
-CVAR(Float, gl_legacylightoverbrightflats, 0.125f, CVAR_ARCHIVE)   // Intensity multiplier for flats
-CVAR(Float, gl_legacylightoverbrightwalls, 0.125f, CVAR_ARCHIVE)   // Intensity multiplier for walls
+// Dynlight overbright global switch used in gl_scene.cpp
+CVAR(Bool, gl_legacy_dynlight_overbright, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Float, gl_legacy_dynlight_overbright_flats, 0.125f, CVAR_ARCHIVE)   // Intensity multiplier for flats
+CVAR(Float, gl_legacy_dynlight_overbright_walls, 0.125f, CVAR_ARCHIVE)   // Intensity multiplier for walls
 
 //==========================================================================
 //
@@ -176,6 +179,31 @@ void gl_SetTextureMode(int type)
 		// Make sure that scale has reset to 1, otherwise overbright
 		glTexEnvi(GL_TEXTURE_ENV, GL_RGB_SCALE, 1);
 	}
+
+	//else if (type == TM_SHADEDLIGHT_LEGACY)
+	//{
+	//	// Switch the pipeline to advanced layer combining mode
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+
+	//	// RGB CHANNEL: Multiply the spotlight texture (Texture0) by the vertex color (Primary Color).
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_TEXTURE0);
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB, GL_PRIMARY_COLOR);
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB, GL_SRC_COLOR);
+
+	//	// HARD ALPHA PROTECTION: Completely replace spotlight alpha with geometry alpha.
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_PRIMARY_COLOR);
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
+
+	//	// Enable hardware generation of eye space coordinates
+	//	glEnable(GL_TEXTURE_GEN_S);
+	//	glEnable(GL_TEXTURE_GEN_T);
+	//	glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_EYE_LINEAR);
+	//	glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_EYE_LINEAR);
+	//}
+
 	else // if (type == TM_MODULATE)
 	{
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
@@ -197,13 +225,15 @@ static float ffFogDensity;
 static bool currentTextureMatrixState;
 static bool currentModelMatrixState;
 
+extern int modellightindex; // to distinguish between different dynlight types
+extern bool isUsingVolumetric3DModelLegacyDynlight;
 void FRenderState::ApplyFixedFunction()
 {
 	int thistm = mTextureMode == TM_MODULATE && mTempTM == TM_OPAQUE ? TM_OPAQUE : mTextureMode;
 	if (thistm != ffTextureMode)
 	{
 		ffTextureMode = thistm;
-		if (ffTextureMode == TM_CLAMPY) ffTextureMode = TM_MODULATE;	// this cannot be replicated. Too bad if it creates visual artifacts
+		if (ffTextureMode == TM_CLAMPY) ffTextureMode = TM_MODULATE;
 		gl_SetTextureMode(ffTextureMode);
 	}
 	if (mTextureEnabled != ffTextureEnabled)
@@ -229,7 +259,7 @@ void FRenderState::ApplyFixedFunction()
 		}
 		if (ffFogDensity != mLightParms[2])
 		{
-			glFogf(GL_FOG_DENSITY, mLightParms[2] * -0.6931471f);	// = 1/log(2)
+			glFogf(GL_FOG_DENSITY, mLightParms[2] * -0.6931471f);
 			ffFogDensity = mLightParms[2];
 		}
 	}
@@ -240,20 +270,17 @@ void FRenderState::ApplyFixedFunction()
 		case EFF_SPHEREMAP:
 			glDisable(GL_TEXTURE_GEN_T);
 			glDisable(GL_TEXTURE_GEN_S);
-
 		default:
 			break;
 		}
 		switch (mSpecialEffect)
 		{
 		case EFF_SPHEREMAP:
-			// Use sphere mapping for this
 			glEnable(GL_TEXTURE_GEN_T);
 			glEnable(GL_TEXTURE_GEN_S);
 			glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
 			glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
 			break;
-
 		default:
 			break;
 		}
@@ -262,10 +289,22 @@ void FRenderState::ApplyFixedFunction()
 
 	FStateVec4 col = mColor;
 
-	col.vec[0] += mDynColor.vec[0];
-	col.vec[1] += mDynColor.vec[1];
-	col.vec[2] += mDynColor.vec[2];
-	col.vec[0] = clamp(col.vec[0], 0.f, 1.f);
+	// Legacy sprites and 3D models dynamic light (flat) - START
+	if (modellightindex == -2 && isUsingVolumetric3DModelLegacyDynlight)
+	{
+		// Disable flat coloring for legacy VOLUMETRIC dynamic lights
+		//col.vec[0] += mDynColor.vec[0];
+		//col.vec[1] += mDynColor.vec[1];
+		//col.vec[2] += mDynColor.vec[2];
+	}
+	else
+	{
+		// Activate flat coloring for sprites and legacy FLAT dynamic lights
+		col.vec[0] += mDynColor.vec[0];
+		col.vec[1] += mDynColor.vec[1];
+		col.vec[2] += mDynColor.vec[2];
+	}
+	// Legacy sprites and 3D models dynamic light (flat) - FINISH
 
 	col.vec[0] = clamp(col.vec[0], 0.f, 1.f);
 	col.vec[1] = clamp(col.vec[1], 0.f, 1.f);
@@ -276,7 +315,7 @@ void FRenderState::ApplyFixedFunction()
 	col.vec[1] *= (mObjectColor.g / 255.f);
 	col.vec[2] *= (mObjectColor.b / 255.f);
 	col.vec[3] *= (mObjectColor.a / 255.f);
-	glColor4fv(col.vec);
+	glColor4fv(col.vec); // Applies clean baseline sector shadow level
 
 	glEnable(GL_BLEND);
 	if (mAlphaThreshold > 0)
@@ -289,13 +328,14 @@ void FRenderState::ApplyFixedFunction()
 		glDisable(GL_ALPHA_TEST);
 	}
 
-	if (mTextureMatrixEnabled)
+	// [Darkcrafter07]: FIXED: Protect texture matrix allocations during mode 13 projection pass
+	if (mTextureMatrixEnabled && ffTextureMode != 13)
 	{
 		glMatrixMode(GL_TEXTURE);
 		glLoadMatrixf(mTextureMatrix.get());
 		currentTextureMatrixState = true;
 	}
-	else if (currentTextureMatrixState)
+	else if (currentTextureMatrixState && ffTextureMode != 13)
 	{
 		glMatrixMode(GL_TEXTURE);
 		glLoadIdentity();
@@ -316,8 +356,6 @@ void FRenderState::ApplyFixedFunction()
 		glLoadMatrixf(mViewMatrix.get());
 		currentModelMatrixState = false;
 	}
-
-
 }
 
 //==========================================================================
@@ -572,6 +610,22 @@ bool gl_SetupLightTexture()
 	FMaterial * pat = FMaterial::ValidateTexture(GLRenderer->glLight, false, false);
 	gl_RenderState.SetMaterial(pat, CLAMP_XY_NOMIP, 0, -1, false);
 	return true;
+}
+
+// [Darkcrafter07]: Custom safe texture mapper for legacy model dynamic light overlays.
+// This syncs the FRenderState cache perfectly to ensure no skin texture bleeding happens!
+bool gl_SetupLightTextureForDynlightLegacy()
+{
+	if (!GLRenderer->glLight.isValid()) return false;
+
+	FMaterial * pat = FMaterial::ValidateTexture(GLRenderer->glLight, false, false);
+	if (pat != nullptr)
+	{
+		// Officially register the spotlight material within Graf's state manager system!
+		gl_RenderState.SetMaterial(pat, CLAMP_XY_NOMIP, 0, -1, false);
+		return true;
+	}
+	return false;
 }
 
 //==========================================================================
@@ -883,7 +937,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 
 		// We must do the side check here because gl_SetupLight needs the correct plane orientation
 		// which we don't have for Legacy-style 3D-floors
-		double planeh = plane.plane.ZatPoint(light->Pos);
+		float planeh = plane.plane.ZatPoint(light->Pos);
 		if (gl_lights_checkside && ((planeh < light->Z() && ceiling) || (planeh > light->Z() && !ceiling)))
 		{
 			node = node->nextLight;
@@ -901,7 +955,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
 		{
 			// Safe bounds check for the external overbright intensity CVAR
-			float overbrightFactor = clamp((float)gl_legacylightoverbrightflats, 0.0f, 0.2f);
+			float overbrightFactor = clamp((float)gl_legacy_dynlight_overbright_flats, 0.0f, 0.2f);
 			if (overbrightFactor > 1.0f) overbrightFactor = 1.0f;
 			if (overbrightFactor < 0.0f) overbrightFactor = 0.0f;
 

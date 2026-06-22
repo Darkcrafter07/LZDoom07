@@ -44,6 +44,14 @@
 #include "r_data/models/models_obj.h"
 #include "i_time.h"
 
+// GL1x/GL2x legacy dynlight includes, externs and vars - START
+#include "gl/system/gl_system.h"
+#include "gl/renderer/gl_renderstate.h"
+#include "gl/renderer/gl_renderer.h"
+#include "gl/textures/gl_material.h"
+//#include "gl/compatibility/gl_20.h"
+// GL1x/GL2x legacy dynlight includes, externs and vars - FINISH
+
 #ifdef _MSC_VER
 #pragma warning(disable:4244) // warning C4244: conversion from 'double' to 'float', possible loss of data
 #endif
@@ -746,6 +754,10 @@ static void ParseModelDefLump(int Lump)
 				{
 					smf.flags |= MDL_NOINTERPOLATION;
 				}
+				else if (sc.Compare("usegl1volumedynlight"))
+				{
+				smf.flags |= MDL_USEGL1VOLUMEDYNLIGHT;
+				}
 				else if (sc.Compare("skin"))
 				{
 					sc.MustGetNumber();
@@ -1005,3 +1017,106 @@ bool IsHUDModelForPlayerAvailable (player_t * player)
 	return ( smf != nullptr );
 }
 
+//===========================================================================
+// [Darkcrafter07]
+// Geometry true bounds for MD2, MD3, OBJ, UE1 and VOX format animations
+//
+//===========================================================================
+
+// Geometry height retriever for MD3 format
+float FMD3Model::GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const
+{
+	if (currentFrameNo >= 0 && currentFrameNo < (int)this->trueVisualHeights.Size())
+	{
+		float rawHeight = this->trueVisualHeights[currentFrameNo] * finalScaleZ;
+
+		// Absolute flat single-polygon mesh tracking scanner (Islands, puddles, flat rocks)
+		// If the extracted vertex height delta is effectively zero, we force a razor-thin 4.0 unit 
+		// bounding range wrapper to block the broken actor hitbox fallback from inflating the cylinder!
+		if (rawHeight <= 0.1f) return 4.0f;
+
+		return rawHeight;
+	}
+	return 4.0f; // Safe minimal bounding floor anchor
+}
+
+// Geometry height retriever for MD2 format
+float FDMDModel::GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const
+{
+	if (currentFrameNo >= 0 && currentFrameNo < (int)this->trueVisualHeights.Size())
+	{
+		float rawHeight = this->trueVisualHeights[currentFrameNo] * finalScaleZ;
+		if (rawHeight <= 0.1f) return 4.0f;
+		return rawHeight;
+	}
+	return 4.0f;
+}
+
+// Geometry height retriever for OBJ format
+float FOBJModel::GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const
+{
+	float rawHeight = this->trueVisualHeight * finalScaleZ;
+	if (rawHeight <= 0.1f) return 4.0f;
+	return rawHeight;
+}
+
+float FVoxelModel::GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const
+{
+	float rawHeight = this->trueVisualHeight * finalScaleZ;
+	if (rawHeight <= 0.1f) return 4.0f;
+	return rawHeight;
+}
+
+// Geometry height retriever for UE1 format
+float FUE1Model::GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const
+{
+	if (currentFrameNo >= 0 && currentFrameNo < (int)this->trueVisualHeights.Size())
+	{
+		float rawHeight = this->trueVisualHeights[currentFrameNo] * finalScaleZ;
+		if (rawHeight <= 0.1f) return 4.0f;
+		return rawHeight;
+	}
+	return 4.0f;
+}
+
+// Geometry radius retriever for MD3 format
+float FMD3Model::GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const
+{
+	if (currentFrameNo >= 0 && currentFrameNo < (int)this->trueVisualRadii.Size())
+	{
+		return this->trueVisualRadii[currentFrameNo] * finalScaleX;
+	}
+	return 0.0f;
+}
+
+// Geometry radius retriever for MD2/DMD format
+float FDMDModel::GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const
+{
+	if (currentFrameNo >= 0 && currentFrameNo < (int)this->trueVisualRadii.Size())
+	{
+		return this->trueVisualRadii[currentFrameNo] * finalScaleX;
+	}
+	return 0.0f;
+}
+
+// Geometry radius retriever for static OBJ format
+float FOBJModel::GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const
+{
+	return this->trueVisualRadius * finalScaleX;
+}
+
+// Geometry radius retriever for hardware Voxel format
+float FVoxelModel::GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const
+{
+	return this->trueVisualRadius * finalScaleX;
+}
+
+// Geometry radius retriever for Unreal Engine 1 meshes
+float FUE1Model::GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const
+{
+	if (currentFrameNo >= 0 && currentFrameNo < (int)this->trueVisualRadii.Size())
+	{
+		return this->trueVisualRadii[currentFrameNo] * finalScaleX;
+	}
+	return 0.0f;
+}

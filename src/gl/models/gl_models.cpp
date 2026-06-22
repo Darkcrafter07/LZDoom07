@@ -52,6 +52,33 @@
 #include "gl/renderer/gl_renderstate.h"
 #include "gl/shaders/gl_shader.h"
 
+// GL1x/GL2x legacy dynlight includes, externs and vars - START
+#include "gl/compatibility/gl_20.h"
+#include "gl/dynlights/gl_dynlight.h"
+#include "r_data/models/models_ue1.h"
+#include "r_data/models/models_obj.h"
+	extern FDynLightData modellightdata;
+	extern bool g_legacyLightActive;
+	extern float g_legacyLightX;
+	extern float g_legacyLightZ;
+	extern float g_legacyLightY;
+	extern float g_legacyLightRadius;
+	extern float g_legacyLightR;
+	extern float g_legacyLightG;
+	extern float g_legacyLightB;
+
+	extern struct FLegacyModelLightCache // defined in gl_spritelight.cpp
+	{
+		float x, y, z;      // Relative position of the dynamic light source
+		float trueX, trueY, trueZ; // Absolute world dynlight coordinates
+		float radius;       // Interaction radius of the light
+		float r, g, b;      // Evaluated intensity color channels of the flare
+	};
+	extern bool g_legacyLightActive;
+	extern int g_legacyModelSectorLight;
+	extern TArray<FLegacyModelLightCache> g_legacyModelLights;
+// GL1x/GL2x legacy dynlight includes, externs and vars - FINISH
+
 CVAR(Bool, gl_light_models, true, CVAR_ARCHIVE)
 
 extern int modellightindex;
@@ -65,12 +92,12 @@ VSMatrix FGLModelRenderer::GetViewToWorldMatrix()
 
 void FGLModelRenderer::BeginDrawModel(AActor *actor, FSpriteModelFrame *smf, const VSMatrix &objectToWorldMatrix, bool mirrored)
 {
+	// [Darkcrafter07]: Cache the active actor pointer for SetMaterial context usage
+	this->currentRenderActor = actor;
+
 	glDepthFunc(GL_LEQUAL);
 	gl_RenderState.EnableTexture(true);
-	// [BB] In case the model should be rendered translucent, do back face culling.
-	// This solves a few of the problems caused by the lack of depth sorting.
-	// [Nash] Don't do back face culling if explicitly specified in MODELDEF
-	// TO-DO: Implement proper depth sorting.
+
 	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]) && !(smf->flags & MDL_DONTCULLBACKFACES))
 	{
 		glEnable(GL_CULL_FACE);
@@ -79,6 +106,15 @@ void FGLModelRenderer::BeginDrawModel(AActor *actor, FSpriteModelFrame *smf, con
 
 	gl_RenderState.mModelMatrix = objectToWorldMatrix;
 	gl_RenderState.EnableModelMatrix(true);
+
+	// [Darkcrafter07]: CRITICAL RESET FOR SOFT LIGHT LEVEL OVERRIDES
+	// We force set the soft light level register cleanly back to maximum 255 default factor.
+	// This forces mLightParms[3] to evaluate strictly to 1.0f, completely destroying 
+	// random flickering, frame fullbright burnouts, and shading drops on the model hulls!
+	if (gl.lightmethod == LM_LEGACY)
+	{
+		gl_RenderState.SetSoftLightLevel(255);
+	}
 }
 
 void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
@@ -104,29 +140,57 @@ void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
 				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 				gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
 
-				// 2. Calculate intensity (1.0 for dark sectors, decreasing for light ones)
+				// 2. Calculate intensity with new formula
 				int lightlevel = actor->Sector->lightlevel;
+				int rel = 0; // Assuming no extra light by default, adjust if needed
+
+				// Calculate total current light level
+				int totalLight = lightlevel + rel;
+				if (totalLight > 255) totalLight = 255;
+				if (totalLight < 0) totalLight = 0;
+
 				float lightFactor;
-				if (lightlevel < 128) lightFactor = 1.0f;
-				else {
-					lightFactor = 1.0f - (float)(lightlevel - 128) / 127.0f;
-					lightFactor = 0.15f + 0.85f * lightFactor;
+				if (totalLight < 96)
+				{
+					lightFactor = 1.0f; // Full effect below 96 light level
 				}
+				else
+				{
+					// Optimized inverse light factor for the 96-255 range
+					const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
+					float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
+
+					// Add subtle parabola bump to mid-range
+					factor = factor + 0.1f * factor * (1.0f - factor);
+
+					// Scale intensity to drop from 1.0 to 0.01
+					lightFactor = (factor * 0.99f) + 0.01f;
+				}
+
+				// Clamp the final value
+				if (lightFactor > 1.0f) lightFactor = 1.0f;
+				if (lightFactor < 0.0f) lightFactor = 0.0f;
 
 				// Apply intensity to the brightmap
 				gl_RenderState.SetColor(lightFactor, lightFactor, lightFactor, 1.0f);
 
 				// 3. Setup ONLY the brightmap material
 				int translation = (smf->flags & MDL_IGNORETRANSLATION) ? 0 : actor->Translation;
-
-				// IMPORTANT: Do NOT call SetMaterial for 'baseMat' here, 
-				// only for 'bmMat' to avoid drawing diffuse texture twice.
 				gl_RenderState.SetMaterial(bmMat, CLAMP_NONE, translation, -1, false);
 				gl_RenderState.Apply();
 
 				// 4. Redraw ONLY the geometry with the brightmap texture
 				this->RenderFrameModels(smf, actor->state, actor->tics, actor->GetClass(), translation);
 			}
+		}
+
+		if (gl.legacyMode)
+		{
+			glActiveTexture(GL_TEXTURE1);
+			glDisable(GL_TEXTURE_GEN_S);
+			glDisable(GL_TEXTURE_GEN_T);
+			glDisable(GL_TEXTURE_2D);
+			glActiveTexture(GL_TEXTURE0);
 		}
 
 		// 5. Restore standard state
@@ -166,72 +230,87 @@ void FGLModelRenderer::EndDrawHUDModel(AActor *actor)
 {
 	// --- Darkcrafter07: Legacy Brightmap Overlay for HUD/Weapon Models ---
 	// We check if the actor is valid and if we are in legacy mode with brightmaps enabled
+	FSpriteModelFrame *smf;
+	AActor *weapon;
+
 	if (actor && actor->player && gl.legacyMode && gl_RenderState.IsBrightmapEnabled() && !(actor->renderflags & RF_FULLBRIGHT))
 	{
+
 		// We need to find the specific model frame being rendered for the player's weapon.
 		// We can get the current weapon class and the player's sprite state.
-		AActor *weapon = actor->player->ReadyWeapon;
-		if (weapon)
+		weapon = actor->player->ReadyWeapon;
+
+	}
+	smf = FindModelFrame(weapon->GetClass(), actor->sprite, actor->frame, false);
+
+	if (smf)
+	{
+		for (int i = 0; i < MAX_MODELS_PER_FRAME; i++)
 		{
-			// Find the model frame associated with the current weapon state
-			// Note: We use the same parameters as in gl_weapon.cpp:212
-			FSpriteModelFrame *smf = FindModelFrame(weapon->GetClass(), actor->sprite, actor->frame, false);
+			if (smf->modelIDs[i] == -1) continue;
 
-			if (smf)
+			// Get the brightmap using your custom colorization logic
+			FTextureID skinID = smf->skinIDs[i];
+			FTexture *skin = skinID.isValid() ? TexMan[skinID] : nullptr;
+			FMaterial *baseMat = FMaterial::ValidateTexture(skin, false);
+			FMaterial *bmMat = baseMat ? baseMat->GetBrightmapLegacy() : nullptr;
+
+			if (bmMat)
 			{
-				for (int i = 0; i < MAX_MODELS_PER_FRAME; i++)
+				// 1. Setup Additive State
+				gl_RenderState.EnableFog(false);
+				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+				gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
+
+				// 2. Calculate Intensity (Using weapon-specific lighting logic)
+				int lightlevel = actor->Sector ? actor->Sector->lightlevel : 128;
+				float lightFactor;
+				if (lightlevel < 128) lightFactor = 1.0f;
+				else
 				{
-					if (smf->modelIDs[i] == -1) continue;
-
-					// Get the brightmap using your custom colorization logic
-					FTextureID skinID = smf->skinIDs[i];
-					FTexture *skin = skinID.isValid() ? TexMan[skinID] : nullptr;
-					FMaterial *baseMat = FMaterial::ValidateTexture(skin, false);
-					FMaterial *bmMat = baseMat ? baseMat->GetBrightmapLegacy() : nullptr;
-
-					if (bmMat)
-					{
-						// 1. Setup Additive State
-						gl_RenderState.EnableFog(false);
-						gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
-						gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
-
-						// 2. Calculate Intensity (Using weapon-specific lighting logic)
-						int lightlevel = actor->Sector ? actor->Sector->lightlevel : 128;
-						float lightFactor;
-						if (lightlevel < 128) lightFactor = 1.0f;
-						else {
-							lightFactor = 1.0f - (float)(lightlevel - 128) / 127.0f;
-							lightFactor = 0.15f + 0.85f * lightFactor;
-						}
-
-						gl_RenderState.SetColor(lightFactor, lightFactor, lightFactor, 1.0f);
-
-						// 3. Apply Brightmap and redraw
-						int translation = (smf->flags & MDL_IGNORETRANSLATION) ? 0 : actor->Translation;
-						gl_RenderState.SetMaterial(bmMat, CLAMP_NONE, translation, -1, false);
-						gl_RenderState.Apply();
-
-						// Redraw the weapon geometry as an additive layer
-						this->RenderFrameModels(smf, actor->state, actor->tics, weapon->GetClass(), translation);
-					}
+					lightFactor = 1.0f - (float)(lightlevel - 128) / 127.0f;
+					lightFactor = 0.15f + 0.85f * lightFactor;
 				}
-				// 4. Restore State
-				gl_RenderState.EnableFog(true);
-				gl_RenderState.SetTextureMode(TM_MODULATE);
-				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				gl_RenderState.ResetColor();
+
+				gl_RenderState.SetColor(lightFactor, lightFactor, lightFactor, 1.0f);
+
+				// 3. Apply Brightmap and redraw
+				int translation = (smf->flags & MDL_IGNORETRANSLATION) ? 0 : actor->Translation;
+				gl_RenderState.SetMaterial(bmMat, CLAMP_NONE, translation, -1, false);
+				gl_RenderState.Apply();
+
+				// Redraw the weapon geometry as an additive layer
+				this->RenderFrameModels(smf, actor->state, actor->tics, weapon->GetClass(), translation);
 			}
 		}
+		// 4. Restore State
+		gl_RenderState.EnableFog(true);
+		gl_RenderState.SetTextureMode(TM_MODULATE);
+		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		gl_RenderState.ResetColor();
 	}
 
-	// --- Original Engine Cleanup ---
+	// Original factory cleanup code inside gl_models.cpp EndDrawModel
 	gl_RenderState.EnableModelMatrix(false);
 	glDepthFunc(GL_LESS);
 
-	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]))
+	// Reset backface culling if it was enabled for translucency
+	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]) && !(smf->flags & MDL_DONTCULLBACKFACES))
 		glDisable(GL_CULL_FACE);
+
+	// ==============================================================================
+	// [Darkcrafter07]: ATOMIC CROSS-SUBSECTOR CONTEXT FLUSH
+	// FIXED: We clear the global lights array cache pool strictly at the end of EndDrawModel!
+	// This forces multi-pass subsectors to re-compile active lights freshly, 
+	// completely destroying the "pop in and out" flickering bug on giant mountain meshes!
+	// ==============================================================================
+	if (gl.lightmethod == LM_LEGACY)
+	{		
+		g_legacyModelLights.Clear();
+		g_legacyLightActive = false;
+	}
 }
+
 IModelVertexBuffer *FGLModelRenderer::CreateVertexBuffer(bool needindex, bool singleframe)
 {
 	return new FModelVertexBuffer(needindex, singleframe);
@@ -328,6 +407,7 @@ void FModelVertexBuffer::BindVBO()
 		glEnableClientState(GL_VERTEX_ARRAY);
 		glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 		glDisableClientState(GL_COLOR_ARRAY);
+		glDisableClientState(GL_NORMAL_ARRAY);
 	}
 }
 
@@ -436,7 +516,7 @@ void FModelVertexBuffer::UnlockIndexBuffer()
 //
 //===========================================================================
 static TArray<FModelVertex> iBuffer;
-
+TArray<FVector3> legacyNormalsBuffer;
 void FModelVertexBuffer::SetupFrame(FModelRenderer *renderer, unsigned int frame1, unsigned int frame2, unsigned int size)
 {
 	glBindBuffer(GL_ARRAY_BUFFER, vbo_id);
@@ -451,15 +531,42 @@ void FModelVertexBuffer::SetupFrame(FModelRenderer *renderer, unsigned int frame
 		}
 		else
 		{
-			// only used for single frame models so there is no vertex2 here, which has no use without a shader.
 			glVertexPointer(3, GL_FLOAT, sizeof(FModelVertex), &VMO[frame1].x);
 			glTexCoordPointer(2, GL_FLOAT, sizeof(FModelVertex), &VMO[frame1].u);
+			glDisableClientState(GL_NORMAL_ARRAY);
 		}
 	}
 	else if (frame1 == frame2 || size == 0 || gl_RenderState.GetInterpolationFactor() == 0.f)
 	{
 		glVertexPointer(3, GL_FLOAT, sizeof(FModelVertex), &vbo_ptr[frame1].x);
 		glTexCoordPointer(2, GL_FLOAT, sizeof(FModelVertex), &vbo_ptr[frame1].u);
+		if (gl.legacyMode)
+		{
+			unsigned int activeVerticesCount = (size > 0) ? size : 2048;
+			legacyNormalsBuffer.Resize(activeVerticesCount);
+			const float *matrixBuffer = gl_RenderState.mModelMatrix.get();
+			float modelX = matrixBuffer[12]; float modelY = matrixBuffer[13]; float modelZ = matrixBuffer[14];
+
+			for (unsigned int i = 0; i < activeVerticesCount; i++)
+			{
+				uint32_t pn = vbo_ptr[frame1 + i].packedNormal;
+				if (pn != 0)
+				{
+					int tx = int(pn << 22) >> 22; int ty = int(pn << 12) >> 22; int tz = int(pn << 2) >> 22;
+					legacyNormalsBuffer[i].X = float(tx) / 511.0f;
+					legacyNormalsBuffer[i].Y = float(tz) / 511.0f;
+					legacyNormalsBuffer[i].Z = float(ty) / 511.0f;
+				}
+				else
+				{
+					float vx = vbo_ptr[frame1 + i].x; float vy = vbo_ptr[frame1 + i].y; float vz = vbo_ptr[frame1 + i].z;
+					float length = sqrtf((vx * vx) + (vy * vy) + (vz * vz));
+					if (length > 0.001f) { legacyNormalsBuffer[i].X = vx / length; legacyNormalsBuffer[i].Y = vy / length; legacyNormalsBuffer[i].Z = vz / length; }
+				}
+			}
+			glEnableClientState(GL_NORMAL_ARRAY);
+			glNormalPointer(GL_FLOAT, sizeof(FVector3), &legacyNormalsBuffer[0].X);
+		}
 	}
 	else
 	{
@@ -473,6 +580,29 @@ void FModelVertexBuffer::SetupFrame(FModelRenderer *renderer, unsigned int frame
 			iBuffer[i].x = vbo_ptr[frame1 + i].x * (1.f - frac) + vbo_ptr[frame2 + i].x * frac;
 			iBuffer[i].y = vbo_ptr[frame1 + i].y * (1.f - frac) + vbo_ptr[frame2 + i].y * frac;
 			iBuffer[i].z = vbo_ptr[frame1 + i].z * (1.f - frac) + vbo_ptr[frame2 + i].z * frac;
+		}
+		if (gl.legacyMode)
+		{
+			legacyNormalsBuffer.Resize(size);
+			const float *matrixBuffer = gl_RenderState.mModelMatrix.get();
+			float modelX = matrixBuffer[12]; float modelY = matrixBuffer[13]; float modelZ = matrixBuffer[14];
+			for (unsigned i = 0; i < size; i++)
+			{
+				uint32_t pn = vbo_ptr[frame1 + i].packedNormal;
+				if (pn != 0)
+				{
+					int tx = int(pn << 22) >> 22; int ty = int(pn << 12) >> 22; int tz = int(pn << 2) >> 22;
+					legacyNormalsBuffer[i].X = float(tx) / 511.0f; legacyNormalsBuffer[i].Y = float(tz) / 511.0f; legacyNormalsBuffer[i].Z = float(ty) / 511.0f;
+				}
+				else
+				{
+					float vx = iBuffer[i].x; float vy = iBuffer[i].y; float vz = iBuffer[i].z;
+					float length = sqrtf((vx * vx) + (vy * vy) + (vz * vz));
+					if (length > 0.001f) { legacyNormalsBuffer[i].X = vx / length; legacyNormalsBuffer[i].Y = vy / length; legacyNormalsBuffer[i].Z = vz / length; }
+				}
+			}
+			glEnableClientState(GL_NORMAL_ARRAY);
+			glNormalPointer(GL_FLOAT, sizeof(FVector3), &legacyNormalsBuffer[0].X);
 		}
 	}
 }

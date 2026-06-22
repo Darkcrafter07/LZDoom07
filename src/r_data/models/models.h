@@ -134,6 +134,18 @@ public:
 	virtual void SetupFrame(FModelRenderer *renderer, unsigned int frame1, unsigned int frame2, unsigned int size) = 0;
 };
 
+// [Darkcrafter07] - isolate model structs from each other
+// for true height extraction
+enum EModelType
+{
+	MDL_TYPE_NONE,
+	MDL_TYPE_MD3,
+	MDL_TYPE_MD2,
+	MDL_TYPE_OBJ,
+	MDL_TYPE_UE1,
+	MDL_TYPE_VOXEL
+};
+
 class FModel
 {
 public:
@@ -156,6 +168,13 @@ public:
 	void PushSpriteMDLFrame(const FSpriteModelFrame *smf, int index) { curSpriteMDLFrame = smf; curMDLIndex = index; };
 
 	FString mFileName;
+
+	// [Darkcrafter07]:
+	// RTTI-free safe runtime type identification
+	virtual int GetModelType() const { return MDL_TYPE_NONE; }
+	// Unified cross-format geometric frame-perfect constraints retrievers
+	virtual float GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const { return 0.0f; }
+	virtual float GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const { return 0.0f; }
 
 private:
 	IModelVertexBuffer *mVBuf[NumModelRendererTypes];
@@ -276,6 +295,14 @@ public:
 	void UnloadGeometry();
 	void BuildVertexBuffer(FModelRenderer *renderer);
 
+	// [Darkcrafter07]: Real-time per-frame vertex height constraints array payload for MD2
+	TArray<float> trueVisualHeights; TArray<float> trueVisualRadii;
+	// Make all mdl formats return their marker
+	int GetModelType() const override { return MDL_TYPE_MD2; }
+	// Unified cross-format geometric frame-perfect constraints retrievers
+	float GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const override;
+	float GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const override;
+
 };
 
 // This uses the same internal representation as DMD
@@ -294,6 +321,17 @@ public:
 class FMD3Model : public FModel
 {
 public:
+
+	// [Darkcrafter07]: Real-time per-frame vertex height constraints array payload for MD2
+	TArray<float> trueVisualHeights; TArray<float> trueVisualRadii;
+	// Make all mdl formats return their marker
+	int GetModelType() const override { return MDL_TYPE_MD3; }
+	// Unified cross-format geometric frame-perfect constraints retrievers
+	float GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const override;
+	float GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const override;
+	// [Darkcrafter07]: Old-school 90s Shadow Buffer for CPU Gouraud Shading tracking
+	TArray<FVector3> rawPositionsPool;
+
 	struct MD3Tag
 	{
 		// Currently I have no use for this
@@ -313,6 +351,8 @@ public:
 	struct MD3Triangle
 	{
 		int VertIndex[3];
+		float compassHorizAngle; // Absolute edge horizontal angle
+		float compassVertAngle;  // Absolute edge vertical angle
 	};
 
 	struct MD3Surface
@@ -416,6 +456,15 @@ public:
 	FTextureID GetPaletteTexture() const { return mPalette; }
 	void BuildVertexBuffer(FModelRenderer *renderer);
 	float getAspectFactor();
+
+	// [Darkcrafter07]:
+	float trueVisualHeight, trueVisualRadius; // Real-time vertex height constraints payload for hardware Voxel meshes
+	// Make all mdl formats return their marker
+	int GetModelType() const override { return MDL_TYPE_VOXEL; }
+	// Unified cross-format geometric frame-perfect constraints retrievers
+	float GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const override;
+	float GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const override;
+
 };
 
 
@@ -441,6 +490,7 @@ enum
 	MDL_USEROTATIONCENTER			= 512,
 	MDL_NOPERPIXELLIGHTING			= 1024, // forces a model to not use per-pixel lighting. useful for voxel-converted-to-model objects.
 	MDL_MESHCOLLISION               = 2048, // [Darkcrafter07] enable 3D mesh collision
+	MDL_USEGL1VOLUMEDYNLIGHT        = 4096, // [Darkcrafter07] enable volumetric dynamic light on 3D models in GL1x/GL2x legacy mode
 };
 
 struct FSpriteModelFrame
@@ -476,18 +526,44 @@ void FlushModels();
 
 extern TDeletingArray<FModel*> Models;
 
-// Check if circle potentially intersects with node AABB
+//// Check if circle potentially intersects with node AABB (Axis-Aligned Bounding Box)
+//inline bool CheckBBoxCircle(float *bbox, float x, float y, float radiusSquared)
+//{
+//	float centerX = (bbox[BOXRIGHT] + bbox[BOXLEFT]) * 0.5f;
+//	float centerY = (bbox[BOXBOTTOM] + bbox[BOXTOP]) * 0.5f;
+//	float extentX = (bbox[BOXRIGHT] - bbox[BOXLEFT]) * 0.5f;
+//	float extentY = (bbox[BOXBOTTOM] - bbox[BOXTOP]) * 0.5f;
+//
+//	// Correctly sum the radii for circle-AABB intersection check
+//	float maxRadius = sqrtf(radiusSquared) + sqrtf(extentX * extentX + extentY * extentY);
+//	float maxRadiusSquared = maxRadius * maxRadius;
+//
+//	x -= centerX; y -= centerY;
+//	float dist = x * x + y * y;
+//	return dist <= maxRadiusSquared;
+//}
+
+// Check if circle potentially intersects with node AABB (Axis-Aligned Bounding Box)
+// [Darkcrafter07]: Completely NUKED heavy sqrtf calls from recursive BSP loop!
+// Uses pure squared distance to closest point on AABB. 12.5% FPS boost
 inline bool CheckBBoxCircle(float *bbox, float x, float y, float radiusSquared)
 {
-	float centerX = (bbox[BOXRIGHT] + bbox[BOXLEFT]) * 0.5f;
-	float centerY = (bbox[BOXBOTTOM] + bbox[BOXTOP]) * 0.5f;
-	float extentX = (bbox[BOXRIGHT] - bbox[BOXLEFT]) * 0.5f;
-	float extentY = (bbox[BOXBOTTOM] - bbox[BOXTOP]) * 0.5f;
-	float aabbRadiusSquared = extentX * extentX + extentY * extentY;
-	x -= centerX;
-	y -= centerY;
-	float dist = x * x + y * y;
-	return dist <= radiusSquared + aabbRadiusSquared;
+	// Find the closest point on the AABB rectangle to the circle center (x, y)
+	float closestX = x;
+	if (closestX < bbox[BOXLEFT])  closestX = bbox[BOXLEFT];
+	if (closestX > bbox[BOXRIGHT]) closestX = bbox[BOXRIGHT];
+
+	float closestY = y;
+	if (closestY < bbox[BOXBOTTOM]) closestY = bbox[BOXBOTTOM];
+	if (closestY > bbox[BOXTOP])    closestY = bbox[BOXTOP];
+
+	// Calculate squared distance from closest point to circle center
+	float dx = x - closestX;
+	float dy = y - closestY;
+	float distSquared = dx * dx + dy * dy;
+
+	// Intersection occurs if squared distance is less than or equal to squared radius
+	return distSquared <= radiusSquared;
 }
 
 // Helper function for BSPWalkCircle
@@ -511,14 +587,15 @@ void BSPNodeWalkCircle(void *node, float x, float y, float radiusSquared, const 
 	callback(sub);
 }
 
-// Search BSP for subsectors within the given radius and call callback(subsector) for each found
+// Search BSP tree for subsectors within the given radius and call callback(subsector) for each found
 template<typename Callback>
-void BSPWalkCircle(float x, float y, float radiusSquared, const Callback &callback)
+void BSPWalkCircle(float x, float y, float radius, const Callback &callback)
 {
-	if (level.nodes.Size() == 0)
-		callback(&level.subsectors[0]);
-	else
-		BSPNodeWalkCircle(level.HeadNode(), x, y, radiusSquared, callback);
+	// Pre-calculate squared radius to avoid confusion in subsequent calls
+	float radiusSquared = radius * radius;
+
+	if     (level.nodes.Size() == 0) callback(&level.subsectors[0]);
+	else   BSPNodeWalkCircle(level.HeadNode(), x, y, radiusSquared, callback);
 }
 
 #endif

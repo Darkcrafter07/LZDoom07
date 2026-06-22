@@ -463,9 +463,25 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 			}
 		}
 
+		// ==============================================================================
+		// CLEAN ARCHITECTURAL FIX: SYNC STATE MACHINE AND PREVENT FLATS LEAKS INTO SKY
+		// ==============================================================================
+		// Force-update the local render state cache to prevent blending and depth corruption
+		gl_RenderState.EnableFog(true);
+		gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+		gl_RenderState.SetTextureMode(TM_MODULATE);
+
 		glDepthMask(true);
 		glDepthFunc(GL_LESS);
-		gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+
+		// Flush all fixed-function parameters directly into the GPU registers!
+		// This guarantees that GL_DST_COLOR, GL_ONE completely drops before sky portals process.
+		gl_RenderState.Apply();
+
+		// Hardware fallback override path for strict OpenGL 1.1 compliance
+		glEnable(GL_FOG);
+		glBlendFunc(GL_ONE, GL_ZERO);
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		break;
 
 	case GLPASS_BRIGHTMAP_LEGACY:
@@ -512,6 +528,91 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 	gl_RenderState.SetAddColor(0);
 }
 
+
+
+
+
+
+	//case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX_SLOW:
+	//	// Cleaned up legacy overbright brightening pass for flats
+	//	// Uses low-level DrawLightsCompat routine integrated with fixed constants
+	//	gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+	//	glDepthFunc(GL_EQUAL);
+	//	glDepthMask(false);
+
+	//	// Bind the native dynamic light texture filter mask (glLight)
+	//	if (gl_SetupLightTexture())
+	//	{
+	//		if (this->sector && this->sector->special != GLSector_Skybox)
+	//		{
+	//			// Execute light pass loops. Light stacking now happens per-light inside DrawSubsectorLights!
+	//			DrawLightsCompat(pass);	// Triggers our clean, seamless, scaled DrawSubsectorLights loop
+	//		}
+	//	}
+
+	//	// ==============================================================================
+	//	// TWIN-PASS CONTEXT PURGE: RESET PIPELINE SPECIFICALLY FOR THE DRAWFLATS2X LOOP
+	//	// ==============================================================================
+	//	// Re-enable target properties within the cache so the upcoming flat segment (i+1)
+	//	// inside DrawFlats2x finds the standard environment configuration it expects to find!
+	//	gl_RenderState.EnableFog(true);
+	//	gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // Revert back to baseline additive illumination mode
+	//	gl_RenderState.SetTextureMode(TM_MODULATE);
+
+	//	// Synchronize fixed-function hardware depth targets for the twin-pass execution
+	//	glDepthFunc(GL_EQUAL);
+	//	glDepthMask(false);
+
+	//	// Flush all fixed-function parameters directly into the GPU registers!
+	//	// This guarantees that the pipeline context is perfectly prepared for the next interleaved step.
+	//	gl_RenderState.Apply();
+
+	//	// Hardware fallback override path for strict OpenGL 1.1 compliance
+	//	glEnable(GL_FOG);
+	//	glBlendFunc(GL_ONE, GL_ONE); // Retain standard additive light profile for next loop step
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	//	break;
+
+	//case GLPASS_BRIGHTMAP_LEGACY:
+	//	FMaterial *bm = gltexture->GetBrightmapLegacy();
+	//	if (bm)
+	//	{
+	//		// Calculate total current light level including extra light modifications
+	//		int totalLight = lightlevel + rel;
+	//		if (totalLight > 255) totalLight = 255;
+	//		if (totalLight < 0) totalLight = 0;
+
+	//		float intensityFactor;
+	//		if (totalLight < 96)
+	//		{
+	//			// Full effect below 96 light level to prevent early dimming
+	//			intensityFactor = 1.0f;
+	//		}
+	//		else
+	//		{
+	//			// Optimized inverse light factor for the 96-255 range using multiplication
+	//			const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
+	//			float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
+
+	//			// Add a subtle ~2.5% parabola bump to mid-range without overbrightening high values
+	//			factor = factor + 0.1f * factor * (1.0f - factor);
+
+	//			// Scale intensity to smoothly drop from 1.0 (at 96) down to 0.01 (at 255)
+	//			intensityFactor = (factor * 0.99f) + 0.01f;
+	//		}
+
+	//		if (intensityFactor > 1.0f) intensityFactor = 1.0f;
+	//		if (intensityFactor < 0.0f) intensityFactor = 0.0f;
+
+	//		// Apply calculated intensity as modulation color
+	//		gl_RenderState.SetColor(intensityFactor, intensityFactor, intensityFactor, 1.0f);
+
+	//		gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
+	//		gl_SetPlaneTextureRotation(&plane, bm);
+	//		DrawSubsectors(pass, false, false);
+	//		gl_RenderState.EnableTextureMatrix(false);
+	//	}
+	//	break;
 
 //==========================================================================
 //

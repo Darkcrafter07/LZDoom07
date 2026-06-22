@@ -64,7 +64,7 @@ enum Drawpasses
 	GLPASS_LIGHTTEX_FOGGY,	// lighttexture pass on foggy surfaces (forces all lights to be additive)
 	GLPASS_FOGBOUNDARY,    // Apply fog to dynamically lit surfaces
 
-	GLPASS_BRIGHTEN_LEGACY_LIGHTTEX,	// additional brightening pass for GL1x/GL2x legacy code (unused yet)
+	GLPASS_BRIGHTEN_LEGACY_LIGHTTEX,	// additional brightening pass for GL1x/GL2x legacy code
 	GLPASS_BRIGHTMAP_LEGACY, // GL1x/GL2x legacy brightmap simulation effect
 
 };
@@ -163,6 +163,8 @@ public:
 	void Draw(int pass, bool trans = false);
 	void DrawWalls(int pass);
 	void DrawFlats(int pass);
+	void DrawWalls2x(int pass1, int pass2);
+	void DrawFlats2x(int pass1, int pass2);
 	void DrawDecals();
 	
 	GLDrawList * next;

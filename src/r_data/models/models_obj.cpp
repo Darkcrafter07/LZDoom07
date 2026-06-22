@@ -1,4 +1,4 @@
-//
+// models_obj.cpp
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2018 Kevin Caccamo
@@ -360,6 +360,8 @@ void FOBJModel::BuildVertexBuffer(FModelRenderer *renderer)
 
 	unsigned int vbufsize = 0;
 
+	this->trueVisualRadius = 0.0f;
+
 	for (size_t i = 0; i < surfaces.Size(); i++)
 	{
 		ConstructSurfaceTris(surfaces[i]);
@@ -372,10 +374,15 @@ void FOBJModel::BuildVertexBuffer(FModelRenderer *renderer)
 		AddVertFaces();
 	}
 
-	auto vbuf = renderer->CreateVertexBuffer(false,true);
+	auto vbuf = renderer->CreateVertexBuffer(false, true);
 	SetVertexBuffer(renderer, vbuf);
 
 	FModelVertex *vertptr = vbuf->LockVertexBuffer(vbufsize);
+
+	// [Darkcrafter07]: Initialize raw file mesh boundaries tracking
+	float rawMeshMinY = 1000000.0f;
+	float rawMeshMaxY = -1000000.0f;
+	this->trueVisualHeight = 0.0f;
 
 	for (unsigned int i = 0; i < surfaces.Size(); i++)
 	{
@@ -399,6 +406,15 @@ void FOBJModel::BuildVertexBuffer(FModelRenderer *renderer)
 
 				mdv->Set(curVvec.X, curVvec.Y, curVvec.Z, curUvec.X, curUvec.Y);
 
+				// [Darkcrafter07]: REAL-TIME VERTEX GEOMETRY HEIGHT SCANNER FOR OBJ!
+				// Track the absolute mathematical lowest and highest point of the loaded mesh hull
+				if (mdv->y < rawMeshMinY) rawMeshMinY = mdv->y;
+				if (mdv->y > rawMeshMaxY) rawMeshMaxY = mdv->y;
+
+				// [Darkcrafter07]: TRUE RADIUS VERTEX SCANNER FOR OBJ!
+				float horizDist = sqrtf((mdv->x * mdv->x) + (mdv->z * mdv->z));
+				if (horizDist > this->trueVisualRadius) this->trueVisualRadius = horizDist;
+
 				if (nidx >= 0 && (unsigned int)nidx < norms.Size())
 				{
 					nvec = RealignVector(norms[nidx]);
@@ -419,6 +435,11 @@ void FOBJModel::BuildVertexBuffer(FModelRenderer *renderer)
 		}
 		delete[] surfaces[i].tris;
 	}
+
+	// [Darkcrafter07]: Lock down the final precise vertical delta extracted from OBJ vertices data
+	float heightDelta = rawMeshMaxY - rawMeshMinY;
+	if (heightDelta < 0.0f) heightDelta = 0.0f;
+	this->trueVisualHeight = heightDelta;
 
 	// Destroy vertFaces
 	if (hasMissingNormals && hasSmoothGroups)

@@ -9,34 +9,34 @@
 
 class GLSceneDrawer
 {
-	fixed_t viewx, viewy;	// since the nodes are still fixed point, keeping the view position  also fixed point for node traversal is faster.
-	
+	fixed_t viewx, viewy;	// since the nodes are still fixed point, keeping the view position also fixed point for node traversal is faster.
+
 	subsector_t *currentsubsector;	// used by the line processing code.
 	sector_t *currentsector;
 
 	TMap<DPSprite*, int> weapondynlightindex;
 
-	void SetupWeaponLight();
+private:
 
+	void SetupWeaponLight();
 	void RenderMultipassStuff();
-	
 	void UnclipSubsector(subsector_t *sub);
-	void AddLine (seg_t *seg, bool portalclip);
+	void AddLine(seg_t *seg, bool portalclip);
 	void PolySubsector(subsector_t * sub);
-	void RenderPolyBSPNode (void *node);
+	void RenderPolyBSPNode(void *node);
 	void AddPolyobjs(subsector_t *sub);
+	void RenderMergedLine(seg_t *seg, angle_t startAngle, angle_t endAngle);
 	void AddLines(subsector_t * sub, sector_t * sector);
 	void AddSpecialPortalLines(subsector_t * sub, sector_t * sector, line_t *line);
 	void RenderThings(subsector_t * sub, sector_t * sector);
 	void DoSubsector(subsector_t * sub);
 	void RenderBSPNode(void *node);
-
 	void RenderScene(int recursion);
 	void RenderTranslucent();
-
 	void CreateScene();
 
 public:
+
 	GLSceneDrawer()
 	{
 		GLPortal::drawer = this;

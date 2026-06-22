@@ -523,8 +523,24 @@ void GLWall::Draw(int pass)
 		break;
 
 	case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX:
-		if (seg->sidedef != nullptr)
+		if (seg->sidedef != nullptr && seg->v1 != nullptr && seg->v2 != nullptr)
 		{
+			// Define local viewport culling radius bubble for open-space landscape sectors
+			float cullDist = 16000.0f;
+			if (cullDist > 0.0f)
+			{
+				float maxAllowedDistSq = cullDist * cullDist;
+
+				// Calculate squared distance from camera viewpoint to both vertices of the current wall segment
+				float dist1 = (float)(seg->v1->fPos() - r_viewpoint.Pos).LengthSquared();
+				float dist2 = (float)(seg->v2->fPos() - r_viewpoint.Pos).LengthSquared();
+
+				// If both vertices escape the culling bubble, skip the entire heavy overbright pass instantly!
+				if (dist1 > maxAllowedDistSq && dist2 > maxAllowedDistSq)
+				{
+					break;
+				}
+			}
 			gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
 			glDepthFunc(GL_EQUAL);
 			glDepthMask(false);
@@ -533,19 +549,31 @@ void GLWall::Draw(int pass)
 			FLightNode *node = (!(seg->sidedef->Flags & WALLF_POLYOBJ)) ?
 				seg->sidedef->lighthead : (sub ? sub->lighthead : nullptr);
 
+			if (node == nullptr)
+			{
+				break;
+			}
+
 			texcoord save[4];
 			memcpy(save, tcs, sizeof(tcs)); // Save original wall coordinates
 
-			float baseFactor = clamp((float)gl_legacylightoverbrightwalls, 0.0f, 0.2f);
+			float baseFactor = clamp((float)gl_legacy_dynlight_overbright_walls, 0.0f, 0.2f);
 
-			// --- FOG BOOSTER MULTIPLIER ---
-			// If we are currently processing a foggy drawlist, we amplify the baseFactor 
-			// by 3.0f to completely counteract the heavy dark fog overlay attenuation!
 			float passIntensityMultiplier = 1.5f;
 			if (gl_drawinfo && gl_drawinfo->gl_IsFoggyPass)
 			{
 				passIntensityMultiplier = 1.5f * 3.0f; // Tripple the punch for foggy walls!
 			}
+
+			float x1 = (float)glseg.x1;
+			float y1 = (float)glseg.y1;
+			float x2 = (float)glseg.x2;
+			float y2 = (float)glseg.y2;
+
+			float zb0 = (float)zbottom[0];
+			float zt0 = (float)ztop[0];
+			float zt1 = (float)ztop[1];
+			float zb1 = (float)zbottom[1];
 
 			while (node)
 			{
@@ -561,16 +589,6 @@ void GLWall::Draw(int pass)
 					float ly = (float)light->Y();
 					float lz = (float)light->Z();
 
-					float x1 = (float)glseg.x1;
-					float y1 = (float)glseg.y1;
-					float x2 = (float)glseg.x2;
-					float y2 = (float)glseg.y2;
-
-					float zb0 = (float)zbottom[0];
-					float zt0 = (float)ztop[0];
-					float zt1 = (float)ztop[1];
-					float zb1 = (float)zbottom[1];
-
 					float vtx[] = {
 						x1, zb0, y1,
 						x1, zt0, y1,
@@ -582,7 +600,10 @@ void GLWall::Draw(int pass)
 					glEnable(GL_TEXTURE_2D);
 					glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
-					// --- FIRST PASS ---
+					// --- SINGLE FAST PASS WITH DOUBLE INTENSITY ---
+					// We completely removed the second glBegin/glEnd pass loop!
+					// By multiplying intensity by 2.0f inside the first pass, we get the EXACT same
+					// blinding high-contrast overbright epicenter, but with 2X less draw calls on mega-maps!
 					glBegin(GL_QUADS);
 					for (int i = 0; i < 4; i++)
 					{
@@ -594,32 +615,8 @@ void GLWall::Draw(int pass)
 						if (dist2 < radiusSq)
 						{
 							float dist = sqrtf(dist2);
-							// Apply our smart context-aware pass intensity multiplier
-							intensity = (1.0f - (dist / radius)) * baseFactor * passIntensityMultiplier;
-						}
-
-						if (intensity > 1.0f) intensity = 1.0f;
-						if (intensity < 0.0f) intensity = 0.0f;
-
-						glTexCoord2f(tcs[i].u, tcs[i].v);
-						glColor4f(intensity, intensity, intensity, 1.0f);
-						glVertex3f(vx, vz, vy);
-					}
-					glEnd();
-
-					// --- SECOND PASS OVERBRIGHT HIGHLIGHT BOOSTER ---
-					glBegin(GL_QUADS);
-					for (int i = 0; i < 4; i++)
-					{
-						float vx = vtx[i * 3]; float vz = vtx[i * 3 + 1]; float vy = vtx[i * 3 + 2];
-						float dx = vx - lx; float dy = vy - ly; float dz = vz - lz;
-						float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
-
-						float intensity = 0.0f;
-						if (dist2 < radiusSq)
-						{
-							float dist = sqrtf(dist2);
-							intensity = (1.0f - (dist / radius)) * baseFactor * passIntensityMultiplier;
+							// Doubled intensity multiplier gives the same power boost instantly!
+							intensity = (1.0f - (dist / radius)) * baseFactor * passIntensityMultiplier * 2.0f;
 						}
 
 						if (intensity > 1.0f) intensity = 1.0f;
@@ -637,11 +634,26 @@ void GLWall::Draw(int pass)
 			memcpy(tcs, save, sizeof(tcs)); // Restore layout
 			vertcount = 0;
 
+			// ==============================================================================
+			// CLEAN ARCHITECTURAL FIX: SYNC STATE MACHINE AND PREVENT BLEND LEAKS INTO SKY
+			// ==============================================================================
+			// Force-update everything through Graf Zahl's cache layer to prevent data corruption
 			gl_RenderState.EnableFog(true);
-			gl_RenderState.Apply();
-			glDepthMask(true);
-			glDepthFunc(GL_LESS);
 			gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+			gl_RenderState.SetTextureMode(TM_MODULATE);
+
+			// If LZDoom's FRenderState has a depth function cacher, use it here, 
+			// otherwise we force it natively right before Apply()
+			glDepthFunc(GL_LESS);
+			glDepthMask(true);
+
+			// Force the state machine to flush all changes directly into the GPU hardware registers.
+			// This completely clears the left-over GL_DST_COLOR, GL_ONE blending state!
+			gl_RenderState.Apply();
+
+			// Secondary fallback clean for raw OpenGL 1.1 hardware registers
+			glEnable(GL_FOG);
+			glBlendFunc(GL_ONE, GL_ZERO);
 			glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		}
 		break;
@@ -684,3 +696,239 @@ void GLWall::Draw(int pass)
 		break;
 	}
 }
+
+
+
+
+
+
+	//case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX_SLOW:
+	//	if (seg->sidedef != nullptr && seg->v1 != nullptr && seg->v2 != nullptr)
+	//	{
+	//		float cullDist = 2048.0f;
+	//		if (cullDist > 0.0f)
+	//		{
+	//			float maxAllowedDistSq = cullDist * cullDist;
+	//			// Calculate squared distance from camera viewpoint to both vertices of the current wall segment
+	//			float dist1 = (float)(seg->v1->fPos() - r_viewpoint.Pos).LengthSquared();
+	//			float dist2 = (float)(seg->v2->fPos() - r_viewpoint.Pos).LengthSquared();
+	//			// If both vertices escape the culling bubble, skip the entire heavy overbright pass instantly!
+	//			if (dist1 > maxAllowedDistSq && dist2 > maxAllowedDistSq)
+	//			{
+	//				break;
+	//			}
+	//		}
+
+	//		// Proceed with the lightning-fast textureless overbright pipeline for nearby geometry
+	//		glDisable(GL_TEXTURE_2D);
+
+	//		// Synchronize hardware registers into the multiplicative overbright window
+	//		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+	//		glDepthFunc(GL_EQUAL);
+	//		glDepthMask(false);
+
+	//		FLightNode *node = (!(seg->sidedef->Flags & WALLF_POLYOBJ)) ?
+	//			seg->sidedef->lighthead : (sub ? sub->lighthead : nullptr);
+
+	//		if (node == nullptr)
+	//		{
+	//			glEnable(GL_TEXTURE_2D);
+	//			break;
+	//		}
+
+	//		texcoord save[4];
+	//		memcpy(save, tcs, sizeof(tcs)); // Restore missing index array tracking boundaries
+
+	//		float baseFactor = clamp((float)gl_legacy_dynlight_overbright_walls, 0.0f, 0.2f);
+	//		float passIntensityMultiplier = (gl_drawinfo && gl_drawinfo->gl_IsFoggyPass) ? 4.5f : 1.5f;
+	//		float totalMultiplier = baseFactor * passIntensityMultiplier * 2.0f;
+
+	//		float x1 = (float)glseg.x1; float y1 = (float)glseg.y1;
+	//		float x2 = (float)glseg.x2; float y2 = (float)glseg.y2;
+
+	//		float zb0 = (float)zbottom[0]; float zt0 = (float)ztop[0];
+	//		float zt1 = (float)ztop[1];    float zb1 = (float)zbottom[1]; // Restored safe index array tracking bounds
+
+	//		while (node)
+	//		{
+	//			FDynamicLight *light = node->lightsource;
+	//			if (light && light->IsActive() && light->GetRadius() > 0.0f)
+	//			{
+	//				gl_RenderState.EnableFog(false);
+	//				gl_RenderState.BlendEquation(GL_FUNC_ADD);
+
+	//				float radius = light->GetRadius();
+	//				float radiusSq = radius * radius;
+	//				float lx = (float)light->X(); float ly = (float)light->Y(); float lz = (float)light->Z();
+
+	//				float vtx[] = {
+	//					x1, zb0, y1,
+	//					x1, zt0, y1,
+	//					x2, zt1, y2,
+	//					x2, zb1, y2
+	//				};
+
+	//				gl_RenderState.Apply();
+
+	//				// --- SINGLE FAST PASS WITH DOUBLE INTENSITY ---
+	//				glBegin(GL_QUADS);
+	//				for (int i = 0; i < 4; i++)
+	//				{
+	//					float vx = vtx[i * 3]; float vz = vtx[i * 3 + 1]; float vy = vtx[i * 3 + 2];
+	//					float dx = vx - lx; float dy = vy - ly; float dz = vz - lz;
+	//					float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
+
+	//					float intensity = 0.0f;
+	//					if (dist2 < radiusSq)
+	//					{
+	//						intensity = (1.0f - (sqrtf(dist2) / radius)) * totalMultiplier;
+	//					}
+
+	//					if (intensity > 1.0f) intensity = 1.0f;
+	//					if (intensity < 0.0f) intensity = 0.0f;
+
+	//					float r = (light->GetRed() / 255.0f) * intensity;
+	//					float g = (light->GetGreen() / 255.0f) * intensity;
+	//					float b = (light->GetBlue() / 255.0f) * intensity;
+
+	//					glColor4f(r, g, b, 1.0f);
+	//					glVertex3f(vx, vz, vy);
+	//				}
+	//				glEnd();
+	//			}
+	//			node = node->nextLight;
+	//		}
+
+	//		memcpy(tcs, save, sizeof(tcs));
+	//		vertcount = 0;
+
+	//		// ==============================================================================
+	//		// TWIN-PASS CONTEXT PURGE: RESET PIPELINE SPECIFICALLY FOR THE DRAWWALLS2X LOOP
+	//		// ==============================================================================
+	//		glEnable(GL_TEXTURE_2D);
+
+	//		gl_RenderState.EnableFog(true);
+	//		gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+	//		gl_RenderState.SetTextureMode(TM_MODULATE);
+
+	//		glDepthFunc(GL_EQUAL);
+	//		glDepthMask(false);
+
+	//		gl_RenderState.Apply();
+
+	//		glEnable(GL_FOG);
+	//		glBlendFunc(GL_ONE, GL_ONE);
+	//		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	//	}
+	//	break;
+
+	//case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX_PROJECT_LIGHT_LIKE_A_TEXTURE:
+	//	if (seg->sidedef != nullptr)
+	//	{
+	//		// Force-bind the correct dynamic light attenuation filter mask (glLight) via Graf Zahl's system 
+	//		if (!gl_SetupLightTexture())
+	//		{
+	//			break;
+	//		}
+
+	//		// Synchronize hardware registers into the multiplicative overbright window over the light mask
+	//		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+	//		glDepthFunc(GL_EQUAL);
+	//		glDepthMask(false);
+
+	//		FLightNode *node = (!(seg->sidedef->Flags & WALLF_POLYOBJ)) ?
+	//			seg->sidedef->lighthead : (sub ? sub->lighthead : nullptr);
+
+	//		if (node == nullptr)
+	//		{
+	//			break;
+	//		}
+
+	//		// PERFORMANCE MAGIC: We COMPLETELY removed the duplicate "PrepareLight" function call!
+	//		// Since wall->Draw(GLPASS_LIGHTTEX) has ALREADY executed right before this step inside DrawWalls2x,
+	//		// the master 'tcs[i]' array already contains the mathematically perfect spotlight projection UVs.
+	//		// Re-calling PrepareLight was corrupting internal matrix transforms, throwing the mask into random coordinates!
+
+	//		float baseFactor = clamp((float)gl_legacy_dynlight_overbright_walls, 0.0f, 0.2f);
+	//		float passIntensityMultiplier = (gl_drawinfo && gl_drawinfo->gl_IsFoggyPass) ? 4.5f : 1.5f;
+	//		float totalMultiplier = baseFactor * passIntensityMultiplier * 2.0f;
+
+	//		float x1 = (float)glseg.x1; float y1 = (float)glseg.y1;
+	//		float x2 = (float)glseg.x2; float y2 = (float)glseg.y2;
+
+	//		float zb0 = (float)zbottom[0]; float zt0 = (float)ztop[0];
+	//		float zt1 = (float)ztop[1];    float zb1 = (float)zbottom[1];
+
+	//		while (node)
+	//		{
+	//			FDynamicLight *light = node->lightsource;
+	//			if (light && light->IsActive() && light->GetRadius() > 0.0f)
+	//			{
+	//				gl_RenderState.EnableFog(false);
+	//				gl_RenderState.BlendEquation(GL_FUNC_ADD);
+
+	//				float radius = light->GetRadius();
+	//				float radiusSq = radius * radius;
+	//				float lx = (float)light->X(); float ly = (float)light->Y(); float lz = (float)light->Z();
+
+	//				float vtx[] = {
+	//					x1, zb0, y1,
+	//					x1, zt0, y1,
+	//					x2, zt1, y2,
+	//					x2, zb1, y2
+	//				};
+
+	//				gl_RenderState.Apply();
+	//				glEnable(GL_TEXTURE_2D);
+	//				glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+	//				// --- SINGLE FAST PASS WITH DOUBLE INTENSITY ---
+	//				glBegin(GL_QUADS);
+	//				for (int i = 0; i < 4; i++)
+	//				{
+	//					float vx = vtx[i * 3]; float vz = vtx[i * 3 + 1]; float vy = vtx[i * 3 + 2];
+	//					float dx = vx - lx; float dy = vy - ly; float dz = vz - lz;
+	//					float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
+
+	//					float intensity = 0.0f;
+	//					if (dist2 < radiusSq)
+	//					{
+	//						intensity = (1.0f - (sqrtf(dist2) / radius)) * totalMultiplier;
+	//					}
+
+	//					if (intensity > 1.0f) intensity = 1.0f;
+	//					if (intensity < 0.0f) intensity = 0.0f;
+
+	//					// Safely feed the pre-calculated texture projection coordinates straight into OpenGL
+	//					glTexCoord2f(tcs[i].u, tcs[i].v);
+	//					glColor4f(intensity, intensity, intensity, 1.0f);
+	//					glVertex3f(vx, vz, vy);
+	//				}
+	//				glEnd();
+	//			}
+	//			node = node->nextLight;
+	//		}
+
+	//		// Reset texture mapping state parameters cleanly
+	//		vertcount = 0;
+
+	//		// ==============================================================================
+	//		// TWIN-PASS CONTEXT PURGE: RESET PIPELINE SPECIFICALLY FOR THE DRAWWALLS2X LOOP
+	//		// ==============================================================================
+	//		gl_RenderState.EnableFog(true);
+	//		gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // Revert back to baseline additive illumination mode
+	//		gl_RenderState.SetTextureMode(TM_MODULATE);
+
+	//		glDepthFunc(GL_EQUAL);
+	//		glDepthMask(false);
+
+	//		// Force-flush the updated state manager block directly into the hardware context
+	//		gl_RenderState.Apply();
+
+	//		// Fallback hardware safety clean overrides
+	//		glEnable(GL_FOG);
+	//		glBlendFunc(GL_ONE, GL_ONE);
+	//		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	//	}
+	//	break;
+

@@ -769,7 +769,7 @@ void GLSprite::PerformSpriteClipAdjustment(AActor *thing, const DVector2 &thingp
 
 CVAR(Float, gl_sprite_distance_cull, 4000.0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
-inline bool IsDistanceCulled(AActor* thing)
+inline bool IsLinedefCulledByDistance(AActor* thing)
 {
 	double culldist = gl_sprite_distance_cull * gl_sprite_distance_cull;
 	if (culldist <= 0.0)
@@ -790,7 +790,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	if (thing == nullptr)
 		return;
 
-	if (IsDistanceCulled(thing))
+	if (IsLinedefCulledByDistance(thing))
 		return;
 
 	// [ZZ] allow CustomSprite-style direct picnum specification
@@ -1008,44 +1008,44 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 
 		switch (spritetype)
 		{
-		case RF_FACESPRITE:
-		{
-			float viewvecX = GLRenderer->mViewVector.X;
-			float viewvecY = GLRenderer->mViewVector.Y;
+			case RF_FACESPRITE:
+			{
+				float viewvecX = GLRenderer->mViewVector.X;
+				float viewvecY = GLRenderer->mViewVector.Y;
 
-			x1 = x - viewvecY * leftfac;
-			x2 = x - viewvecY * rightfac;
-			y1 = y + viewvecX * leftfac;
-			y2 = y + viewvecX * rightfac;
-			break;
-		}
-		case RF_FLATSPRITE:
-		{
-			float bottomfac = -r.top - SpriteOffY;
-			float topfac = bottomfac - r.height;
+				x1 = x - viewvecY * leftfac;
+				x2 = x - viewvecY * rightfac;
+				y1 = y + viewvecX * leftfac;
+				y2 = y + viewvecX * rightfac;
+				break;
+			}
+			case RF_FLATSPRITE:
+			{
+				float bottomfac = -r.top - SpriteOffY;
+				float topfac = bottomfac - r.height;
 
-			x1 = x + leftfac;
-			x2 = x + rightfac;
-			y1 = y - topfac;
-			y2 = y - bottomfac;
-			// [MC] Counteract in case of any potential problems. Tests so far haven't
-			// shown any outstanding issues but that doesn't mean they won't appear later
-			// when more features are added.
-			z1 += SpriteOffY;
-			z2 += SpriteOffY;
-			break;
-		}
-		case RF_WALLSPRITE:
-		{
-			float viewvecX = Angles.Yaw.Cos();
-			float viewvecY = Angles.Yaw.Sin();
+				x1 = x + leftfac;
+				x2 = x + rightfac;
+				y1 = y - topfac;
+				y2 = y - bottomfac;
+				// [MC] Counteract in case of any potential problems. Tests so far haven't
+				// shown any outstanding issues but that doesn't mean they won't appear later
+				// when more features are added.
+				z1 += SpriteOffY;
+				z2 += SpriteOffY;
+				break;
+			}
+			case RF_WALLSPRITE:
+			{
+				float viewvecX = Angles.Yaw.Cos();
+				float viewvecY = Angles.Yaw.Sin();
 
-			x1 = x + viewvecY * leftfac;
-			x2 = x + viewvecY * rightfac;
-			y1 = y - viewvecX * leftfac;
-			y2 = y - viewvecX * rightfac;
-			break;
-		}
+				x1 = x + viewvecY * leftfac;
+				x2 = x + viewvecY * rightfac;
+				y1 = y - viewvecX * leftfac;
+				y2 = y - viewvecX * rightfac;
+				break;
+			}
 		}
 	}
 	else

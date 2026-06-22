@@ -71,6 +71,10 @@
 #include "gl/utility/gl_templates.h"
 #include "vm.h"
 
+// GL1x/GL2x legacy includes, externs and vars - START
+bool gl_IsLegacyModelLightingPass;
+// GL1x/GL2x legacy includes, externs and vars - FINISH
+
 //==========================================================================
 //
 // CVARs
@@ -368,13 +372,9 @@ void GLSceneDrawer::RenderScene(int recursion)
 		{
 			RenderMultipassStuff();
 
-			// ==========================================================================
 			// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Start ---
-			// THE ULTIMATE ARCHITECTURAL TRIUMPH: We execute our custom overbright pass
-			// completely outside RenderMultipassStuff, after the engine has finalized the framebuffer!
-			// This guarantees NO grey textures, NO broken light passes, and absolute flawless fog blending!
-			// ==========================================================================
-			if (GLRenderer->mLightCount && !FixedColormap)
+			// MAKES IT 1.5 TIMES SLOWER!
+			if (gl_legacy_dynlight_overbright && GLRenderer && GLRenderer->mLightCount > 0 && !FixedColormap)
 			{
 				// Pure OpenGL 1.1 State Machine Lock - 100% isolated from gl_RenderState caches!
 				glDisable(GL_FOG);        // Ensure hardware fixed fog doesn't blow out our spots
@@ -383,25 +383,55 @@ void GLSceneDrawer::RenderScene(int recursion)
 
 				glEnable(GL_BLEND);
 				glBlendFunc(GL_DST_COLOR, GL_ONE); // Multiplicative overbright blending window
+
+				// Push state machine matrix target cleanly before calling drawlists
 				glMatrixMode(GL_TEXTURE);
 
-				// Execute GLPASS_BRIGHTEN_LEGACY_LIGHTTEX for walls to get nice overbright centers
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+				// Cache instance helper reference
+				GLDrawList* dlists = gl_drawinfo->dldrawlists;
 
-				// Execute GLPASS_BRIGHTEN_LEGACY_LIGHTTEX for flats as well to match the wall overbright glow!
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+				// --- PART 1: WALLS OVERBRIGHT PIPELINE SPEED-UP ---
+				// We call DrawWalls ONLY if the specific list actually contains geometry to render!
+				if (dlists[GLLDL_WALLS_PLAIN].drawitems.Size() > 0)
+					dlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+				if (dlists[GLLDL_WALLS_MASKED].drawitems.Size() > 0)
+					dlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+				if (dlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
+					dlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+				if (dlists[GLLDL_WALLS_FOGMASKED].drawitems.Size() > 0)
+					dlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+
+				// --- PART 2: FLATS OVERBRIGHT PIPELINE SPEED-UP ---
+				// Replicate the identical zero-overhead size guarding for floors and ceilings!
+				if (dlists[GLLDL_FLATS_PLAIN].drawitems.Size() > 0)
+					dlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+				if (dlists[GLLDL_FLATS_MASKED].drawitems.Size() > 0)
+					dlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+				if (dlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
+					dlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+				if (dlists[GLLDL_FLATS_FOGMASKED].drawitems.Size() > 0)
+					dlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
+
+
+				// FIXED-FUNCTION SYMMETRIC CONTEXT RESET
+				// Always pop the matrix target back to GL_MODELVIEW immediately to secure the sky rendering pipe!
+				glMatrixMode(GL_MODELVIEW);
 
 				// Restore raw OpenGL hardware states back cleanly immediately!
 				glEnable(GL_FOG);
 				glDepthMask(true);
 				glDepthFunc(GL_LESS);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+				// Revert texture environment configuration back from custom overbright leaks
+				glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 			}
 			// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Finish ---
 
@@ -427,7 +457,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 	gl_drawinfo->drawlists[GLDL_MASKEDWALLS].DrawWalls(pass);
 	gl_drawinfo->drawlists[GLDL_MASKEDFLATS].DrawFlats(pass);
 
-	// Part 3: masked geometry with polygon offset. This list is empty most of the time so only waste time on it when in use.
+	// Part 3: masked geometry with polygon offset.
 	if (gl_drawinfo->drawlists[GLDL_MASKEDWALLSOFS].Size() > 0)
 	{
 		glEnable(GL_POLYGON_OFFSET_FILL);
@@ -437,10 +467,37 @@ void GLSceneDrawer::RenderScene(int recursion)
 		glPolygonOffset(0, 0);
 	}
 
+	// Render models with their standard base pass (pass is GLPASS_PLAIN here)
 	gl_drawinfo->drawlists[GLDL_MODELS].Draw(pass);
 
-	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	//// [Darkcrafter07] - Legacy Mode 3D Models Dynamic Lighting Pass
+	//if (gl.lightmethod == LM_LEGACY && GLRenderer->mLightCount > 0 && !FixedColormap)
+	//{
+	//	// 1. Setup states for additive light accumulation overlay
+	//	glDepthMask(false);          
+	//	glDepthFunc(GL_EQUAL);       
+	//	gl_RenderState.EnableFog(false); 
+	//	gl_RenderState.BlendFunc(GL_ONE, GL_ONE); 
+	//	gl_RenderState.Apply();
 
+	//	// 2. Set the tracking flag for the model renderer
+	//	gl_IsLegacyModelLightingPass = true;
+
+	//	// 3. Redraw the models list using our specialized dynamic light pass
+	//	gl_drawinfo->drawlists[GLDL_MODELS].Draw(GLPASS_MODEL_DYNLIGHT_LEGACY);
+
+	//	// 4. Reset the tracking flag back immediately
+	//	gl_IsLegacyModelLightingPass = false;
+
+	//	// 5. Restore standard state right after the models are lit up
+	//	glDepthMask(true);
+	//	glDepthFunc(GL_LESS);
+	//	gl_RenderState.EnableFog(true);
+	//	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	//	gl_RenderState.Apply();
+	//}
+
+	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	// Part 4: Draw decals (not a real pass)
 	glDepthFunc(GL_LEQUAL);
 	glEnable(GL_POLYGON_OFFSET_FILL);

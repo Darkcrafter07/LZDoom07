@@ -26,7 +26,8 @@
 **
 ** Fallback code for ancient hardware
 ** This file collects everything larger that is only needed for
-** OpenGL v1.1 and v2.0x family, NO shaders required.
+** OpenGL v1.1 is required (1997+ cards?), the same file for GL2x path.
+** The difference GL2 makes is no blurry textures thanks to NPOT support.
 **
 */
 
@@ -56,6 +57,8 @@
 #include "gl/scene/gl_scenedrawer.h"
 #include "gl/data/gl_vertexbuffer.h"
 
+#include "gl/shaders/gl_shader.h"
+
 
 
 // Menu patching for legacy mode capabilities
@@ -72,6 +75,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 // Binds the native dynamic light spotlight filter mask texture (glLight) to the render state
 bool gl_SetupLightTexture();
+bool gl_SetupLightTextureForDynlightLegacy();
 
 // Main rendering loops for legacy multipass fallback path
 void gl_FillScreen();

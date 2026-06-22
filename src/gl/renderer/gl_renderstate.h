@@ -112,7 +112,9 @@ class FRenderState
 	PalEntry mObjectColor;
 	PalEntry mObjectColor2;
 	FStateVec4 mDynColor;
+	FStateVec4 mSecondaryColor;
 	float mClipSplit[2];
+
 
 	int mEffectState;
 	int mColormapState;
@@ -224,6 +226,15 @@ public:
 	{
 		mColor.Set(pe.r/255.f, pe.g/255.f, pe.b/255.f, pe.a/255.f);
 		mDesaturation = desat;
+	}
+
+	void SetSecondaryColor(float r, float g, float b, float a = 1.0f)
+	{
+		mSecondaryColor.Set(r, g, b, a);
+	}
+	void SetSecondaryColor(float *vec)
+	{
+		mSecondaryColor.Set(vec[0], vec[1], vec[2], vec[3]);
 	}
 
 	void SetColorAlpha(PalEntry pe, float alpha = 1.f, int desat = 0)
@@ -548,7 +559,7 @@ public:
 		return mPassType == GBUFFER_PASS ? 3 : 1;
 	}
 
-	// Backwards compatibility crap follows
+	// GL1x/GL2x legacy stuff follows
 	void ApplyFixedFunction();
 	void DrawColormapOverlay();
 

@@ -1,4 +1,4 @@
-//
+// models_ue1.cpp
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2018 Marisa Kirisame
@@ -258,43 +258,79 @@ void FUE1Model::RenderFrame( FModelRenderer *renderer, FTexture *skin, int frame
 	renderer->SetInterpolation(0.f);
 }
 
-void FUE1Model::BuildVertexBuffer( FModelRenderer *renderer )
+void FUE1Model::BuildVertexBuffer(FModelRenderer *renderer)
 {
 	if (GetVertexBuffer(renderer))
 		return;
-	if ( !mDataLoaded )
+	if (!mDataLoaded)
 		LoadGeometry();
 	int vsize = 0;
-	for ( int i=0; i<numGroups; i++ )
-		vsize += groups[i].numPolys*3;
+	for (int i = 0; i < numGroups; i++)
+		vsize += groups[i].numPolys * 3;
 	vsize *= numFrames;
-	auto vbuf = renderer->CreateVertexBuffer(false,numFrames==1);
+	auto vbuf = renderer->CreateVertexBuffer(false, numFrames == 1);
 	SetVertexBuffer(renderer, vbuf);
 	FModelVertex *vptr = vbuf->LockVertexBuffer(vsize);
-	int vidx = 0;
-	for ( int i=0; i<numFrames; i++ )
+
+	// [Darkcrafter07]: Prepare individual frame bounds tracking vectors for UE1 layout
+	this->trueVisualHeights.Resize(numFrames);
+	this->trueVisualRadii.Resize(numFrames);
+	for (int f = 0; f < numFrames; f++) this->trueVisualRadii[f] = 0.0f;
+	TArray<float> minBoundsPerFrame;
+	TArray<float> maxBoundsPerFrame;
+	minBoundsPerFrame.Resize(numFrames);
+	maxBoundsPerFrame.Resize(numFrames);
+
+	for (int f = 0; f < numFrames; f++)
 	{
-		for ( int j=0; j<numGroups; j++ )
+		minBoundsPerFrame[f] = 1000000.0f;  // Positive infinity seed
+		maxBoundsPerFrame[f] = -1000000.0f; // Negative infinity seed
+		this->trueVisualHeights[f] = 0.0f;
+	}
+
+	int vidx = 0;
+	for (int i = 0; i < numFrames; i++)
+	{
+		for (int j = 0; j < numGroups; j++)
 		{
-			for ( int k=0; k<groups[j].numPolys; k++ )
+			for (int k = 0; k < groups[j].numPolys; k++)
 			{
-				for ( int l=0; l<3; l++ )
+				for (int l = 0; l < 3; l++)
 				{
-					UE1Vertex V = verts[polys[groups[j].P[k]].V[l]+i*numVerts];
+					UE1Vertex V = verts[polys[groups[j].P[k]].V[l] + i * numVerts];
 					FVector2 C = polys[groups[j].P[k]].C[l];
 					FModelVertex *vert = &vptr[vidx++];
-					vert->Set(V.Pos.X,V.Pos.Y,V.Pos.Z,C.X,C.Y);
-					if ( groups[j].type&PT_Curvy )	// use facet normal
+					vert->Set(V.Pos.X, V.Pos.Y, V.Pos.Z, C.X, C.Y);
+
+					// [Darkcrafter07]: VERTEX-PERFECT HEIGHT SCANNER FOR EACH UE1 ANIMATION FRAME!
+					// Since vert->Set puts V.Pos.Y into vert->y, we scan the computed vertical bounds of the frame 'i'
+					if (vert->y < minBoundsPerFrame[i]) minBoundsPerFrame[i] = vert->y;
+					if (vert->y > maxBoundsPerFrame[i]) maxBoundsPerFrame[i] = vert->y;
+
+					// [Darkcrafter07]: TRUE RADIUS VERTEX SCANNER FOR UE1!
+					float horizDist = sqrtf((vert->x * vert->x) + (vert->z * vert->z));
+					if (horizDist > this->trueVisualRadii[i]) this->trueVisualRadii[i] = horizDist;
+
+					if (groups[j].type&PT_Curvy)	// use facet normal
 					{
 						vert->SetNormal(polys[groups[j].P[k]].Normals[i].X,
 							polys[groups[j].P[k]].Normals[i].Y,
 							polys[groups[j].P[k]].Normals[i].Z);
 					}
-					else vert->SetNormal(V.Normal.X,V.Normal.Y,V.Normal.Z);
+					else vert->SetNormal(V.Normal.X, V.Normal.Y, V.Normal.Z);
 				}
 			}
 		}
 	}
+
+	// [Darkcrafter07]: Lock down the exact visual height delta payload per UE1 animation frame step
+	for (int f = 0; f < numFrames; f++)
+	{
+		float heightDelta = maxBoundsPerFrame[f] - minBoundsPerFrame[f];
+		if (heightDelta < 0.0f) heightDelta = 0.0f;
+		this->trueVisualHeights[f] = heightDelta;
+	}
+
 	vbuf->UnlockVertexBuffer();
 }
 

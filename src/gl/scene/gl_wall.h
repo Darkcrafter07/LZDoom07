@@ -200,7 +200,10 @@ public:
 	sector_t *frontsector, *backsector;
 
 	void ApplyTopFog();
+	bool FGlobalWallLightCache_PrepareWrapper(GLWall *wallInstance, FDynamicLight *light, int pass);
+	void ResetDynlightCache();
 	void RenderLightsCompat(int pass);
+	bool PrepareLight(FDynamicLight * light, int pass);
 
 private:
 
@@ -219,7 +222,7 @@ private:
 	void SplitWall(sector_t * frontsector, bool translucent);
 
 	void SetupLights();
-	bool PrepareLight(FDynamicLight * light, int pass);
+
 	void MakeVertices(bool nosplit);
 	void RenderWall(int textured);
 	void RenderTextured(int rflags);

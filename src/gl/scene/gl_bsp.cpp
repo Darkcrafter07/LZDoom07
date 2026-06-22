@@ -63,16 +63,15 @@ CVAR(Bool, gl_render_flats, true, 0)
 
 CVAR(Float, gl_line_distance_cull, 8000.0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
-inline bool IsDistanceCulled(seg_t *line)
+// only used here in gl_bsp.cpp
+inline bool IsLinedefCulledByDistance(seg_t *line)
 {
-	double dist3 = gl_line_distance_cull * gl_line_distance_cull;
-	if (dist3 <= 0.0)
-		return false;
+	float dist3 = gl_line_distance_cull * gl_line_distance_cull;
+	if (dist3 <= 0.0)                       return false;
 
-	double dist1 = (line->v1->fPos() - r_viewpoint.Pos).LengthSquared();
-	double dist2 = (line->v2->fPos() - r_viewpoint.Pos).LengthSquared();
-	if ((dist1 > dist3) && (dist2 > dist3))
-		return true;
+	float dist1 = (line->v1->fPos() - r_viewpoint.Pos).LengthSquared();
+	float dist2 = (line->v2->fPos() - r_viewpoint.Pos).LengthSquared();
+	if ((dist1 > dist3) && (dist2 > dist3)) return true;
 	return false;
 }
 
@@ -142,7 +141,7 @@ void GLSceneDrawer::AddLine (seg_t *seg, bool portalclip)
 
 	uint8_t ispoly = uint8_t(seg->sidedef->Flags & WALLF_POLYOBJ);
 
-	if (IsDistanceCulled(seg))
+	if (IsLinedefCulledByDistance(seg))
 	{
 		GLWall wall(this);
 		wall.sub = currentsubsector;

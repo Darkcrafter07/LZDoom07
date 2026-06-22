@@ -1,4 +1,4 @@
-// 
+// models_md2.cpp
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2005-2016 Christoph Oelckers
@@ -20,7 +20,7 @@
 //--------------------------------------------------------------------------
 //
 /*
-** models.cpp
+** models_md2.cpp
 **
 ** MD2/DMD model format code
 **
@@ -286,6 +286,7 @@ void FDMDModel::BuildVertexBuffer(FModelRenderer *renderer)
 	{
 		LoadGeometry();
 
+		// FIXED: Accessing raw C-style array with index [0] to match models.h
 		int VertexBufferSize = info.numFrames * lodInfo[0].numTriangles * 3;
 		unsigned int vindex = 0;
 
@@ -294,6 +295,23 @@ void FDMDModel::BuildVertexBuffer(FModelRenderer *renderer)
 
 		FModelVertex *vertptr = vbuf->LockVertexBuffer(VertexBufferSize);
 
+		// [Darkcrafter07]: Prepare individual frame bounds tracking vectors for MD2 layout
+		this->trueVisualHeights.Resize(info.numFrames);
+		TArray<float> minBoundsPerFrame;
+		TArray<float> maxBoundsPerFrame;
+		minBoundsPerFrame.Resize(info.numFrames);
+		maxBoundsPerFrame.Resize(info.numFrames);
+
+		for (int f = 0; f < info.numFrames; f++)
+		{
+			minBoundsPerFrame[f] = 1000000.0f;  // Positive infinity seed
+			maxBoundsPerFrame[f] = -1000000.0f; // Negative infinity seed
+			this->trueVisualHeights[f] = 0.0f;
+		}
+
+		this->trueVisualRadii.Resize(info.numFrames);
+		for (int f = 0; f < info.numFrames; f++) this->trueVisualRadii[f] = 0.0f;
+
 		for (int i = 0; i < info.numFrames; i++)
 		{
 			DMDModelVertex *vert = framevtx[i].vertices;
@@ -301,23 +319,42 @@ void FDMDModel::BuildVertexBuffer(FModelRenderer *renderer)
 
 			frames[i].vindex = vindex;
 
+			// FIXED: Pointing correctly to index [0] of the raw triangles block array
 			FTriangle *tri = lods[0].triangles;
 
-			for (int i = 0; i < lodInfo[0].numTriangles; i++)
+			// FIXED: Renamed inner loop variable from 'i' to 't' to strictly avoid name collision bugs
+			for (int t = 0; t < lodInfo[0].numTriangles; t++)
 			{
 				for (int j = 0; j < 3; j++)
 				{
-
 					int ti = tri->textureIndices[j];
 					int vi = tri->vertexIndices[j];
 
 					FModelVertex *bvert = &vertptr[vindex++];
 					bvert->Set(vert[vi].xyz[0], vert[vi].xyz[1], vert[vi].xyz[2], (float)texCoords[ti].s / info.skinWidth, (float)texCoords[ti].t / info.skinHeight);
 					bvert->SetNormal(norm[vi].xyz[0], norm[vi].xyz[1], norm[vi].xyz[2]);
+
+					// [Darkcrafter07]: VERTEX-PERFECT HEIGHT SCANNER FOR EACH MD2 ANIMATION FRAME!
+					// Track the absolute mathematical lowest and highest point of the active frame block geometry layout.
+					if (bvert->y < minBoundsPerFrame[i]) minBoundsPerFrame[i] = bvert->y;
+					if (bvert->y > maxBoundsPerFrame[i]) maxBoundsPerFrame[i] = bvert->y;
+
+					// [Darkcrafter07]: TRUE RADIUS VERTEX SCANNER FOR MD2!
+					float horizDist = sqrtf((bvert->x * bvert->x) + (bvert->z * bvert->z));
+					if (horizDist > this->trueVisualRadii[i]) this->trueVisualRadii[i] = horizDist;
 				}
 				tri++;
 			}
 		}
+
+		// [Darkcrafter07]: Lock down the exact visual height delta payload per MD2 animation frame step
+		for (int f = 0; f < info.numFrames; f++)
+		{
+			float heightDelta = maxBoundsPerFrame[f] - minBoundsPerFrame[f];
+			if (heightDelta < 0.0f) heightDelta = 0.0f;
+			this->trueVisualHeights[f] = heightDelta;
+		}
+
 		vbuf->UnlockVertexBuffer();
 		UnloadGeometry();
 	}

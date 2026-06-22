@@ -869,6 +869,28 @@ void GLDrawList::DrawWalls(int pass)
 	RenderWall.Unclock();
 }
 
+void GLDrawList::DrawWalls2x(int pass1, int pass2)
+{
+	RenderWall.Clock();
+	for (unsigned i = 0; i < drawitems.Size(); i++)
+	{
+		GLWall* wall = &walls[drawitems[i].index];
+
+		// 1. Draw regular dynlights
+		wall->Draw(pass1);
+
+		// 2. Draw overbright dynlights
+		wall->Draw(pass2);
+
+		// Symmetrical state reset after each wall:
+		// Return the pipeline in additive mode which pass 1 expects to see it on i+1 iteration
+		glBlendFunc(GL_ONE, GL_ONE);
+		glDepthFunc(GL_EQUAL);
+		glDepthMask(GL_FALSE);
+	}
+	RenderWall.Unclock();
+}
+
 //==========================================================================
 //
 //
@@ -880,6 +902,28 @@ void GLDrawList::DrawFlats(int pass)
 	for(unsigned i=0;i<drawitems.Size();i++)
 	{
 		flats[drawitems[i].index].Draw(pass, false);
+	}
+	RenderFlat.Unclock();
+}
+
+void GLDrawList::DrawFlats2x(int pass1, int pass2)
+{
+	RenderFlat.Clock();
+	for (unsigned i = 0; i < drawitems.Size(); i++)
+	{
+		GLFlat* flat = &flats[drawitems[i].index];
+
+		// 1. Draw regular dynlights
+		flat->Draw(pass1, false);
+
+		// 2. Draw overbright dynlights
+		flat->Draw(pass2, false);
+
+		// Symmetrical state reset after each wall:
+		// Return the pipeline in additive mode which pass 1 expects to see it on i+1 iteration
+		glBlendFunc(GL_ONE, GL_ONE);
+		glDepthFunc(GL_EQUAL);
+		glDepthMask(GL_FALSE);
 	}
 	RenderFlat.Unclock();
 }
