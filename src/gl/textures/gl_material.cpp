@@ -205,8 +205,36 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 
 	int exx = bExpandFlag && createexpanded;
 
-	W = w = tex->GetWidth() + 2 * exx;
-	H = h = tex->GetHeight() + 2 * exx;
+	// ==============================================================================
+	// DARKCRAFTER07: LEGACY HIGH-RES BRIGHTMAP BUFFER SYNCHRONIZATION
+	// ==============================================================================
+	// If we are in legacy mode and processing a brightmap layer that belongs to a
+	// high-resolution pack texture replacement, we must enforce the master buffer
+	// allocation size (W, H) to match the parent HD dimensions. This completely
+	// eliminates memory corruption loops inside CopyTrueColorPixels().
+	bool isVirtualHiResBrightmap = false;
+	int parentW = 0, parentH = 0;
+
+	if (gl.legacyMode && (tex->gl_info.ParentTexture != nullptr))
+	{
+		parentW = tex->gl_info.ParentTexture->GetWidth();
+		parentH = tex->gl_info.ParentTexture->GetHeight();
+
+		// If parent texture dimensions are significantly larger, a hi-res pack is active
+		if (parentW > tex->GetWidth() || parentH > tex->GetHeight())
+		{
+			isVirtualHiResBrightmap = true;
+			W = w = parentW + 2 * exx;
+			H = h = parentH + 2 * exx;
+		}
+	}
+
+	// Standard fallback for low-res assets or if sizes already match
+	if (!isVirtualHiResBrightmap)
+	{
+		W = w = tex->GetWidth() + 2 * exx;
+		H = h = tex->GetHeight() + 2 * exx;
+	}
 
 	buffer = new unsigned char[W*(H + 1) * 4];
 	memset(buffer, 0, W * (H + 1) * 4);
@@ -215,9 +243,46 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 
 	if (translation <= 0 || alphatrans)
 	{
-		int trans = tex->CopyTrueColorPixels(&bmp, exx, exx);
-		tex->CheckTrans(buffer, W*H, trans);
-		isTransparent = tex->gl_info.mIsTransparent;
+		if (isVirtualHiResBrightmap)
+		{
+			// Secure the original tiny low-res brightmap mask source data
+			int lowW = tex->GetWidth();
+			int lowH = tex->GetHeight();
+			unsigned char *lowResSrc = new unsigned char[lowW * lowH * 4];
+			memset(lowResSrc, 0, lowW * lowH * 4);
+			FBitmap lowResBmp(lowResSrc, lowW * 4, lowW, lowH);
+			tex->CopyTrueColorPixels(&lowResBmp, 0, 0);
+
+			// Nearest-neighbor high-fidelity software upscale interpolation
+			for (int y = 0; y < H; y++)
+			{
+				for (int x = 0; x < W; x++)
+				{
+					int srcX = (x * lowW) / W;
+					int srcY = (y * lowH) / H;
+					if (srcX >= lowW) srcX = lowW - 1;
+					if (srcY >= lowH) srcY = lowH - 1;
+
+					int destIdx = 4 * (y * W + x);
+					int srcIdx = 4 * (srcY * lowW + srcX);
+
+					buffer[destIdx] = lowResSrc[srcIdx];
+					buffer[destIdx + 1] = lowResSrc[srcIdx + 1];
+					buffer[destIdx + 2] = lowResSrc[srcIdx + 2];
+					buffer[destIdx + 3] = lowResSrc[srcIdx + 3];
+				}
+			}
+			delete[] lowResSrc;
+			isTransparent = tex->gl_info.mIsTransparent;
+		}
+		else
+		{
+			// Standard texture streaming path
+			int trans = tex->CopyTrueColorPixels(&bmp, exx, exx);
+			tex->CheckTrans(buffer, W*H, trans);
+			isTransparent = tex->gl_info.mIsTransparent;
+		}
+
 		if (bIsTransparent == -1) bIsTransparent = isTransparent;
 
 		// --- Darkcrafter07
@@ -225,13 +290,24 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 		// --- so colorize them and cut them according to base texture transparency
 		if (gl.legacyMode && (tex->gl_info.ParentTexture != nullptr))
 		{
-			// 1. Create a temp buffer for parent (base) texture
+			// 1. Create a temp buffer for parent (base) texture matching the current layout bounds
 			unsigned char * parentBuf = new unsigned char[W * (H + 1) * 4];
 			memset(parentBuf, 0, W * (H + 1) * 4);
 			FBitmap parentBmp(parentBuf, W * 4, W, H);
 
-			// 2. Copy parent pixels to temp buffer
-			tex->gl_info.ParentTexture->CopyTrueColorPixels(&parentBmp, exx, exx);
+			// HRP textures initialized via script scaling metrics require pure unshifted 
+			// pixel mapping. By forcing '0, 0' offset bounds instead of passing 'exx' filters,
+			// the high-res diffuse texture aligns perfectly with the upscaled brightmap mask.
+			if (isVirtualHiResBrightmap)
+			{
+				// Read true pixels directly from the verified parent texture structure
+				tex->gl_info.ParentTexture->CopyTrueColorPixels(&parentBmp, 0, 0);
+			}
+			else
+			{
+				// Baseline fallback path for standard unscaled vanilla assets
+				tex->gl_info.ParentTexture->CopyTrueColorPixels(&parentBmp, exx, exx);
+			}
 
 			// 3. Process pixels: Colorize, Desaturate and Cut by Parent Alpha
 			for (int i = 0; i < W * H; i++)
@@ -239,7 +315,6 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 				int idx = 4 * i;
 
 				// Hard-cut: If parent pixel is fully transparent, make brightmap pixel black and transparent
-				// Using a small threshold (e.g., 0) to determine visibility
 				if (parentBuf[idx + 3] == 0)
 				{
 					buffer[idx] = 0; // R
