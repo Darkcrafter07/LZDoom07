@@ -490,7 +490,8 @@ enum
 	MDL_USEROTATIONCENTER			= 512,
 	MDL_NOPERPIXELLIGHTING			= 1024, // forces a model to not use per-pixel lighting. useful for voxel-converted-to-model objects.
 	MDL_MESHCOLLISION               = 2048, // [Darkcrafter07] enable 3D mesh collision
-	MDL_USEGL1VOLUMEDYNLIGHT        = 4096, // [Darkcrafter07] enable volumetric dynamic light on 3D models in GL1x/GL2x legacy mode
+	MDL_USETRUEVISLIGHTBOUNDS       = 4096, // [Darkcrafter07] extracts true radius, height mul by modeldef and then editor thing scale
+	MDL_USEGL1VOLUMEDYNLIGHT        = 8192, // [Darkcrafter07] enable volumetric dynamic light on 3D models in GL1x/GL2x legacy mode
 };
 
 struct FSpriteModelFrame

@@ -754,6 +754,10 @@ static void ParseModelDefLump(int Lump)
 				{
 					smf.flags |= MDL_NOINTERPOLATION;
 				}
+				else if (sc.Compare("usetruevislightbounds"))
+				{
+				smf.flags |= MDL_USETRUEVISLIGHTBOUNDS;
+				}
 				else if (sc.Compare("usegl1volumedynlight"))
 				{
 				smf.flags |= MDL_USEGL1VOLUMEDYNLIGHT;

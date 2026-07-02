@@ -47,9 +47,6 @@
 #include "gl/textures/gl_material.h"
 #include "gl/dynlights/gl_lightbuffer.h"
 
-#include "r_data/models/models_ue1.h"
-#include "r_data/models/models_obj.h"
-
 FDynLightData modellightdata;
 int modellightindex = -1;
 
@@ -361,14 +358,14 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
 	}
 	lastSeenEngineTime = level.time;
 
-	// Resolve cache slot
+	// Resolve the cache slot
 	uint32_t baseIdx = ((uint32_t)(size_t)currentActor >> 4) % UNIFIED_LIGHT_CACHE_SIZE;
 	int targetSlot = -1;
 	for (uint32_t step = 0; step < 4; ++step)
 	{
 		uint32_t checkIdx = (baseIdx + step) % UNIFIED_LIGHT_CACHE_SIZE;
 		if (g_ActorUnifiedCache[checkIdx].actorPtr == currentActor) { targetSlot = checkIdx; break; }
-		if (g_ActorUnifiedCache[checkIdx].actorPtr == nullptr || (level.time - g_ActorUnifiedCache[checkIdx].lastCachedTime) >= 5)
+		if (g_ActorUnifiedCache[checkIdx].actorPtr == nullptr || (level.time - g_ActorUnifiedCache[checkIdx].lastCachedTime) >= 2)
 		{
 			if (targetSlot == -1) targetSlot = checkIdx;
 		}
@@ -376,20 +373,16 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
 	if (targetSlot == -1) targetSlot = baseIdx;
 	FActorUnifiedCacheEntry& cache = g_ActorUnifiedCache[targetSlot];
 
-	bool hasMoved = (cache.actorPtr == currentActor) &&
-		         (cache.cachedX != currentActor->X() ||
-			      cache.cachedY != currentActor->Y() ||
-			       cache.cachedZ != currentActor->Z());
+	// Check model movement with a minimal tolerance
+	//bool hasMoved = (cache.actorPtr == currentActor) &&
+	//	(std::fabs(cache.cachedX - currentActor->X()) > 0.01 ||
+	//		std::fabs(cache.cachedY - currentActor->Y()) > 0.01 ||
+	//		std::fabs(cache.cachedZ - currentActor->Z()) > 0.01);
 
-	// C-style tick hibernation gate for massive rocks models
-	int requiredSleepTics = 0;
-	if (cache.maxRadiusFound < 2048.0f)       requiredSleepTics = 1;
-	else if (cache.maxRadiusFound < 8192.0f)  requiredSleepTics = 2;
-	else if (cache.maxRadiusFound < 16000.0f) requiredSleepTics = 4;
-	else                                      requiredSleepTics = 8; // Mega-dynlights to sleep for 8 tics
-
-	// LONG CACHE HIT FOR HUGE ROCKS: If the mountain hasn't moved, get dynlight snapshot from memory
-	if (cache.actorPtr == currentActor && !hasMoved && (level.time - cache.lastCachedTime) < requiredSleepTics && cache.lastCachedTime != -1)
+	// Immediate return (CACHE HIT): If we're inside the same tick or model didn't move
+	// give data from the memory WITHOUT calling heavy BSPWalkCircle
+	//if (cache.actorPtr == currentActor && !hasMoved && cache.lastCachedTime == level.time && cache.lastCachedTime != -1)
+	if (cache.actorPtr == currentActor && cache.lastCachedTime == level.time && cache.lastCachedTime != -1)
 	{
 		if (gl.lightmethod == LM_LEGACY)
 		{
@@ -401,25 +394,22 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
 		}
 		else
 		{
-			if (GLModelLightContext::modernDataPtr)
-			{
-				GLModelLightContext::modernDataPtr->Clear();
-				GLModelLightContext::modernDataPtr->arrays[0] = cache.arrays[0];
-				GLModelLightContext::modernDataPtr->arrays[1] = cache.arrays[1];
-				GLModelLightContext::modernDataPtr->arrays[2] = cache.arrays[2];
-			}
+			modellightdata.Clear(); // Flicker fix: instead of copying the pointers, fill the arays from the scratch hardcore way
+			for (unsigned int i = 0; i < cache.arrays[0].Size(); ++i) modellightdata.arrays[0].Push(cache.arrays[0][i]);
+			for (unsigned int i = 0; i < cache.arrays[1].Size(); ++i) modellightdata.arrays[1].Push(cache.arrays[1][i]);
+			for (unsigned int i = 0; i < cache.arrays[2].Size(); ++i) modellightdata.arrays[2].Push(cache.arrays[2][i]);
 		}
-		return; // Huge rock drawn for 0 CPU cycles without BSP traversal
+		return; // A frame from the memory was drawn and didn't hog the CPU much
 	}
 
-	// Huge rock CACHE-MISS: traverse faithful BSP nodes once per few tics
+	// CACHE MISS: The new tick has begun
 	if (gl.lightmethod == LM_LEGACY)
 	{
 		g_legacyModelLights.Clear(); g_legacyLightActive = false;
 	}
 	else
 	{
-		if (GLModelLightContext::modernDataPtr) GLModelLightContext::modernDataPtr->Clear();
+		modellightdata.Clear(); // Clear the working buffer before gathering dynlights again
 	}
 
 	// Call original BSPWalkCircle strictly for that huge rock!
@@ -452,17 +442,25 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
 			if (pureLightRadius > largestRadiusThisFrame) largestRadiusThisFrame = pureLightRadius;
 		}
 	}
-	else
-	{
-		if (GLModelLightContext::modernDataPtr)
-		{
-			cache.arrays[0] = GLModelLightContext::modernDataPtr->arrays[0];
-			cache.arrays[1] = GLModelLightContext::modernDataPtr->arrays[1];
-			cache.arrays[2] = GLModelLightContext::modernDataPtr->arrays[2];
-		}
-		largestRadiusThisFrame = (searchRadius > 512.0f) ? (searchRadius - 512.0f) : searchRadius;
-	}
-	cache.maxRadiusFound = largestRadiusThisFrame;
+    else
+    {
+		// Create a deep snapshot of filled arrays right in the cache
+        cache.arrays[0].Clear(); cache.arrays[1].Clear(); cache.arrays[2].Clear();
+
+        for (unsigned int i = 0; i < modellightdata.arrays[0].Size(); ++i) cache.arrays[0].Push(modellightdata.arrays[0][i]);
+        for (unsigned int i = 0; i < modellightdata.arrays[1].Size(); ++i) cache.arrays[1].Push(modellightdata.arrays[1][i]);
+        for (unsigned int i = 0; i < modellightdata.arrays[2].Size(); ++i) cache.arrays[2].Push(modellightdata.arrays[2][i]);
+
+        largestRadiusThisFrame = (searchRadius > 512.0f) ? (searchRadius - 512.0f) : searchRadius;
+    }
+    
+	// Capture state for the current game tick
+    cache.maxRadiusFound = largestRadiusThisFrame;
+    cache.actorPtr = currentActor;
+    cache.lastCachedTime = level.time;
+    cache.cachedX = currentActor->X(); 
+    cache.cachedY = currentActor->Y(); 
+    cache.cachedZ = currentActor->Z();
 }
 
 // ---------------------   DYNAMIC LIGHT OCCLUSION CACHED - FINISH   --------------------------
@@ -484,8 +482,9 @@ void isActorVisibToDynlightMainWrapper(float x, float y, float radius, const Cal
 void* g_CurrentRenderingActorPtr = nullptr; // no need to add "AActor *actor" in RenderFrame
 extern bool g_currentModelIsWeldedSolid;
 extern bool isUsingVolumetric3DModelLegacyDynlight;
-int gl_SetDynModelLightVolumetricHuge(AActor *self, int dynlightindex) // old name: "gl_SetDynModelLight"
+int gl_SetDynModelLightTrueVisBounds(AActor *self, int dynlightindex) // old name: "gl_SetDynModelLight"
 {
+	g_CurrentRenderingActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
 	isUsingVolumetric3DModelLegacyDynlight = false;
 
 	if (gl.lightmethod == LM_DEFERRED && dynlightindex != -1)
@@ -495,7 +494,38 @@ int gl_SetDynModelLightVolumetricHuge(AActor *self, int dynlightindex) // old na
 		return dynlightindex;
 	}
 
-	g_CurrentRenderingActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
+	float modelX = (float)self->X(); float modelY = (float)self->Y();
+
+	FSpriteModelFrame *smf = FindModelFrame(self->GetClass(), self->sprite, self->frame, false);
+	float finalScaleX = (float)self->Scale.X; float finalScaleZ = (float)self->Scale.Y;
+	if (smf != nullptr) { finalScaleX *= smf->xscale; finalScaleZ *= smf->zscale; }
+	if (finalScaleX <= 0.0f) finalScaleX = 1.0f; if (finalScaleZ <= 0.0f) finalScaleZ = 1.0f;
+	float modelFloorZ = (float)self->Z() + (float)self->GetBobOffset() + (float)self->SpriteOffset.Y;
+
+	float trueVisualHeight = 0.0f; float trueVisualRadius = 0.0f;
+	if (smf != nullptr && smf->modelIDs[0] != -1)
+	{
+		FModel *baseMdl = Models[smf->modelIDs[0]];
+		int currentFrameNo = smf->modelframes[0];
+		if (baseMdl != nullptr && currentFrameNo >= 0)
+		{
+			trueVisualHeight = baseMdl->GetTrueMDLVisualHeight(currentFrameNo, finalScaleZ);
+			trueVisualRadius = baseMdl->GetTrueMDLVisualRadius(currentFrameNo, finalScaleX);
+		}
+	}
+
+	if (trueVisualRadius <= 0.01f) trueVisualRadius = (float)self->RenderRadius() * (float)self->Scale.X;
+
+	if (trueVisualHeight <= 0.0f)
+	{
+		trueVisualHeight = (float)self->Height * finalScaleZ;
+		if (trueVisualHeight <= 2.0f) trueVisualHeight = trueVisualRadius * 2.0f;
+		trueVisualHeight /= 2.0f;
+	}
+
+	if (trueVisualHeight <= 0.1f) trueVisualHeight = 6.0f;
+
+	float modelTopZ = modelFloorZ + trueVisualHeight;
 
 	// ====================================================================================
 	// GL1x/GL2x LEGACY way with unified all-format virtual injection
@@ -520,39 +550,6 @@ int gl_SetDynModelLightVolumetricHuge(AActor *self, int dynlightindex) // old na
 			{
 				g_legacyModelSectorLight = self->Sector->lightlevel;
 			}
-
-			float modelX = (float)self->X(); float modelY = (float)self->Y();
-
-			FSpriteModelFrame *smf = FindModelFrame(self->GetClass(), self->sprite, self->frame, false);
-			float finalScaleX = (float)self->Scale.X; float finalScaleZ = (float)self->Scale.Y;
-			if (smf != nullptr) { finalScaleX *= smf->xscale; finalScaleZ *= smf->zscale; }
-			if (finalScaleX <= 0.0f) finalScaleX = 1.0f; if (finalScaleZ <= 0.0f) finalScaleZ = 1.0f;
-			float modelFloorZ = (float)self->Z() + (float)self->GetBobOffset() + (float)self->SpriteOffset.Y;
-
-			float trueVisualHeight = 0.0f; float trueVisualRadius = 0.0f;
-			if (smf != nullptr && smf->modelIDs[0] != -1)
-			{
-				FModel *baseMdl = Models[smf->modelIDs[0]];
-				int currentFrameNo = smf->modelframes[0];
-				if (baseMdl != nullptr && currentFrameNo >= 0)
-				{
-					trueVisualHeight = baseMdl->GetTrueMDLVisualHeight(currentFrameNo, finalScaleZ);
-					trueVisualRadius = baseMdl->GetTrueMDLVisualRadius(currentFrameNo, finalScaleX);
-				}
-			}
-
-			if (trueVisualRadius <= 0.01f) trueVisualRadius = (float)self->RenderRadius() * (float)self->Scale.X;
-
-			if (trueVisualHeight <= 0.0f)
-			{
-				trueVisualHeight = (float)self->Height * finalScaleZ;
-				if (trueVisualHeight <= 2.0f) trueVisualHeight = trueVisualRadius * 2.0f;
-				trueVisualHeight /= 2.0f;
-			}
-
-			if (trueVisualHeight <= 0.1f) trueVisualHeight = 6.0f;
-
-			float modelTopZ = modelFloorZ + trueVisualHeight;
 
 			// 5X HYPER-SCALE GEOMETRIC MULTIPLIER UNLOCKER!
 			// Since the small tank is 5x smaller visually, its surface area drops by 25x!
@@ -691,8 +688,7 @@ int gl_SetDynModelLightVolumetricHuge(AActor *self, int dynlightindex) // old na
 											finalInteractionRadius *= radiusExpansionFactor;
 										}
 
-										// Pack parameters straight into your global Gouraud structure array pool
-										FLegacyModelLightCache item;
+										FLegacyModelLightCache item; // Pack parameters in the global structure array pool
 										item.x = (float)reldynlightpos.X; item.z = (float)reldynlightpos.Z; item.y = (float)reldynlightpos.Y;
 										item.trueX = (float)absdynlightpos.X; item.trueZ = (float)absdynlightpos.Z; item.trueY = (float)absdynlightpos.Y;
 										item.radius = finalInteractionRadius; item.r = r; item.g = g; item.b = b;
@@ -727,42 +723,10 @@ int gl_SetDynModelLightVolumetricHuge(AActor *self, int dynlightindex) // old na
 		// ====================================================================================
 		// GL3+ MODERN shader based path with unified all-format virtual injection
 		// ====================================================================================
+
 		modellightdata.Clear();
 		if (self)
 		{
-			float modelX = (float)self->X(); float modelY = (float)self->Y();
-
-			FSpriteModelFrame *smf = FindModelFrame(self->GetClass(), self->sprite, self->frame, false);
-			float finalScaleX = (float)self->Scale.X;
-			float finalScaleZ = (float)self->Scale.Y;
-			if (smf != nullptr)
-			{ finalScaleX *= smf->xscale; finalScaleZ *= smf->zscale; }
-			if (finalScaleX <= 0.0f) finalScaleX = 1.0f; if (finalScaleZ <= 0.0f) finalScaleZ = 1.0f;
-			float modelFloorZ = (float)self->Z() + (float)self->GetBobOffset() + (float)self->SpriteOffset.Y;
-
-			// Extract frame-perfect unscaled height computed straight from the 3D vertex mesh constraints
-			float trueVisualHeight = 0.0f; float trueVisualRadius = 0.0f;
-			if (smf != nullptr && smf->modelIDs[0] != -1)
-			{
-				FModel *baseMdl = Models[smf->modelIDs[0]];
-				int currentFrameNo = smf->modelframes[0];
-
-				if (baseMdl != nullptr && currentFrameNo >= 0)
-				{
-					trueVisualHeight = baseMdl->GetTrueMDLVisualHeight(currentFrameNo, finalScaleZ);
-					trueVisualRadius = baseMdl->GetTrueMDLVisualRadius(currentFrameNo, finalScaleX);
-				}
-			}
-
-			if (trueVisualRadius <= 0.01f) trueVisualRadius = (float)self->RenderRadius() * (float)self->Scale.X;
-			if (trueVisualHeight <= 0.0f)
-			{
-				trueVisualHeight = (float)self->Height * finalScaleZ;
-				if (trueVisualHeight <= 2.0f) trueVisualHeight = trueVisualRadius * 2.0f;
-			}
-
-			if (trueVisualHeight <= 0.1f) trueVisualHeight = 6.0f; // Sync flat mesh clip envelope to 6.0 units
-
 			float modelTopZ = modelFloorZ + trueVisualHeight;
 			float searchRadius = trueVisualRadius + 512.0f;
 
@@ -829,8 +793,10 @@ int gl_SetDynModelLightVolumetricHuge(AActor *self, int dynlightindex) // old na
 
 
 // Original function we use on models if usegl1volumedynlight flag is not set for the actor modeldef
-int gl_SetDynModelLightFlat(AActor *self, int dynlightindex)
+int gl_SetDynModelLightSimpleVisBounds(AActor *self, int dynlightindex)
 {
+	g_CurrentRenderingActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
+
 	// For deferred light mode this function gets called twice. First time for list upload, and second for draw.
 	if (gl.lightmethod == LM_DEFERRED && dynlightindex != -1)
 	{
@@ -838,8 +804,6 @@ int gl_SetDynModelLightFlat(AActor *self, int dynlightindex)
 		modellightindex = dynlightindex;
 		return dynlightindex;
 	}
-
-	g_CurrentRenderingActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
 
 	// Legacy render path gets the old flat model light
 	if (gl.lightmethod == LM_LEGACY)
@@ -905,36 +869,17 @@ int gl_SetDynModelLightFlat(AActor *self, int dynlightindex)
 
 int gl_SetDynModelLight(AActor *self, int dynlightindex) // main wrapper function to call
 {
-	// High-speed legacy render path router
-	if (gl.lightmethod == LM_LEGACY && self != nullptr)
-	{
-		// Fetch the active frame model property without layout overhead
-		FSpriteModelFrame *smf = FindModelFrame(self->GetClass(), self->sprite, self->frame, false);
-		bool usegl1volumedynlight = (smf != nullptr && (smf->flags & MDL_USEGL1VOLUMEDYNLIGHT) != 0);
+	FSpriteModelFrame *smf = FindModelFrame(self->GetClass(), self->sprite, self->frame, false);
+	bool usetruevislightbounds = (smf != nullptr && (smf->flags & MDL_USETRUEVISLIGHTBOUNDS) != 0);
 
-		// If explicit flag is present or the core architecture marks mesh topology as solid
-		if (usegl1volumedynlight)
-		{
-			// Volumetric dynamic light on 3D models
-			return gl_SetDynModelLightVolumetricHuge(self, dynlightindex);
-		}
-		else
-		{
-			// Flat geometry for which "usegl1volumedynlight" modeldef flag isn't set
-			return gl_SetDynModelLightFlat(self, dynlightindex);
-		}
-	}
-
-	// Modern GL3+ core layout strategy fallback
-	modellightdata.Clear();
-	dynlightindex = GLRenderer->mLights->UploadLights(modellightdata);
-	if (gl.lightmethod != LM_DEFERRED)
+	if (usetruevislightbounds)
 	{
-		gl_RenderState.SetDynLight(0, 0, 0);
-		modellightindex = dynlightindex;
-		return dynlightindex;
+		return gl_SetDynModelLightTrueVisBounds(self, dynlightindex);
 	}
-	return dynlightindex;
+	else
+	{
+		return gl_SetDynModelLightSimpleVisBounds(self, dynlightindex);
+	}
 }
 
 
