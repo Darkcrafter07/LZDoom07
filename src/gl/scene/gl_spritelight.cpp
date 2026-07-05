@@ -180,13 +180,13 @@ bool g_legacyLightActive;
 
 // Global pool trackers visible across gl_models.cpp and gl_spritelight.cpp
 int g_legacyModelSectorLight; // Caches the actor's real-time sector lightlevel
-TArray<FLegacyModelLightCache> g_legacyModelLights; // Holds ALL active lights affecting current model
+TArray<FLegacyDynlight3DmdlCache> g_legacyModelLights; // Holds ALL active lights affecting current model
 
 template<typename Callback>
-void isActorVisibToDynlightRegularWrapper(float x, float y, float radius, const Callback &callback)
+void is3DmdlActorVisibToDynlightRegularWrapper(float x, float y, float radius, const Callback &callback)
 {
 	// Extract the runtime memory address of the currently processed actor mesh
-	AActor* self = (AActor*)g_CurrentRenderingActorPtr;
+	AActor* self = (AActor*)g_CurrentRendering3dmdlActorPtr;
 
 	// Fail-safe hardware fallback: if the actor context is lost, preserve the thread pipeline
 	if (!self || !self->subsector)
@@ -238,10 +238,9 @@ void isActorVisibToDynlightRegularWrapper(float x, float y, float radius, const 
 
 
 // --------------------------------------------------------------------------------------------
-// ---------------------   DYNAMIC LIGHT OCCLUSION CACHED - START   ---------------------------
+// ------------------  3D MDL DYNAMIC LIGHT OCCLUSION CACHED - START   ------------------------
 
-#define UNIFIED_LIGHT_CACHE_SIZE 4096
-FActorUnifiedCacheEntry g_ActorUnifiedCache[UNIFIED_LIGHT_CACHE_SIZE];
+F3DmdlDynlightUnifiedCacheEntry g_3DmdlDynlightActorUnifiedCache[UNIFIED_3DMDL_DYNLIGHT_CACHE_SIZE];
 
 struct GLModelLightContext
 {
@@ -264,12 +263,12 @@ float          GLModelLightContext::trueVisualRadius = 0.0f; // Initialize with 
 // Full unification in action! Small-to-medium objects (grass, tanks) are processed
 // via direct C-style fast path (175 FPS). Massive monolithic structures (rocks, cliffs)
 // fall back to the original BSP tree traversal but are safeguarded by the adaptive
-// FActorUnifiedCacheEntry with dormant tick optimization.
+// F3DmdlDynlightUnifiedCacheEntry with dormant tick optimization.
 // ====================================================================================
 template<typename Callback>
-void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searchRadius, const Callback &callback)
+void is3DmdlActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searchRadius, const Callback &callback)
 {
-	AActor* currentActor = (AActor*)g_CurrentRenderingActorPtr;
+	AActor* currentActor = (AActor*)g_CurrentRendering3dmdlActorPtr;
 	if (!currentActor || !currentActor->subsector)
 	{
 		if (level.subsectors.Size() > 0) callback(&level.subsectors[0]);
@@ -316,33 +315,33 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
 	static int lastSeenEngineTime = -1;
 	if (level.time < lastSeenEngineTime || level.time == 0)
 	{
-		for (int i = 0; i < UNIFIED_LIGHT_CACHE_SIZE; ++i)
+		for (int i = 0; i < UNIFIED_3DMDL_DYNLIGHT_CACHE_SIZE; ++i)
 		{
-			g_ActorUnifiedCache[i].actorPtr = nullptr;
-			g_ActorUnifiedCache[i].lastCachedTime = -1;
-			g_ActorUnifiedCache[i].legacyLights.Clear();
-			g_ActorUnifiedCache[i].maxRadiusFound = 0.0f; 
-			g_ActorUnifiedCache[i].arrays[0].Clear();
-			g_ActorUnifiedCache[i].arrays[1].Clear();
-			g_ActorUnifiedCache[i].arrays[2].Clear();
+			g_3DmdlDynlightActorUnifiedCache[i].actorPtr = nullptr;
+			g_3DmdlDynlightActorUnifiedCache[i].lastCachedTime = -1;
+			g_3DmdlDynlightActorUnifiedCache[i].legacyLights.Clear();
+			g_3DmdlDynlightActorUnifiedCache[i].maxRadiusFound = 0.0f; 
+			g_3DmdlDynlightActorUnifiedCache[i].arrays[0].Clear();
+			g_3DmdlDynlightActorUnifiedCache[i].arrays[1].Clear();
+			g_3DmdlDynlightActorUnifiedCache[i].arrays[2].Clear();
 		}
 	}
 	lastSeenEngineTime = level.time;
 
 	// Resolve the cache slot
-	uint32_t baseIdx = ((uint32_t)(size_t)currentActor >> 4) % UNIFIED_LIGHT_CACHE_SIZE;
+	uint32_t baseIdx = ((uint32_t)(size_t)currentActor >> 4) % UNIFIED_3DMDL_DYNLIGHT_CACHE_SIZE;
 	int targetSlot = -1;
 	for (uint32_t step = 0; step < 4; ++step)
 	{
-		uint32_t checkIdx = (baseIdx + step) % UNIFIED_LIGHT_CACHE_SIZE;
-		if (g_ActorUnifiedCache[checkIdx].actorPtr == currentActor) { targetSlot = checkIdx; break; }
-		if (g_ActorUnifiedCache[checkIdx].actorPtr == nullptr || (level.time - g_ActorUnifiedCache[checkIdx].lastCachedTime) >= 2)
+		uint32_t checkIdx = (baseIdx + step) % UNIFIED_3DMDL_DYNLIGHT_CACHE_SIZE;
+		if (g_3DmdlDynlightActorUnifiedCache[checkIdx].actorPtr == currentActor) { targetSlot = checkIdx; break; }
+		if (g_3DmdlDynlightActorUnifiedCache[checkIdx].actorPtr == nullptr || (level.time - g_3DmdlDynlightActorUnifiedCache[checkIdx].lastCachedTime) >= 2)
 		{
 			if (targetSlot == -1) targetSlot = checkIdx;
 		}
 	}
 	if (targetSlot == -1) targetSlot = baseIdx;
-	FActorUnifiedCacheEntry& cache = g_ActorUnifiedCache[targetSlot];
+	F3DmdlDynlightUnifiedCacheEntry& cache = g_3DmdlDynlightActorUnifiedCache[targetSlot];
 
 	// Immediate return (CACHE HIT): If we're inside the same tick
 	// give data from the memory WITHOUT calling heavy BSPWalkCircle
@@ -436,29 +435,29 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
     cache.cachedZ = currentActor->Z();
 }
 
-// ---------------------   DYNAMIC LIGHT OCCLUSION CACHED - FINISH   --------------------------
+// ------------------  3D MDL DYNAMIC LIGHT OCCLUSION CACHED - FINISH  ------------------------
 // --------------------------------------------------------------------------------------------
 
 
 
 template<typename Callback>
-void isActorVisibToDynlightMainWrapper(float x, float y, float radius, const Callback &callback)
+void is3DmdlActorVisibToDynlightMainWrapper(float x, float y, float radius, const Callback &callback)
 {
 	// Cached dynlight occlusion gives up to 10% FPS boost on big actors piercing through huge maps ...
 	// ... wait it could be whopping 50% in GL3x/GL4x modern path
-	if (gl_cachedynlightmdlocclusion) return isActorVisibToDynlightCachedWrapper(x, y, radius, callback);
+	if (gl_cachedynlightmdlocclusion) return is3DmdlActorVisibToDynlightCachedWrapper(x, y, radius, callback);
 	// ... but here is the simpler and perhaps more stable version, use this one if it starts flickering
-	else                              return isActorVisibToDynlightRegularWrapper(x, y, radius, callback);
+	else                              return is3DmdlActorVisibToDynlightRegularWrapper(x, y, radius, callback);
 }
 
 
 
-void* g_CurrentRenderingActorPtr = nullptr; // no need to add "AActor *actor" in RenderFrame
-extern bool g_currentModelIsWeldedSolid;
+void* g_CurrentRendering3dmdlActorPtr = nullptr; // no need to add "AActor *actor" in RenderFrame
+extern bool g_isCurrent3dMdlWeldedSolid;
 extern bool isUsingVolumetric3DModelLegacyDynlight;
-int gl_SetDynModelLightTrueVisBounds(AActor *self, int dynlightindex) // old name: "gl_SetDynModelLight"
+int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old name: "gl_SetDynModelLight"
 {
-	g_CurrentRenderingActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
+	g_CurrentRendering3dmdlActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
 	isUsingVolumetric3DModelLegacyDynlight = false;
 
 	if (gl.lightmethod == LM_DEFERRED && dynlightindex != -1)
@@ -548,7 +547,7 @@ int gl_SetDynModelLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 			addedLights.clear();
 
 			// Launch the unified multi-tiered adaptive throttling cache pass wrapper
-			isActorVisibToDynlightMainWrapper(modelX, modelY, searchRadius, [&](subsector_t *subsector)
+			is3DmdlActorVisibToDynlightMainWrapper(modelX, modelY, searchRadius, [&](subsector_t *subsector)
 			{
 				FLightNode * node = subsector->lighthead;
 				while (node)
@@ -662,7 +661,7 @@ int gl_SetDynModelLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 											finalInteractionRadius *= radiusExpansionFactor;
 										}
 
-										FLegacyModelLightCache item; // Pack parameters in the global structure array pool
+										FLegacyDynlight3DmdlCache item; // Pack parameters in the global structure array pool
 										item.relX = (float)reldynlightpos.X; item.relZ = (float)reldynlightpos.Z; item.relY = (float)reldynlightpos.Y;
 										item.absX = (float)absdynlightpos.X; item.absZ = (float)absdynlightpos.Z; item.absY = (float)absdynlightpos.Y;
 										item.radius = finalInteractionRadius; item.r = r; item.g = g; item.b = b;
@@ -707,7 +706,7 @@ int gl_SetDynModelLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 			static std::vector<FDynamicLight*> addedLights;
 			addedLights.clear();
 
-			isActorVisibToDynlightMainWrapper(modelX, modelY, searchRadius, [&](subsector_t *subsector)
+			is3DmdlActorVisibToDynlightMainWrapper(modelX, modelY, searchRadius, [&](subsector_t *subsector)
 			{
 				FLightNode * node = subsector->lighthead;
 				while (node)
@@ -767,9 +766,9 @@ int gl_SetDynModelLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 
 
 // Original function we use on models if usetruevislightbounds flag is not set for the actor modeldef
-int gl_SetDynModelLightSimpleVisBounds(AActor *self, int dynlightindex)
+int gl_Set3DmdlDynLightSimpleVisBounds(AActor *self, int dynlightindex)
 {
-	g_CurrentRenderingActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
+	g_CurrentRendering3dmdlActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
 
 	// Call the func twice for deffered way. 1st time to upload the list, 2nd - to draw.
 	if (gl.lightmethod == LM_DEFERRED && dynlightindex != -1)
@@ -800,7 +799,7 @@ int gl_SetDynModelLightSimpleVisBounds(AActor *self, int dynlightindex)
 		float radiusSquared = actorradius * actorradius;
 
 		// Iterate through all subsectors potentially touched by actor
-		isActorVisibToDynlightMainWrapper(x, y, radiusSquared, [&](subsector_t *subsector)
+		is3DmdlActorVisibToDynlightMainWrapper(x, y, radiusSquared, [&](subsector_t *subsector)
 		{
 			FLightNode * node = subsector->lighthead;
 			while (node) // check all lights touching a subsector
@@ -847,18 +846,18 @@ int gl_SetDynModelLight(AActor *self, int dynlightindex) // main wrapper functio
 
 	if (usetruevislightbounds)
 	{
-		return gl_SetDynModelLightTrueVisBounds(self, dynlightindex);
+		return gl_Set3DmdlDynLightTrueVisBounds(self, dynlightindex);
 	}
 	else
 	{
-		return gl_SetDynModelLightSimpleVisBounds(self, dynlightindex);
+		return gl_Set3DmdlDynLightSimpleVisBounds(self, dynlightindex);
 	}
 }
 
 
 //                           -----------------------
 //     -------------=========================================------------------------------
-// ================   DYNAMIC LIGHT 3D-MODEL OCCLUSION START   =================================
+// ================   DYNAMIC LIGHT 3D-MODEL OCCLUSION FINISH   =================================
 //     -------------=========================================------------------------------
 //                           -----------------------
 

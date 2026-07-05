@@ -20,10 +20,11 @@
 //--------------------------------------------------------------------------
 //
 
+// gl_dynlightcache.h
+
 #pragma once
 
-// All structs are declared in gl_spritelight.cpp
-struct FLegacyModelLightCache
+struct FLegacyDynlight3DmdlCache
 {
 	float absX, absY, absZ; // Absolute world dynlight coordinates
 	float relX, relY, relZ; // Relative position of the dynamic light source
@@ -31,31 +32,31 @@ struct FLegacyModelLightCache
 	float r, g, b;      // Evaluated intensity color channels of the flare
 };
 
-struct FActorUnifiedCacheEntry
+struct F3DmdlDynlightUnifiedCacheEntry
 {
 	AActor* actorPtr;
 	int lastCachedTime;
 	int cachedBufferIndexModernGL;
-	double cachedX, cachedY, cachedZ;
+	float cachedX, cachedY, cachedZ;
 	float maxRadiusFound; // Stores evaluated clean physical radius of the largest light
 
 	// Legacy path cached outputs
-	TArray<FLegacyModelLightCache> legacyLights;
+	TArray<FLegacyDynlight3DmdlCache> legacyLights;
 	bool legacyActive;
 	float outR, outG, outB;
 
 	TArray<float> arrays[3]; // Modern GL3+ path deep-copy storage
 
-	FActorUnifiedCacheEntry() : actorPtr(nullptr), lastCachedTime(-1),
+	F3DmdlDynlightUnifiedCacheEntry() : actorPtr(nullptr), lastCachedTime(-1),
 		                        cachedX(0), cachedY(0), cachedZ(0), 
 		                       maxRadiusFound(0.0f), legacyActive(false), 
 		                                     outR(0), outG(0), outB(0) {}
-	~FActorUnifiedCacheEntry()
+	~F3DmdlDynlightUnifiedCacheEntry()
 	{
 		legacyLights.Clear();
 		arrays[0].Clear(); arrays[1].Clear(); arrays[2].Clear();
 	}
 };
 
-#define UNIFIED_LIGHT_CACHE_SIZE 4096
-extern FActorUnifiedCacheEntry g_ActorUnifiedCache[UNIFIED_LIGHT_CACHE_SIZE];
+#define UNIFIED_3DMDL_DYNLIGHT_CACHE_SIZE 4096
+extern F3DmdlDynlightUnifiedCacheEntry g_3DmdlDynlightActorUnifiedCache[UNIFIED_3DMDL_DYNLIGHT_CACHE_SIZE];

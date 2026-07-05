@@ -40,7 +40,7 @@
 
 #include "gl/dynlights/gl_dynlightcache.h"
 
-extern void* g_CurrentRenderingActorPtr;         // no need to add "AActor *actor" in RenderFrame
+extern void* g_CurrentRendering3dmdlActorPtr;         // no need to add "AActor *actor" in RenderFrame
 
 
 #define MAX_QPATH 64
@@ -377,9 +377,9 @@ void FMD3Model::LoadGeometry()
 extern int modellightindex;
 extern int g_legacyModelSectorLight;
 extern bool g_legacyLightActive;
-extern TArray<FLegacyModelLightCache> g_legacyModelLights;
+extern TArray<FLegacyDynlight3DmdlCache> g_legacyModelLights;
 bool isUsingVolumetric3DModelLegacyDynlight = false;  // for gl_20.cpp ApplyFixedFunction
-bool g_currentModelIsWeldedSolid = false;             // store current model computed topology weight
+bool g_isCurrent3dMdlWeldedSolid = false;             // store current model computed topology weight
 
 void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 {
@@ -516,7 +516,7 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 		}
 
 		// Save the final unified single-verdict token natively
-		g_currentModelIsWeldedSolid = modelContainsSharp3DCurvatureBends;
+		g_isCurrent3dMdlWeldedSolid = modelContainsSharp3DCurvatureBends;
 
 		for (unsigned i = 0; i < Surfaces.Size(); i++)
 		{
@@ -717,7 +717,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 
 		const float inv255 = 1.0f / 255.0f;
 		float baseColor = (float)g_legacyModelSectorLight * inv255;
-		AActor* actor = (AActor*)g_CurrentRenderingActorPtr; // no need to add "AActor *actor" in RenderFrame
+		AActor* actor = (AActor*)g_CurrentRendering3dmdlActorPtr; // no need to add "AActor *actor" in RenderFrame
 
 		if (!gl_lights) // Dynligths are off, clear array cache and shutdown surfaces
 		// needs to be done, otherwise actors won't kill volumen dynlight when turned off in menu
@@ -769,7 +769,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 			// ==============================================================================
 			// Evaluate condition: Only proceed with volumetric slicing if lights are active, 
 			// triangles exist, and the model topology is confirmed as welded/solid.
-			bool useSlicingLight = (gl_lights && g_legacyLightActive && g_currentModelIsWeldedSolid && 
+			bool useSlicingLight = (gl_lights && g_legacyLightActive && g_isCurrent3dMdlWeldedSolid && 
 				                    surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet && 
                                                                       g_legacyModelLights.Size() > 0);
 			if (useSlicingLight)
@@ -800,7 +800,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 
 				for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
 				{
-					FLegacyModelLightCache *light = &g_legacyModelLights[l];
+					FLegacyDynlight3DmdlCache *light = &g_legacyModelLights[l];
 					float dx = light->relX - (worldActorX * scaleNormalizeFactor);
 					float dy = light->relY - (worldActorY * scaleNormalizeFactor);
 					float dz = light->relZ - (worldActorCenterZ * scaleNormalizeFactor);
@@ -902,7 +902,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 
 						for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
 						{
-							FLegacyModelLightCache *light = &g_legacyModelLights[l];
+							FLegacyDynlight3DmdlCache *light = &g_legacyModelLights[l];
 							float liveDx = light->absX - actorX;
 							float liveDy = light->absY - actorY;
 							float liveDz = light->absZ - midHeightOffset;
@@ -1040,7 +1040,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					float sliceInjectR = 0.0f; float sliceInjectG = 0.0f; float sliceInjectB = 0.0f;
 					for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
 					{
-						FLegacyModelLightCache *light = &g_legacyModelLights(l);
+						FLegacyDynlight3DmdlCache *light = &g_legacyModelLights(l);
 						float dx = ((float)light->relX - sliceWorldX) * scaleNormalizeFactor;
 						float dy = ((float)light->relY - sliceWorldY) * scaleNormalizeFactor;
 						float dz = ((float)light->relZ - sliceWorldZ) * scaleNormalizeFactor;
