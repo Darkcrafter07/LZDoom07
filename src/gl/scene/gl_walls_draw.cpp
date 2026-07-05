@@ -594,7 +594,6 @@ void GLWall::Draw(int pass)
 					// --- SINGLE FAST PASS WITH DOUBLE INTENSITY ---
 					// We completely removed the second glBegin/glEnd pass loop!
 					// By multiplying intensity by 2.0f inside the first pass, we get the EXACT same
-					// blinding high-contrast overbright epicenter, but with 2X less draw calls on mega-maps!
 					glBegin(GL_QUADS);
 					for (int i = 0; i < 4; i++)
 					{
@@ -724,7 +723,7 @@ void GLWall::Draw(int pass)
 			glDepthMask(false);
 			// 3. Offset projection values slightly closer to camera viewpoint to eliminate shimmering.
 			glEnable(GL_POLYGON_OFFSET_FILL);
-			glPolygonOffset(-2.0f, -256.0f);
+			glPolygonOffset(-0.5f, -0.5f);
 
 			// Extract designated heights limits from index [3] of the verified float arrays.
 			float floorGlowHeight = bottomglow[3];
