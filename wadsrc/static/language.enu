@@ -2785,6 +2785,7 @@ GLTEXMNU_SORTDRAWLIST 	= "Sort draw lists by texture";
 // Dynamic Light Options
 GLLIGHTMNU_TITLE 	= "DYNAMIC LIGHTS";
 GLLIGHTMNU_LIGHTSENABLED 	= "Dynamic Lights (OpenGL)";
+GLLIGHTMNU_LIGHT3DMODELCACHE 	= "Cache 3D mdl light (FAST)";
 GLLIGHTMNU_LIGHTDEFS 	= "Enable light definitions";
 GLLIGHTMNU_CLIPLIGHTS 	= "Clip lights";
 GLLIGHTMNU_LIGHTSPRITES 	= "Lights affect sprites";

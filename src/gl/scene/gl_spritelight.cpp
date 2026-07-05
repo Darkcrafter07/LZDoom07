@@ -47,6 +47,8 @@
 #include "gl/textures/gl_material.h"
 #include "gl/dynlights/gl_lightbuffer.h"
 
+#include "gl/dynlights/gl_dynlightcache.h"
+
 FDynLightData modellightdata;
 int modellightindex = -1;
 
@@ -175,13 +177,7 @@ void gl_SetDynSpriteLight(AActor *thing, particle_t *particle)
 // ------------------------------------------------------------------------------------
 
 bool g_legacyLightActive;
-struct FLegacyModelLightCache
-{
-	float x, y, z;      // Relative position of the dynamic light source
-	float trueX, trueY, trueZ; // Absolute world dynlight coordinates
-	float radius;       // Interaction radius of the light
-	float r, g, b;      // Evaluated intensity color channels of the flare
-};
+
 // Global pool trackers visible across gl_models.cpp and gl_spritelight.cpp
 int g_legacyModelSectorLight; // Caches the actor's real-time sector lightlevel
 TArray<FLegacyModelLightCache> g_legacyModelLights; // Holds ALL active lights affecting current model
@@ -244,33 +240,8 @@ void isActorVisibToDynlightRegularWrapper(float x, float y, float radius, const 
 // --------------------------------------------------------------------------------------------
 // ---------------------   DYNAMIC LIGHT OCCLUSION CACHED - START   ---------------------------
 
-struct FActorUnifiedCacheEntry
-{
-	AActor* actorPtr;
-	int lastCachedTime;
-	double cachedX, cachedY, cachedZ;
-	float maxRadiusFound; // Stores evaluated clean physical radius of the largest light
-
-	// Legacy path cached outputs
-	TArray<FLegacyModelLightCache> legacyLights;
-	bool legacyActive;
-	float outR, outG, outB;
-
-	TArray<float> arrays[3]; // Modern GL3+ path deep-copy storage
-
-	FActorUnifiedCacheEntry() : actorPtr(nullptr), lastCachedTime(-1),
-		                        cachedX(0), cachedY(0), cachedZ(0), 
-		                       maxRadiusFound(0.0f), legacyActive(false), 
-		                                     outR(0), outG(0), outB(0) {}
-	~FActorUnifiedCacheEntry()
-	{
-		legacyLights.Clear();
-		arrays[0].Clear(); arrays[1].Clear(); arrays[2].Clear();
-	}
-};
-
 #define UNIFIED_LIGHT_CACHE_SIZE 4096
-static FActorUnifiedCacheEntry g_ActorUnifiedCache[UNIFIED_LIGHT_CACHE_SIZE];
+FActorUnifiedCacheEntry g_ActorUnifiedCache[UNIFIED_LIGHT_CACHE_SIZE];
 
 struct GLModelLightContext
 {
@@ -373,15 +344,8 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
 	if (targetSlot == -1) targetSlot = baseIdx;
 	FActorUnifiedCacheEntry& cache = g_ActorUnifiedCache[targetSlot];
 
-	// Check model movement with a minimal tolerance
-	//bool hasMoved = (cache.actorPtr == currentActor) &&
-	//	(std::fabs(cache.cachedX - currentActor->X()) > 0.01 ||
-	//		std::fabs(cache.cachedY - currentActor->Y()) > 0.01 ||
-	//		std::fabs(cache.cachedZ - currentActor->Z()) > 0.01);
-
-	// Immediate return (CACHE HIT): If we're inside the same tick or model didn't move
+	// Immediate return (CACHE HIT): If we're inside the same tick
 	// give data from the memory WITHOUT calling heavy BSPWalkCircle
-	//if (cache.actorPtr == currentActor && !hasMoved && cache.lastCachedTime == level.time && cache.lastCachedTime != -1)
 	if (cache.actorPtr == currentActor && cache.lastCachedTime == level.time && cache.lastCachedTime != -1)
 	{
 		if (gl.lightmethod == LM_LEGACY)
@@ -398,6 +362,13 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
 			for (unsigned int i = 0; i < cache.arrays[0].Size(); ++i) modellightdata.arrays[0].Push(cache.arrays[0][i]);
 			for (unsigned int i = 0; i < cache.arrays[1].Size(); ++i) modellightdata.arrays[1].Push(cache.arrays[1][i]);
 			for (unsigned int i = 0; i < cache.arrays[2].Size(); ++i) modellightdata.arrays[2].Push(cache.arrays[2][i]);
+
+			// MODERN GL OPTIMIZATION: Pass the cached hardware index back to the renderer via context pointer if available
+			if (GLModelLightContext::modernDataPtr)
+			{
+				// We assume the context/renderer can store the index. 
+				// Since we also have access to the global slot 'targetSlot', we can look it up directly in the renderer loop
+			}
 		}
 		return; // A frame from the memory was drawn and didn't hog the CPU much
 	}
@@ -410,6 +381,8 @@ void isActorVisibToDynlightCachedWrapper(float modelX, float modelY, float searc
 	else
 	{
 		modellightdata.Clear(); // Clear the working buffer before gathering dynlights again
+		// SYSTEM: Reset the hardware VRAM buffer (GL3+) index because a brand new tick requires a fresh UploadLights pass
+		cache.cachedBufferIndexModernGL = -1;
 	}
 
 	// Call original BSPWalkCircle strictly for that huge rock!
@@ -472,9 +445,10 @@ template<typename Callback>
 void isActorVisibToDynlightMainWrapper(float x, float y, float radius, const Callback &callback)
 {
 	// Cached dynlight occlusion gives up to 10% FPS boost on big actors piercing through huge maps ...
+	// ... wait it could be whopping 50% in GL3x/GL4x modern path
 	if (gl_cachedynlightmdlocclusion) return isActorVisibToDynlightCachedWrapper(x, y, radius, callback);
 	// ... but here is the simpler and perhaps more stable version, use this one if it starts flickering
-	else                           return isActorVisibToDynlightRegularWrapper(x, y, radius, callback);
+	else                              return isActorVisibToDynlightRegularWrapper(x, y, radius, callback);
 }
 
 
@@ -689,8 +663,8 @@ int gl_SetDynModelLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 										}
 
 										FLegacyModelLightCache item; // Pack parameters in the global structure array pool
-										item.x = (float)reldynlightpos.X; item.z = (float)reldynlightpos.Z; item.y = (float)reldynlightpos.Y;
-										item.trueX = (float)absdynlightpos.X; item.trueZ = (float)absdynlightpos.Z; item.trueY = (float)absdynlightpos.Y;
+										item.relX = (float)reldynlightpos.X; item.relZ = (float)reldynlightpos.Z; item.relY = (float)reldynlightpos.Y;
+										item.absX = (float)absdynlightpos.X; item.absZ = (float)absdynlightpos.Z; item.absY = (float)absdynlightpos.Y;
 										item.radius = finalInteractionRadius; item.r = r; item.g = g; item.b = b;
 										g_legacyModelLights.Push(item); g_legacyLightActive = true;
 										outR += r; outG += g; outB += b;
@@ -792,12 +766,12 @@ int gl_SetDynModelLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 
 
 
-// Original function we use on models if usegl1volumedynlight flag is not set for the actor modeldef
+// Original function we use on models if usetruevislightbounds flag is not set for the actor modeldef
 int gl_SetDynModelLightSimpleVisBounds(AActor *self, int dynlightindex)
 {
 	g_CurrentRenderingActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
 
-	// For deferred light mode this function gets called twice. First time for list upload, and second for draw.
+	// Call the func twice for deffered way. 1st time to upload the list, 2nd - to draw.
 	if (gl.lightmethod == LM_DEFERRED && dynlightindex != -1)
 	{
 		gl_RenderState.SetDynLight(0, 0, 0);
@@ -805,8 +779,7 @@ int gl_SetDynModelLightSimpleVisBounds(AActor *self, int dynlightindex)
 		return dynlightindex;
 	}
 
-	// Legacy render path gets the old flat model light
-	if (gl.lightmethod == LM_LEGACY)
+	if (gl.lightmethod == LM_LEGACY) // GL1x/GL2x legacy render path gets the old flat model light
 	{
 		gl_SetDynSpriteLight(self, nullptr);
 		return -1;

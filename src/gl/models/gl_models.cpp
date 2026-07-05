@@ -52,32 +52,11 @@
 #include "gl/renderer/gl_renderstate.h"
 #include "gl/shaders/gl_shader.h"
 
-// GL1x/GL2x legacy dynlight includes, externs and vars - START
 #include "gl/compatibility/gl_20.h"
 #include "gl/dynlights/gl_dynlight.h"
+#include "gl/dynlights/gl_dynlightcache.h"
 #include "r_data/models/models_ue1.h"
 #include "r_data/models/models_obj.h"
-	extern FDynLightData modellightdata;
-	extern bool g_legacyLightActive;
-	extern float g_legacyLightX;
-	extern float g_legacyLightZ;
-	extern float g_legacyLightY;
-	extern float g_legacyLightRadius;
-	extern float g_legacyLightR;
-	extern float g_legacyLightG;
-	extern float g_legacyLightB;
-
-	extern struct FLegacyModelLightCache // defined in gl_spritelight.cpp
-	{
-		float x, y, z;      // Relative position of the dynamic light source
-		float trueX, trueY, trueZ; // Absolute world dynlight coordinates
-		float radius;       // Interaction radius of the light
-		float r, g, b;      // Evaluated intensity color channels of the flare
-	};
-	extern bool g_legacyLightActive;
-	extern int g_legacyModelSectorLight;
-	extern TArray<FLegacyModelLightCache> g_legacyModelLights;
-// GL1x/GL2x legacy dynlight includes, externs and vars - FINISH
 
 CVAR(Bool, gl_light_models, true, CVAR_ARCHIVE)
 
@@ -297,18 +276,6 @@ void FGLModelRenderer::EndDrawHUDModel(AActor *actor)
 	// Reset backface culling if it was enabled for translucency
 	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]) && !(smf->flags & MDL_DONTCULLBACKFACES))
 		glDisable(GL_CULL_FACE);
-
-	// ==============================================================================
-	// [Darkcrafter07]: ATOMIC CROSS-SUBSECTOR CONTEXT FLUSH
-	// FIXED: We clear the global lights array cache pool strictly at the end of EndDrawModel!
-	// This forces multi-pass subsectors to re-compile active lights freshly, 
-	// completely destroying the "pop in and out" flickering bug on giant mountain meshes!
-	// ==============================================================================
-	if (gl.lightmethod == LM_LEGACY)
-	{		
-		g_legacyModelLights.Clear();
-		g_legacyLightActive = false;
-	}
 }
 
 IModelVertexBuffer *FGLModelRenderer::CreateVertexBuffer(bool needindex, bool singleframe)
@@ -540,7 +507,7 @@ void FModelVertexBuffer::SetupFrame(FModelRenderer *renderer, unsigned int frame
 	{
 		glVertexPointer(3, GL_FLOAT, sizeof(FModelVertex), &vbo_ptr[frame1].x);
 		glTexCoordPointer(2, GL_FLOAT, sizeof(FModelVertex), &vbo_ptr[frame1].u);
-		if (gl.legacyMode)
+		if (gl.legacyMode) // static normals generation, useless but still kept for some reason
 		{
 			unsigned int activeVerticesCount = (size > 0) ? size : 2048;
 			legacyNormalsBuffer.Resize(activeVerticesCount);

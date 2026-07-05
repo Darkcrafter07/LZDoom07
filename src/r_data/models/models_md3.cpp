@@ -38,14 +38,9 @@
 #include "gl/compatibility/gl_20.h"
 #include "gl/dynlights/gl_dynlight.h"
 
+#include "gl/dynlights/gl_dynlightcache.h"
 
-//// GL1x/GL2x legacy dynlight includes, externs and vars - START
-
-//#include "gl/system/gl_system.h"
-//#include "gl/renderer/gl_renderer.h"
-//#include "gl/textures/gl_material.h"
-////#include "gl/compatibility/gl_20.h"
-//// GL1x/GL2x legacy dynlight includes, externs and vars - FINISH
+extern void* g_CurrentRenderingActorPtr;         // no need to add "AActor *actor" in RenderFrame
 
 
 #define MAX_QPATH 64
@@ -378,13 +373,7 @@ void FMD3Model::LoadGeometry()
 
 
 
-extern struct FLegacyModelLightCache // defined in gl_spritelight.cpp
-{
-	float x, y, z;      // Relative position of the dynamic light source
-	float trueX, trueY, trueZ; // Absolute world dynlight coordinates
-	float radius;       // Interaction radius of the light
-	float r, g, b;      // Evaluated intensity color channels of the flare
-};
+
 extern int modellightindex;
 extern int g_legacyModelSectorLight;
 extern bool g_legacyLightActive;
@@ -716,8 +705,6 @@ int FMD3Model::FindFrame(const char * name)
 
 
 static TArray<unsigned int> sliceIndicesPool[6]; // 6 completely independent and isolated 3D models in frame RAM
-extern void* g_CurrentRenderingActorPtr;         // no need to add "AActor *actor" in RenderFrame
-TArray<uint32_t> cpuGouraudColors;
 void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frameno, int frameno2, double inter, int translation)
 {
 	// ==============================================================================
@@ -814,9 +801,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 				for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
 				{
 					FLegacyModelLightCache *light = &g_legacyModelLights[l];
-					float dx = light->x - (worldActorX * scaleNormalizeFactor);
-					float dy = light->y - (worldActorY * scaleNormalizeFactor);
-					float dz = light->z - (worldActorCenterZ * scaleNormalizeFactor);
+					float dx = light->relX - (worldActorX * scaleNormalizeFactor);
+					float dy = light->relY - (worldActorY * scaleNormalizeFactor);
+					float dz = light->relZ - (worldActorCenterZ * scaleNormalizeFactor);
 
 					float distSquared = dx * dx + dy * dy + dz * dz;
 					float interactionRadius = (light->radius + trueVisualRadius) * scaleNormalizeFactor;
@@ -916,9 +903,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
 						{
 							FLegacyModelLightCache *light = &g_legacyModelLights[l];
-							float liveDx = light->trueX - actorX;
-							float liveDy = light->trueY - actorY;
-							float liveDz = light->trueZ - midHeightOffset;
+							float liveDx = light->absX - actorX;
+							float liveDy = light->absY - actorY;
+							float liveDz = light->absZ - midHeightOffset;
 							float distSquared = liveDx * liveDx + liveDy * liveDy + liveDz * liveDz;
 
 							// Extended visual radar buffer (+256 units) to expand the tracking horizon safely
@@ -1054,9 +1041,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
 					{
 						FLegacyModelLightCache *light = &g_legacyModelLights(l);
-						float dx = ((float)light->x - sliceWorldX) * scaleNormalizeFactor;
-						float dy = ((float)light->y - sliceWorldY) * scaleNormalizeFactor;
-						float dz = ((float)light->z - sliceWorldZ) * scaleNormalizeFactor;
+						float dx = ((float)light->relX - sliceWorldX) * scaleNormalizeFactor;
+						float dy = ((float)light->relY - sliceWorldY) * scaleNormalizeFactor;
+						float dz = ((float)light->relZ - sliceWorldZ) * scaleNormalizeFactor;
 						float distSquared = dx * dx + dy * dy + dz * dz;
 						float interactionRadius = (light->radius + trueVisualRadius) * scaleNormalizeFactor;
 						if (distSquared < (float)(interactionRadius * interactionRadius))
