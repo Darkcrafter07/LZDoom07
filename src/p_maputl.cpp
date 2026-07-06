@@ -270,6 +270,37 @@ void P_LineOpening (FLineOpening &open, AActor *actor, const line_t *linedef, co
 
 	// avoid overflows in the opening.
 	open.range = clamp(open.top - open.bottom, LINEOPEN_MIN, LINEOPEN_MAX);
+
+	// --- Window Portal Opening Correction Start ---
+	if (linedef->isLinePortal() && (linedef->args[1] != 0 || linedef->args[4] != 0))
+	{
+		double portalFloor = (double)linedef->args[1];
+		double portalCeiling = (double)linedef->args[4];
+
+		if (actor != NULL)
+		{
+			double actorMinZ = actor->Z();
+			double actorMaxZ = actor->Top();
+
+			// Check if the entity is strictly INSIDE the custom window span
+			bool insideWindow = (actorMinZ >= portalFloor && actorMaxZ <= portalCeiling);
+
+			// If the entity or missile is completely OUTSIDE the portal window:
+			if (!insideWindow)
+			{
+				// Erase local sector floor/ceiling restrictions!
+				// Force the engine to see an infinite free opening to pass through.
+				open.top = LINEOPEN_MAX;
+				open.bottom = LINEOPEN_MIN;
+				open.range = LINEOPEN_MAX;
+
+				// Clear midtex blocks since we are outside the window frame layers
+				open.touchmidtex = false;
+				open.abovemidtex = false;
+			}
+		}
+	}
+	// --- Window Portal Opening Correction Finish ---
 }
 
 

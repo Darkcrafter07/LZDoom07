@@ -82,7 +82,7 @@ void GLWall::PutWall(bool translucent)
 		if (type == RENDERWALL_FFBLOCK || type == RENDERWALL_M2S)
 		{
 			// If that's a fence (Style Normal) — force multipass (will be dynlit)
-			if (RenderStyle == STYLE_Normal)
+			if (RenderStyle == STYLE_Normal && alpha >= 0.99f)
 			{
 				translucent = false;
 			}
@@ -1722,15 +1722,44 @@ void GLWall::Process(seg_t *seg, sector_t * frontsector, sector_t * backsector, 
 				fch1, fch2, ffh1, ffh2, bch1, bch2, bfh1, bfh2);
 		}
 
+		//if (isportal)
+		//{
+		//	lineportal = linePortalToGL[seg->linedef->portalindex];
+		//	ztop[0] = bch1;
+		//	ztop[1] = bch2;
+		//	zbottom[0] = bfh1;
+		//	zbottom[1] = bfh2;
+		//	PutPortal(PORTALTYPE_LINETOLINE);
+		//}
+
 		if (isportal)
 		{
 			lineportal = linePortalToGL[seg->linedef->portalindex];
-			ztop[0] = bch1;
-			ztop[1] = bch2;
-			zbottom[0] = bfh1;
-			zbottom[1] = bfh2;
+
+			// --- Absolute Height Argument Check (Strictly matching user config order) ---
+			// args[1] = Floor Height, args[4] = Ceiling Height
+			if (seg->linedef->args[1] != 0 || seg->linedef->args[4] != 0)
+			{
+				// Directly apply 32-bit values into the renderer without compression artifact blocks
+				float customFloor = (float)seg->linedef->args[1];
+				float customCeiling = (float)seg->linedef->args[4];
+
+				ztop[0] = ztop[1] = customCeiling;
+				zbottom[0] = zbottom[1] = customFloor;
+			}
+			else
+			{
+				// Fallback to standard behavior if both height arguments are 0
+				ztop[0] = bch1;
+				ztop[1] = bch2;
+				zbottom[0] = bfh1;
+				zbottom[1] = bfh2;
+			}
+			// --- Absolute Height Argument Check Finish ---
+
 			PutPortal(PORTALTYPE_LINETOLINE);
 		}
+
 		else if (backsector->e->XFloor.ffloors.Size() || frontsector->e->XFloor.ffloors.Size())
 		{
 			DoFFloorBlocks(seg, frontsector, backsector, fch1, fch2, ffh1, ffh2, bch1, bch2, bfh1, bfh2);

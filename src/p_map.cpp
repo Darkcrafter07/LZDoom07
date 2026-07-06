@@ -1343,8 +1343,44 @@ bool PIT_CheckLine(FMultiBlockLinesIterator &mit, FMultiBlockLinesIterator::Chec
 		spec.Oldrefpos = tm.thing->PosRelative(ld);
 		spechit.Push(spec);
 	}
-	if (ld->isLinePortal())
+	//if (ld->isLinePortal())
+	//{
+	//	spec.line = ld;
+	//	spec.Refpos = cres.Position;
+	//	spec.Oldrefpos = tm.thing->PosRelative(ld);
+	//	portalhit.Push(spec);
+	//}
+
+		if (ld->isLinePortal())
 	{
+		// --- Advanced Window Portal Physics Highjack Start ---
+		if (ld->args[1] != 0 || ld->args[4] != 0)
+		{
+			// Read clean, uncompressed 32-bit values directly from the UDMF arguments array
+			double portalFloor   = (double)ld->args[1];
+			double portalCeiling = (double)ld->args[4];
+
+			double actorMinZ = tm.thing->Z();
+			double actorMaxZ = tm.thing->Top();
+
+			// If the actor or projectile is completely ABOVE or BELOW the portal window frame
+			if (actorMaxZ <= portalFloor || actorMinZ >= portalCeiling)
+			{
+				FLineOpening openPortal;
+				P_LineOpening(openPortal, tm.thing, ld, cres.Position);
+
+				if (openPortal.range <= 0 ||
+					openPortal.bottom > actorMinZ + tm.thing->MaxStepHeight ||
+					openPortal.top < actorMaxZ)
+				{
+					return false;
+				}
+
+				return true;
+			}
+		}
+
+		// Strictly INSIDE the window frame: submit to standard portal teleporter matrix
 		spec.line = ld;
 		spec.Refpos = cres.Position;
 		spec.Oldrefpos = tm.thing->PosRelative(ld);
@@ -1374,6 +1410,26 @@ static bool PIT_CheckPortal(FMultiBlockLinesIterator &mit, FMultiBlockLinesItera
 {
 	// if in another vertical section let's just ignore it.
 	if (cres.portalflags & (FFCF_NOCEILING | FFCF_NOFLOOR)) return false;
+
+	// --- Custom Window Portal Offscreen Sub-Pass Intercept Start ---
+	// Prevent the hidden portal iterator from crawling into the destination world
+	// if the actor or projectile is safely flying ABOVE or BELOW the custom window frame.
+	if (cres.line && cres.line->isLinePortal() && (cres.line->args[1] != 0 || cres.line->args[4] != 0))
+	{
+		double portalFloor = (double)cres.line->args[1];
+		double portalCeiling = (double)cres.line->args[4];
+
+		double actorMinZ = tm.thing->Z();
+		double actorMaxZ = tm.thing->Top();
+
+		if (actorMaxZ <= portalFloor || actorMinZ >= portalCeiling)
+		{
+			// Sabotage the destination world sub-check entirely! 
+			// Treat the line as a standard open 2-sided border gap on the current floor level.
+			return false;
+		}
+	}
+	// --- Custom Window Portal Offscreen Sub-Pass Intercept Finish ---
 
 	if (!box.inRange(cres.line) || box.BoxOnLineSide(cres.line) != -1)
 		return false;
