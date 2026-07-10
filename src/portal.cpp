@@ -40,6 +40,7 @@
 #include "math/cmath.h"
 #include "g_levellocals.h"
 #include "vm.h"
+#include "p_udmf.h"
 
 // simulation recurions maximum
 CVAR(Int, sv_portal_recursions, 4, CVAR_ARCHIVE|CVAR_SERVERINFO)
@@ -1325,6 +1326,181 @@ bool P_CollectConnectedGroups(int startgroup, const DVector3 &position, double u
 	return retval;
 }
 
+
+// ===================================================================================================================
+// --- UNIFIED AUTOMATIC 3D-FLOOR WINDOW PORTAL ENGINE CORE ---
+// 
+// DESCRIPTION:
+// This function acts as an isolated, high-performance information harvester that dynamically calculates 
+// the precise Floor and Ceiling clipping boundaries (and vector offsets) for interactive line portals.
+// It synchronizes Graphics (gl_walls), Actor Physics (p_map), Projectiles (p_maputl), and Weapon Hitscans (p_trace) 
+// using a single, unified mathematical truth. Everything is executed in native float-precision.
+//
+// WHAT MAPPER SHOULD DO (HOW TO CONFIG IN ULTIMATE DOOM BUILDER):
+// 1. Assign a unique Line ID / Tag to your Entrance Window Portal line (e.g., Tag 4).
+// 2. Assign a unique Line ID / Tag to your Exit Street Portal line (e.g., Tag 5).
+// 3. Create your 3D-floors (lifts/borders) using Action 160 (Sector_Set3dFloor) inside a control dummy sector.
+// 4. On the CONTROL LINES of those 3D-floors, open the Custom UDMF fields tab and configure:
+//    - "user_lineportaltargetid" (Integer) = Set this to the Tag of your line portal tag (ID) (e.g., 4).
+//    - "user_lineportal3dfloortop" (Integer) = Set to 1 if this 3D-floor acts as the upper window trim/ceiling (104).
+//    - "user_lineportal3dfloorbot" (Integer) = Set to 1 if this 3D-floor acts as the lower window ledge/floor (24).
+// 5. On the portal line itself, you can configure custom offsets in the Custom UDMF fields tab:
+//    - "user_lineportaloffsetvisual" (Float) = Distance to push the visual portal mesh inward to stop clipping.
+//    - "user_lineportaloffsetphysics" (Integer) = Multiplier for the physical clipping buffer zone.
+// 6. Keep args[1] (Floor Z) and args[4] (Ceiling Z) on the portal lines at ZERO (0) in the map editor.
+//    You may want to adjust them manually, in case when 3D-floors were detected they will expand-shrink window size,
+//    e.g. act as relative math offsets applied AFTER the engine extracts raw 3D-floor heights!
+//
+// WHAT CODE/MAPPERS MUST NEVER DO (CRITICAL RESTRICTIONS):
+// - DO NOT pass raw 'DVector3 pos' coordinates or use 'ZatPoint(centerspot)' inside this core. Flat rovers 
+//   must evaluate heights strictly at the window vertex location via 'ld->v1->fPos()' to eliminate float-drift bugs.
+// - DO NOT apply hard uint8_t or int8_t typecasts to 'args' subtraction and addition steps. Doing so clips 
+//   the offset capabilities to a miserable 128 units, which will break maps.
+// - DO NOT skip the omnidirectional sector loop scanner. Hitscans and projectiles cross lines backwards, 
+//   meaning both 'frontsector' and 'backsector' must be thoroughly evaluated to lock lift tracking from both sides!
+//   For LZDoom07 (GZDoom v3.3x fork):   FLineIdIterator itr(targetTag);
+//                                       GetUDMFInt(UDMF_Line, dummyLineIndex, "user_lineportal3dfloortop");
+//   For UZDoom   (GZDoom v4x fork):     FLineIdIterator itr(level.tagManager, targetTag); and make it public
+//                                       GetUDMFInt(&level, UDMF_Line, dummyLineIndex, "user_lineportal3dfloortop");
+// by [Darkcrafter07]
+// ===================================================================================================================
+
+FPortalCutHeights GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector)
+{
+	FPortalCutHeights result;
+	result.Floor = 0.0f;
+	result.Ceiling = 0.0f;
+	result.OffsetDistVisual = 0.0f;
+	result.OffsetDistMovement = 0.0f;
+	result.HasDynamicHeights = false;
+
+	if (!ld) return result;
+
+	float customFloor = 0.0f;
+	float customCeiling = 0.0f;
+	bool found3DfloorTop = false;
+	bool found3DfloorBot = false;
+	bool found3dfloorsOnLinePortals = false;
+
+	int currentLineIndex = ld->Index();
+	int portalExitTag = ld->args[0];
+
+	// GEOMETRY ANCHOR: Fetch vertex coordinate straight from the window line itself!
+	DVector2 windowVertexPos = ld->v1->fPos();
+
+	// HOME SECTOR MATRIX: We force look strictly into the base room sector
+	// to completely neutralize the street's deep undercroft sector height corruptions!
+	const sector_t* activeSector = ld->frontsector;
+	if (frontsector) activeSector = frontsector;
+
+	// OMNIDIRECTIONAL SCANNER: Evaluate BOTH sides of the wall (front and back)
+	// to guarantee hitscans and projectiles track the lifts from any side of the mirror!
+	const sector_t* sectorsToCheck[2] =
+	{
+		frontsector ? frontsector : ld->frontsector,
+		ld->sidedef[1] ? ld->sidedef[1]->sector : nullptr
+	};
+
+	for (int s = 0; s < 2; s++)
+	{
+		const sector_t* checkSector = sectorsToCheck[s];
+		if (!checkSector || !checkSector->e) continue;
+
+		for (auto rover : checkSector->e->XFloor.ffloors)
+		{
+			if (!(rover->flags & FF_EXISTS) || !rover->master || !rover->model) continue;
+
+			int dummyLineIndex = rover->master->Index();
+			int targetTag = GetUDMFInt(UDMF_Line, dummyLineIndex, "user_lineportaltargetid");
+
+			if (targetTag > 0)
+			{
+				// =================   LZDoom07 way - START   ============================
+				FLineIdIterator itr(targetTag);
+				// =================   LZDoom07 way - FINISH  ============================
+
+				// =================    UZDoom way - START    ============================
+				//FLineIdIterator itr(level.tagManager, targetTag);
+				// =================    UZDoom way - FINISH   ============================
+				int foundLineIndex;
+				bool lineMatchesTag = false;
+
+				while ((foundLineIndex = itr.Next()) >= 0)
+				{
+					if (foundLineIndex == currentLineIndex || targetTag == portalExitTag)
+					{
+						lineMatchesTag = true;
+						break;
+					}
+				}
+
+				if (lineMatchesTag)
+				{
+					int isTopRover = GetUDMFInt(UDMF_Line, dummyLineIndex, "user_lineportal3dfloortop");
+					int isBotRover = GetUDMFInt(UDMF_Line, dummyLineIndex, "user_lineportal3dfloorbot");
+
+					if (isTopRover == 1 && !found3DfloorTop)
+					{
+						customCeiling = (float)rover->model->floorplane.ZatPoint(windowVertexPos);
+						found3DfloorTop = true;
+					}
+					if (isBotRover == 1 && !found3DfloorBot)
+					{
+						customFloor = (float)rover->model->ceilingplane.ZatPoint(windowVertexPos);
+						found3DfloorBot = true;
+					}
+				}
+			}
+		}
+	}
+
+	if (found3DfloorTop || found3DfloorBot)
+	{
+		found3dfloorsOnLinePortals = true;
+	}
+
+	// STAGE 2 & 3: PRIORITY CHAIN FOUND EXPERIMENTING WITH P_TRACE.CPP
+	if (found3dfloorsOnLinePortals)
+	{
+		if (found3DfloorTop) result.Ceiling = customCeiling + (float)ld->args[4];
+		if (found3DfloorBot) result.Floor = customFloor + (float)ld->args[1];
+
+		if (!found3DfloorTop) result.Ceiling = 99999.0f;
+		if (!found3DfloorBot) result.Floor = -99999.0f;
+
+		result.HasDynamicHeights = true;
+	}
+	else if (ld->args != 0 || ld->args != 0)
+	{
+		result.Floor = (float)ld->args[1];
+		result.Ceiling = (float)ld->args[4];
+		result.HasDynamicHeights = true;
+	}
+	else
+	{
+		result.Floor = -99999.0f;
+		result.Ceiling = 99999.0f;
+		result.HasDynamicHeights = false;
+	}
+
+	// STAGE 4: PROCESS VISUAL AND MOVEMENT OFFSETS INDEPENDENTLY
+	float rawOffset = (float)GetUDMFInt(UDMF_Line, ld->Index(), "user_lineportaloffsetvisual");
+	if (rawOffset != 0.0f)
+	{
+		result.OffsetDistVisual = fabsf(rawOffset) - 0.5f;
+		if (result.OffsetDistVisual < 0.0f) result.OffsetDistVisual = 0.0f;
+
+		result.OffsetDistMovement = result.OffsetDistVisual;
+
+		int physicsIntensity = GetUDMFInt(UDMF_Line, ld->Index(), "user_lineportaloffsetphysics");
+		if (physicsIntensity > 1)
+		{
+			result.OffsetDistMovement *= (float)physicsIntensity;
+		}
+	}
+
+	return result;
+}
 
 //============================================================================
 //

@@ -103,8 +103,30 @@
 #include "g_levellocals.h"
 #include "actorinlines.h"
 
+#include "portal.h"
+
 // mesh collision requisites
 #include "r_data\models\models.h"
+
+
+
+#ifdef _MSC_VER
+// Everything seems to work just fine even with such warnings.
+// Disable warning about conversion from 'double' to 'float', possible loss of data.
+#pragma warning(disable:4244)
+// Disable warning about 'initializing': truncation from 'double' to 'float'
+#pragma warning(disable:4305)
+#endif
+
+//	#if defined(__GNUC__) || defined(__clang__)
+//	// GCC/Clang: Disable warnings about implicit float conversions.
+//	// -Wfloat-conversion handles double to float specifically.
+//	// -Wconversion is a broader check for all type casts.
+//	#pragma GCC diagnostic ignored "-Wfloat-conversion"
+//	#pragma GCC diagnostic ignored "-Wconversion"
+//	#endif
+
+
 
 CVAR(Bool, cl_bloodsplats, true, CVAR_ARCHIVE)
 CVAR(Int, sv_smartaim, 0, CVAR_ARCHIVE | CVAR_SERVERINFO)
@@ -1351,34 +1373,33 @@ bool PIT_CheckLine(FMultiBlockLinesIterator &mit, FMultiBlockLinesIterator::Chec
 	//	portalhit.Push(spec);
 	//}
 
-		if (ld->isLinePortal())
+	if (ld->isLinePortal())
 	{
-		// --- Advanced Window Portal Physics Highjack Start ---
-		if (ld->args[1] != 0 || ld->args[4] != 0)
+		// --- Line portal with window cut - START ---
+		FPortalCutHeights cut = GetLinePortalCutHeights(ld, ld->frontsector);
+
+		double portalFloor = (double)cut.Floor;
+		double portalCeiling = (double)cut.Ceiling;
+
+		double actorMinZ = tm.thing->Z();
+		double actorMaxZ = tm.thing->Top();
+
+		// If the actor or projectile is completely ABOVE or BELOW the portal window frame
+		if (cut.HasDynamicHeights && (actorMaxZ <= portalFloor || actorMinZ >= portalCeiling))
 		{
-			// Read clean, uncompressed 32-bit values directly from the UDMF arguments array
-			double portalFloor   = (double)ld->args[1];
-			double portalCeiling = (double)ld->args[4];
+			FLineOpening openPortal;
+			P_LineOpening(openPortal, tm.thing, ld, cres.Position);
 
-			double actorMinZ = tm.thing->Z();
-			double actorMaxZ = tm.thing->Top();
-
-			// If the actor or projectile is completely ABOVE or BELOW the portal window frame
-			if (actorMaxZ <= portalFloor || actorMinZ >= portalCeiling)
+			if (openPortal.range <= 0 ||
+				openPortal.bottom > actorMinZ + tm.thing->MaxStepHeight ||
+				openPortal.top < actorMaxZ)
 			{
-				FLineOpening openPortal;
-				P_LineOpening(openPortal, tm.thing, ld, cres.Position);
-
-				if (openPortal.range <= 0 ||
-					openPortal.bottom > actorMinZ + tm.thing->MaxStepHeight ||
-					openPortal.top < actorMaxZ)
-				{
-					return false;
-				}
-
-				return true;
+				return false;
 			}
+
+			return true;
 		}
+		// --- Line portal with window cut - FINISH ---
 
 		// Strictly INSIDE the window frame: submit to standard portal teleporter matrix
 		spec.line = ld;
@@ -1411,25 +1432,26 @@ static bool PIT_CheckPortal(FMultiBlockLinesIterator &mit, FMultiBlockLinesItera
 	// if in another vertical section let's just ignore it.
 	if (cres.portalflags & (FFCF_NOCEILING | FFCF_NOFLOOR)) return false;
 
-	// --- Custom Window Portal Offscreen Sub-Pass Intercept Start ---
+	// --- Line portal with window cut - START ---
 	// Prevent the hidden portal iterator from crawling into the destination world
 	// if the actor or projectile is safely flying ABOVE or BELOW the custom window frame.
-	if (cres.line && cres.line->isLinePortal() && (cres.line->args[1] != 0 || cres.line->args[4] != 0))
+	if (cres.line && cres.line->isLinePortal())
 	{
-		double portalFloor = (double)cres.line->args[1];
-		double portalCeiling = (double)cres.line->args[4];
+		FPortalCutHeights cut = GetLinePortalCutHeights(cres.line, cres.line->frontsector);
+
+		double portalFloor = cut.Floor;
+		double portalCeiling = cut.Ceiling;
 
 		double actorMinZ = tm.thing->Z();
 		double actorMaxZ = tm.thing->Top();
 
-		if (actorMaxZ <= portalFloor || actorMinZ >= portalCeiling)
+		if (cut.HasDynamicHeights && (actorMaxZ <= portalFloor || actorMinZ >= portalCeiling))
 		{
 			// Sabotage the destination world sub-check entirely! 
-			// Treat the line as a standard open 2-sided border gap on the current floor level.
 			return false;
 		}
 	}
-	// --- Custom Window Portal Offscreen Sub-Pass Intercept Finish ---
+	// --- Line portal with window cut - START ---
 
 	if (!box.inRange(cres.line) || box.BoxOnLineSide(cres.line) != -1)
 		return false;
@@ -2593,6 +2615,12 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 	sector_t*	oldsec = thing->Sector;	// [RH] for sector actions
 	sector_t*	newsec;
 
+	// Line portal window variables - START
+	bool forcePassCheckPosition = false;
+	float portalFloor, portalCeiling = 0.0f;
+	float actorMinZ, actorMaxZ = 0.0f;
+	// Line portal window variables - FINISH
+
 	tm.floatok = false;
 	tm.portalstep = false;
 	oldz = thing->Z();
@@ -2601,10 +2629,93 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 		thing->SetZ(onfloor->ZatPoint(pos));
 	}
 	thing->flags6 |= MF6_INTRYMOVE;
-	if (!P_CheckPosition(thing, pos, tm))
+
+	// Execute native check to populate honest gravity tables
+	bool positionClear = P_CheckPosition(thing, pos, tm);
+
+	// --- Line portal with window cut - START ---
+	// This block is here to prevent actors from teleporting
+	// into other cascaded portals behind the first encountered one at a certain height
+	if (!positionClear && thing && thing->Sector)
+	{
+		actorMinZ = (float)thing->Z();
+		actorMaxZ = (float)thing->Top();
+
+		FPortalGroupArray grouplist;
+		FMultiBlockLinesIterator mit(grouplist, thing);
+		FMultiBlockLinesIterator::CheckResult cres;
+
+		// We execute the iterator loop safely. Memory registers populate strictly inside!
+		while (mit.Next(&cres))
+		{
+			line_t *ld = cres.line;
+
+			// SECURE CHECK: We process calculations ONLY if the fetched line pointer is 100% valid and is a portal!
+			if (ld && ld->isLinePortal())
+			{
+				// Clear informational harvest from our unified engine core inside the active loop
+				FPortalCutHeights cut = GetLinePortalCutHeights(ld, ld->frontsector);
+
+				float portalFloor = cut.Floor;
+				float portalCeiling = cut.Ceiling;
+				float OffsetDistMovement = cut.OffsetDistMovement;
+
+				if (!cut.HasDynamicHeights) continue;
+
+				// THE 16-UNIT BOX TOLERANCE SHIELD FOR MOVEMENT:
+				// The bypass shield activates ONLY if your feet and head fully clear the lift frames with a 16-unit buffer zone!
+				bool insideWindowSafe = (actorMinZ >= (portalFloor + 16.0f) && actorMaxZ <= (portalCeiling - 16.0f));
+
+				// Extract precision double vectors for 2D line distance formulas safely inside the active pass
+				double x1 = ld->v1->fX();
+				double y1 = ld->v1->fY();
+				double dx = ld->Delta().X;
+				double dy = ld->Delta().Y;
+				double px = thing->X();
+				double py = thing->Y();
+
+				double lineLength = sqrt(dx * dx + dy * dy);
+				double distToLine = 99999.0;
+
+				if (lineLength > 0.0)
+				{
+					distToLine = fabs(dy * px - dx * py + ld->v2->fX() * y1 - ld->v2->fY() * x1) / lineLength;
+				}
+
+				// THE 16-UNIT VERTICAL SAFE CROSS-SECTION MATRIX
+				if (insideWindowSafe)
+				{
+					// 1. OPEN GAP PATH: If the entity safely fits inside the open window space, engage the recess shield!
+					if ((float)distToLine <= OffsetDistMovement)
+					{
+						forcePassCheckPosition = true;
+
+						tm.floorz = thing->Sector->floorplane.ZatPoint(pos);
+						tm.ceilingz = thing->Sector->ceilingplane.ZatPoint(pos);
+
+						if (actorMaxZ <= portalCeiling) tm.ceilingz = portalCeiling;
+						if (actorMinZ >= portalFloor)   tm.floorz = portalFloor;
+						break;
+					}
+				}
+				else
+				{
+					// 2. HARD HARDWARE LOCK: If we are sliding on the ledge or halfway blocked -> FREEZE INSTANTLY!
+					// This triggers strictly for the window portal frame if height clearance fails!
+					if ((float)distToLine <= OffsetDistMovement)
+					{
+						thing->flags6 &= ~MF6_INTRYMOVE;
+						return false; // Total dynamic lockdown secured! The actor stops cold before warping.
+					}
+				}
+			}
+		}
+	}
+
+	// Native blockage branch executes ONLY if the shield didn't override it
+	if (!positionClear && !forcePassCheckPosition)
 	{
 		AActor *BlockingMobj = thing->BlockingMobj;
-		// Solid wall or thing
 		if (!BlockingMobj || BlockingMobj->player || !thing->player)
 		{
 			goto pushline;
@@ -2615,9 +2726,10 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 			{
 				goto pushline;
 			}
-			else if (BlockingMobj->Top() - thing->Z() > thing->MaxStepHeight
-				|| ((BlockingMobj->Sector->ceilingplane.ZatPoint(pos) - (BlockingMobj->Top()) < thing->Height) && BlockingMobj->Sector->PortalBlocksMovement(sector_t::ceiling))
-				|| (tm.ceilingz - (BlockingMobj->Top()) < thing->Height))
+			else if (BlockingMobj->Top() - thing->Z() > thing->MaxStepHeight ||
+				((BlockingMobj->Sector->ceilingplane.ZatPoint(pos) - (BlockingMobj->Top()) < thing->Height) &&
+					BlockingMobj->Sector->PortalBlocksMovement(sector_t::ceiling)) ||
+					(tm.ceilingz - (BlockingMobj->Top()) < thing->Height))
 			{
 				goto pushline;
 			}
@@ -2629,6 +2741,12 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 			return false;
 		}
 	}
+	else if (forcePassCheckPosition)
+	{
+		if (thing->BlockingMobj) thing->BlockingMobj = nullptr;
+		thing->flags6 &= ~MF6_INTRYMOVE;
+	}
+	// --- Line portal with window cut - FINISH ---
 
 	if (thing->flags3 & MF3_FLOORHUGGER)
 	{

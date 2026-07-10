@@ -1732,32 +1732,48 @@ void GLWall::Process(seg_t *seg, sector_t * frontsector, sector_t * backsector, 
 		//	PutPortal(PORTALTYPE_LINETOLINE);
 		//}
 
+		// --- Line portal with window cut - START ---
 		if (isportal)
 		{
 			lineportal = linePortalToGL[seg->linedef->portalindex];
 
-			// --- Absolute Height Argument Check (Strictly matching user config order) ---
-			// args[1] = Floor Height, args[4] = Ceiling Height
-			if (seg->linedef->args[1] != 0 || seg->linedef->args[4] != 0)
-			{
-				// Directly apply 32-bit values into the renderer without compression artifact blocks
-				float customFloor = (float)seg->linedef->args[1];
-				float customCeiling = (float)seg->linedef->args[4];
+			FPortalCutHeights cut = GetLinePortalCutHeights(seg->linedef, seg->frontsector);
 
-				ztop[0] = ztop[1] = customCeiling;
-				zbottom[0] = zbottom[1] = customFloor;
-			}
-			else
-			{
-				// Fallback to standard behavior if both height arguments are 0
-				ztop[0] = bch1;
-				ztop[1] = bch2;
-				zbottom[0] = bfh1;
-				zbottom[1] = bfh2;
-			}
-			// --- Absolute Height Argument Check Finish ---
+			float customFloor = cut.Floor;
+			float customCeiling = cut.Ceiling;
+			float offsetVisDist = cut.OffsetDistVisual;
 
+			// If no dynamic or absolute heights are configured, fallback to native baseline sector limits
+			if (!cut.HasDynamicHeights) { customFloor = bfh1; customCeiling = bch1; }
+
+			// Inject dynamically calculated variables straight to the hardware stencil mask
+			ztop[0] = ztop[1] = customCeiling;
+			zbottom[0] = zbottom[1] = customFloor;
+
+			if (offsetVisDist > 0.0f)
+			{
+				// Get 2D direction vectors of the wall seg line
+				float dx = (float)(seg->linedef->v2->fX() - seg->linedef->v1->fX());
+				float dy = (float)(seg->linedef->v2->fY() - seg->linedef->v1->fY());
+				float length = sqrt(dx * dx + dy * dy);
+
+				if (length > 0.0f)
+				{
+					// Calculate perpendicular normal vectors (Side 0 faces outward)
+					float nx = -dy / length; float ny = dx / length;
+
+					// Compare with the second side (Side 1) of the array correctly
+					if (seg->linedef->sidedef[1] == seg->sidedef) { nx = -nx; ny = -ny; }
+
+					// Shift the internal glseg position registers BEFORE sending to the pipeline
+					glseg.x1 += nx * offsetVisDist; glseg.y1 += ny * offsetVisDist;
+					glseg.x2 += nx * offsetVisDist; glseg.y2 += ny * offsetVisDist;
+				}
+			}
+
+			// Submit the bounded and shifted portal task slice into the deferred draw command queue
 			PutPortal(PORTALTYPE_LINETOLINE);
+			// --- Line portal with window cut - FINISH ---
 		}
 
 		else if (backsector->e->XFloor.ffloors.Size() || frontsector->e->XFloor.ffloors.Size())

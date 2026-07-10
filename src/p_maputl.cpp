@@ -83,6 +83,9 @@
 #include "g_levellocals.h"
 #include "vm.h"
 
+#include "portal.h"
+#include "p_tags.h"
+
 sector_t *P_PointInSectorBuggy(double x, double y);
 int P_VanillaPointOnDivlineSide(double x, double y, const divline_t* line);
 
@@ -271,18 +274,31 @@ void P_LineOpening (FLineOpening &open, AActor *actor, const line_t *linedef, co
 	// avoid overflows in the opening.
 	open.range = clamp(open.top - open.bottom, LINEOPEN_MIN, LINEOPEN_MAX);
 
-	// --- Window Portal Opening Correction Start ---
-	if (linedef->isLinePortal() && (linedef->args[1] != 0 || linedef->args[4] != 0))
+	// --- Line portal with window cut - START ---
+	if (linedef->isLinePortal())
 	{
-		double portalFloor = (double)linedef->args[1];
-		double portalCeiling = (double)linedef->args[4];
+		// CROSS-SECTOR SYNCHRONIZATION: Secure look towards the base room frontsector 
+		// if checking the opening calculation pass from the empty street exit side!
+		sector_t *targetSector = linedef->frontsector;
+		if (actor && actor->Sector) targetSector = actor->Sector;
+		else if (linedef->getPortalDestination() != nullptr && linedef->getPortalDestination()->frontsector)
+		{
+			targetSector = linedef->getPortalDestination()->frontsector;
+		}
 
-		if (actor != NULL)
+		// Pull dynamic/absolute coordinates straight from informational harvester core
+		FPortalCutHeights cut = GetLinePortalCutHeights(linedef, targetSector);
+
+		double portalFloor = (double)cut.Floor;
+		double portalCeiling = (double)cut.Ceiling;
+
+		// Smart entity window-state verification logic only if valid heights exist
+		if (cut.HasDynamicHeights && actor != NULL)
 		{
 			double actorMinZ = actor->Z();
 			double actorMaxZ = actor->Top();
 
-			// Check if the entity is strictly INSIDE the custom window span
+			// Check if the projectile or entity is strictly INSIDE the custom window span
 			bool insideWindow = (actorMinZ >= portalFloor && actorMaxZ <= portalCeiling);
 
 			// If the entity or missile is completely OUTSIDE the portal window:
@@ -300,7 +316,7 @@ void P_LineOpening (FLineOpening &open, AActor *actor, const line_t *linedef, co
 			}
 		}
 	}
-	// --- Window Portal Opening Correction Finish ---
+	// --- Line portal with window cut - FINISH ---
 }
 
 

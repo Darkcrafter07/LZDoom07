@@ -276,5 +276,15 @@ void P_TranslatePortalAngle(line_t* src, DAngle& angle);
 void P_TranslatePortalZ(line_t* src, double& vz);
 DVector2 P_GetOffsetPosition(double x, double y, double dx, double dy);
 
+// [Darkcrafter07] - 3D line portals ( line portal with window cut )
+struct FPortalCutHeights
+{
+	float Floor;
+	float Ceiling;
+	float OffsetDistVisual;
+	float OffsetDistMovement;
+	bool HasDynamicHeights;
+};
+FPortalCutHeights GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector);
 
 #endif

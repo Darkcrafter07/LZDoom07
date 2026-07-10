@@ -43,6 +43,7 @@
 #include "g_levellocals.h"
 #include "p_terrain.h"
 #include "vm.h"
+#include "portal.h"
 
 //==========================================================================
 //
@@ -256,24 +257,29 @@ void FTraceInfo::EnterLinePortal(FPathTraverse &pt, intercept_t *in)
 	double enterdist = MaxDist * frac;
 	DVector3 exit = Start + MaxDist * in->frac * Vec;
 
-	// --- Portal Hitscan Raycast Intercept START ---
-	// arg1 = Floor Height, arg4 = Ceiling Height from zdoom_linedefs.cfg
-	if (li && (li->args[1] != 0 || li->args[4] != 0))
+	// --- Line portal with window cut - START ---
+	if (li)
 	{
-		double portalFloor = (double)li->args[1];
-		double portalCeiling = (double)li->args[4];
+		sector_t *targetSector = li->frontsector;
+		if (li->getPortalDestination() != nullptr && li->getPortalDestination()->frontsector)
+		{
+			targetSector = li->getPortalDestination()->frontsector;
+		}
 
-		// exit.Z contains the exact 3D height where the bullet hitscan ray intersects the line
-		// We check if the bullet ray path is flying completely ABOVE or BELOW the window frame layers:
+		FPortalCutHeights cut = GetLinePortalCutHeights(li, targetSector);
+
+		double portalFloor = cut.Floor;
+		double portalCeiling = cut.Ceiling;
+
+		// exit.Z contains the exact 3D height where the bullet hitscan ray intersects the line.
+		// Unconditional evaluation pass: regular windows bypass this smoothly via infinite bounds!
 		if (exit.Z <= portalFloor || exit.Z >= portalCeiling)
 		{
 			// Sabotage the line portal transition completely for this hitscan pass!
-			// We exit early BEFORE P_TranslatePortal transforms coordinates.
-			// This forces the bullet/railgun ray to puncture straight ahead natively.
 			return;
 		}
 	}
-	// --- Portal Hitscan Raycast Intercept FINISH ---
+	// --- Line portal with window cut - START ---
 
 	P_TranslatePortalXY(li, Start.X, Start.Y);
 	P_TranslatePortalZ(li, Start.Z);
