@@ -1345,9 +1345,9 @@ bool P_CollectConnectedGroups(int startgroup, const DVector3 &position, double u
 //    - "user_lineportal3dfloortop" (Integer) = Set to 1 if this 3D-floor acts as the upper window trim/ceiling (104).
 //    - "user_lineportal3dfloorbot" (Integer) = Set to 1 if this 3D-floor acts as the lower window ledge/floor (24).
 // 5. On the portal line itself, you can configure custom offsets in the Custom UDMF fields tab:
-//    - "user_lineportaloffsetvisual" (Float) = Distance to push the visual portal mesh inward to stop clipping.
+//    - "user_lineportaloffsetvisual" (Integer) = Distance to push the visual portal mesh inward to stop clipping.
 //    - "user_lineportaloffsetphysics" (Integer) = Multiplier for the physical clipping buffer zone.
-// 6. Keep args[1] (Floor Z) and args[4] (Ceiling Z) on the portal lines at ZERO (0) in the map editor.
+// 6. Edit args[1] (Floor Z) and args[4] (Ceiling Z) on the portal lines in the map editor.
 //    You may want to adjust them manually, in case when 3D-floors were detected they will expand-shrink window size,
 //    e.g. act as relative math offsets applied AFTER the engine extracts raw 3D-floor heights!
 //
@@ -1470,7 +1470,9 @@ FPortalCutHeights GetLinePortalCutHeights(const line_t *ld, const sector_t *fron
 
 		result.HasDynamicHeights = true;
 	}
-	else if (ld->args != 0 || ld->args != 0)
+	// FIXED SECURITY SHIELD: We execute the map editor args fallback ONLY if this line 
+	// is explicitly a configured portal! This blocks standard walls/doors from picking memory junk!
+	else if (ld->isLinePortal() && (ld->args[1] != 0 || ld->args[4] != 0))
 	{
 		result.Floor = (float)ld->args[1];
 		result.Ceiling = (float)ld->args[4];
