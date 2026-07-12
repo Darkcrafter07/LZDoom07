@@ -1376,14 +1376,15 @@ bool PIT_CheckLine(FMultiBlockLinesIterator &mit, FMultiBlockLinesIterator::Chec
 	if (ld->isLinePortal())
 	{
 		// --- Line portal with window cut - START ---
+		float portalFloor, portalCeiling = 0.0f;
+		float actorMinZ, actorMaxZ = 0.0f;
 		FPortalCutHeights cut;
 		GetLinePortalCutHeights(ld, ld->frontsector, &cut);
 
-		double portalFloor = (double)cut.Floor;
-		double portalCeiling = (double)cut.Ceiling;
-
-		double actorMinZ = tm.thing->Z();
-		double actorMaxZ = tm.thing->Top();
+		portalFloor = cut.Floor;
+		portalCeiling = cut.Ceiling;
+		actorMinZ = tm.thing->Z();
+		actorMaxZ = tm.thing->Top();
 
 		// If the actor or projectile is completely ABOVE or BELOW the portal window frame
 		if (cut.HasDynamicHeights && (actorMaxZ <= portalFloor || actorMinZ >= portalCeiling))
@@ -1438,14 +1439,17 @@ static bool PIT_CheckPortal(FMultiBlockLinesIterator &mit, FMultiBlockLinesItera
 	// if the actor or projectile is safely flying ABOVE or BELOW the custom window frame.
 	if (cres.line && cres.line->isLinePortal())
 	{
+		float portalFloor, portalCeiling = 0.0f;
+		float actorMinZ, actorMaxZ = 0.0f;
+
 		FPortalCutHeights cut;
 		GetLinePortalCutHeights(cres.line, cres.line->frontsector, &cut);
 
-		double portalFloor = cut.Floor;
-		double portalCeiling = cut.Ceiling;
+		portalFloor = cut.Floor;
+		portalCeiling = cut.Ceiling;
 
-		double actorMinZ = tm.thing->Z();
-		double actorMaxZ = tm.thing->Top();
+		actorMinZ = tm.thing->Z();
+		actorMaxZ = tm.thing->Top();
 
 		if (cut.HasDynamicHeights && (actorMaxZ <= portalFloor || actorMinZ >= portalCeiling))
 		{
@@ -2670,12 +2674,9 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 				bool insideWindowSafe = (actorMinZ >= (portalFloor + 16.0f) && actorMaxZ <= (portalCeiling - 16.0f));
 
 				// Extract precision double vectors for 2D line distance formulas safely inside the active pass
-				float x1 = ld->v1->fX();
-				float y1 = ld->v1->fY();
-				float dx = ld->Delta().X;
-				float dy = ld->Delta().Y;
-				float px = thing->X();
-				float py = thing->Y();
+				float x1 = ld->v1->fX(); float y1 = ld->v1->fY();
+				float dx = ld->Delta().X; float dy = ld->Delta().Y;
+				float px = thing->X(); float py = thing->Y();
 
 				float lineLength = sqrt(dx * dx + dy * dy);
 				float distToLine = 99999.0f;

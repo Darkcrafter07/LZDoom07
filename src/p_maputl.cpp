@@ -86,6 +86,26 @@
 #include "portal.h"
 #include "p_tags.h"
 
+
+
+#ifdef _MSC_VER
+// Everything seems to work just fine even with such warnings.
+// Disable warning about conversion from 'double' to 'float', possible loss of data.
+#pragma warning(disable:4244)
+// Disable warning about 'initializing': truncation from 'double' to 'float'
+#pragma warning(disable:4305)
+#endif
+
+//	#if defined(__GNUC__) || defined(__clang__)
+//	// GCC/Clang: Disable warnings about implicit float conversions.
+//	// -Wfloat-conversion handles double to float specifically.
+//	// -Wconversion is a broader check for all type casts.
+//	#pragma GCC diagnostic ignored "-Wfloat-conversion"
+//	#pragma GCC diagnostic ignored "-Wconversion"
+//	#endif
+
+
+
 sector_t *P_PointInSectorBuggy(double x, double y);
 int P_VanillaPointOnDivlineSide(double x, double y, const divline_t* line);
 
@@ -288,6 +308,7 @@ void P_LineOpening (FLineOpening &open, AActor *actor, const line_t *linedef, co
 
 		// Pull dynamic/absolute coordinates straight from informational harvester core
 		float portalFloor, portalCeiling = 0.0f;
+		float actorMinZ, actorMaxZ = 0.0f;
 		FPortalCutHeights cut;
 		GetLinePortalCutHeights(linedef, targetSector, &cut);
 
@@ -297,8 +318,8 @@ void P_LineOpening (FLineOpening &open, AActor *actor, const line_t *linedef, co
 		// Smart entity window-state verification logic only if valid heights exist
 		if (cut.HasDynamicHeights && actor != NULL)
 		{
-			double actorMinZ = actor->Z();
-			double actorMaxZ = actor->Top();
+			actorMinZ = actor->Z();
+			actorMaxZ = actor->Top();
 
 			// Check if the projectile or entity is strictly INSIDE the custom window span
 			bool insideWindow = (actorMinZ >= portalFloor && actorMaxZ <= portalCeiling);

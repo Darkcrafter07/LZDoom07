@@ -1767,7 +1767,8 @@ void GLWall::Process(seg_t *seg, sector_t * frontsector, sector_t * backsector, 
 
 				// ANTI-RECURSION CULLING: If the moving lift gap is completely closed/collapsed (Floor >= Ceiling),
 				// we force fallback to vanilla sector heights to completely block recursive loop freezes!
-				if (portalFloor >= portalCeiling)
+				//if (portalFloor >= portalCeiling)
+				if (portalFloor >= portalCeiling || fabsf(portalCeiling - portalFloor) <= 0.1f)
 				{
 					// Keep stable baseline sector boundaries, do not apply custom cut overrides
 				}
