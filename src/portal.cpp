@@ -1365,16 +1365,19 @@ bool P_CollectConnectedGroups(int startgroup, const DVector3 &position, double u
 // by [Darkcrafter07]
 // ===================================================================================================================
 
-FPortalCutHeights GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector)
+void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPortalCutHeights *result)
 {
-	FPortalCutHeights result;
-	result.Floor = 0.0f;
-	result.Ceiling = 0.0f;
-	result.OffsetDistVisual = 0.0f;
-	result.OffsetDistMovement = 0.0f;
-	result.HasDynamicHeights = false;
+	if (!result) return;
 
-	if (!ld) return result;
+	// HARDWARE WIPE: Guarantee that memory is completely clean and zeroed on every single call!
+	// This blocks any ghost frames from leaking memory junk during Resolution/Fullscreen switches.
+	memset(result, 0, sizeof(FPortalCutHeights));
+	result->Floor = -99999.0f;
+	result->Ceiling = 99999.0f;
+	result->HasDynamicHeights = false;
+
+	// CRITICAL SAFETY SHIELD: If line pointer is completely null or corrupted during resolution reset, abort!
+	if (!ld) return;
 
 	float customFloor = 0.0f;
 	float customCeiling = 0.0f;
@@ -1393,17 +1396,22 @@ FPortalCutHeights GetLinePortalCutHeights(const line_t *ld, const sector_t *fron
 	const sector_t* activeSector = ld->frontsector;
 	if (frontsector) activeSector = frontsector;
 
+	// CRITICAL SAFETY SHIELD: If the master sector pointer is invalid during Alt+Enter, abort pass!
+	if (!activeSector) return;
+
 	// OMNIDIRECTIONAL SCANNER: Evaluate BOTH sides of the wall (front and back)
-	// to guarantee hitscans and projectiles track the lifts from any side of the mirror!
+	// Secure pointer validation logic inside array elements to permanently freeze memory crashes!
 	const sector_t* sectorsToCheck[2] =
 	{
-		frontsector ? frontsector : ld->frontsector,
-		ld->sidedef[1] ? ld->sidedef[1]->sector : nullptr
+		activeSector,
+		(ld->sidedef && ld->sidedef[1] != nullptr) ? ld->sidedef[1]->sector : nullptr
 	};
 
 	for (int s = 0; s < 2; s++)
 	{
 		const sector_t* checkSector = sectorsToCheck[s];
+
+		// CRITICAL SAFETY SHIELD: If the target sector or its sub-extension doesn't exist yet, skip smoothly!
 		if (!checkSector || !checkSector->e) continue;
 
 		for (auto rover : checkSector->e->XFloor.ffloors)
@@ -1439,15 +1447,19 @@ FPortalCutHeights GetLinePortalCutHeights(const line_t *ld, const sector_t *fron
 					int isTopRover = GetUDMFInt(UDMF_Line, dummyLineIndex, "user_lineportal3dfloortop");
 					int isBotRover = GetUDMFInt(UDMF_Line, dummyLineIndex, "user_lineportal3dfloorbot");
 
-					if (isTopRover == 1 && !found3DfloorTop)
+					// FINAL DOUBLE CHECK: Ensure dummy model exists to protect plane projections
+					if (rover->model)
 					{
-						customCeiling = (float)rover->model->floorplane.ZatPoint(windowVertexPos);
-						found3DfloorTop = true;
-					}
-					if (isBotRover == 1 && !found3DfloorBot)
-					{
-						customFloor = (float)rover->model->ceilingplane.ZatPoint(windowVertexPos);
-						found3DfloorBot = true;
+						if (isTopRover == 1 && !found3DfloorTop)
+						{
+							customCeiling = (float)rover->model->floorplane.ZatPoint(windowVertexPos);
+							found3DfloorTop = true;
+						}
+						if (isBotRover == 1 && !found3DfloorBot)
+						{
+							customFloor = (float)rover->model->ceilingplane.ZatPoint(windowVertexPos);
+							found3DfloorBot = true;
+						}
 					}
 				}
 			}
@@ -1462,46 +1474,42 @@ FPortalCutHeights GetLinePortalCutHeights(const line_t *ld, const sector_t *fron
 	// STAGE 2 & 3: PRIORITY CHAIN FOUND EXPERIMENTING WITH P_TRACE.CPP
 	if (found3dfloorsOnLinePortals)
 	{
-		if (found3DfloorTop) result.Ceiling = customCeiling + (float)ld->args[4];
-		if (found3DfloorBot) result.Floor = customFloor + (float)ld->args[1];
+		if (found3DfloorTop) result->Ceiling = customCeiling + (float)ld->args[4];
+		if (found3DfloorBot) result->Floor = customFloor + (float)ld->args[1];
 
-		if (!found3DfloorTop) result.Ceiling = 99999.0f;
-		if (!found3DfloorBot) result.Floor = -99999.0f;
+		if (!found3DfloorTop) result->Ceiling = 99999.0f;
+		if (!found3DfloorBot) result->Floor = -99999.0f;
 
-		result.HasDynamicHeights = true;
+		result->HasDynamicHeights = true;
 	}
-	// FIXED SECURITY SHIELD: We execute the map editor args fallback ONLY if this line 
-	// is explicitly a configured portal! This blocks standard walls/doors from picking memory junk!
 	else if (ld->isLinePortal() && (ld->args[1] != 0 || ld->args[4] != 0))
 	{
-		result.Floor = (float)ld->args[1];
-		result.Ceiling = (float)ld->args[4];
-		result.HasDynamicHeights = true;
+		result->Floor = (float)ld->args[1];
+		result->Ceiling = (float)ld->args[4];
+		result->HasDynamicHeights = true;
 	}
 	else
 	{
-		result.Floor = -99999.0f;
-		result.Ceiling = 99999.0f;
-		result.HasDynamicHeights = false;
+		result->Floor = -99999.0f;
+		result->Ceiling = 99999.0f;
+		result->HasDynamicHeights = false;
 	}
 
 	// STAGE 4: PROCESS VISUAL AND MOVEMENT OFFSETS INDEPENDENTLY
 	float rawOffset = (float)GetUDMFInt(UDMF_Line, ld->Index(), "user_lineportaloffsetvisual");
 	if (rawOffset != 0.0f)
 	{
-		result.OffsetDistVisual = fabsf(rawOffset) - 0.5f;
-		if (result.OffsetDistVisual < 0.0f) result.OffsetDistVisual = 0.0f;
+		result->OffsetDistVisual = fabsf(rawOffset) - 0.5f;
+		if (result->OffsetDistVisual < 0.0f) result->OffsetDistVisual = 0.0f;
 
-		result.OffsetDistMovement = result.OffsetDistVisual;
+		result->OffsetDistMovement = result->OffsetDistVisual;
 
 		int physicsIntensity = GetUDMFInt(UDMF_Line, ld->Index(), "user_lineportaloffsetphysics");
 		if (physicsIntensity > 1)
 		{
-			result.OffsetDistMovement *= (float)physicsIntensity;
+			result->OffsetDistMovement *= (float)physicsIntensity;
 		}
 	}
-
-	return result;
 }
 
 //============================================================================

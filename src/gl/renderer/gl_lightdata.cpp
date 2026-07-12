@@ -1,4 +1,4 @@
-// 
+// gl_lightdata.cpp
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2002-2016 Christoph Oelckers
@@ -440,14 +440,14 @@ void gl_SetFog(int lightlevel, int rellight, bool fullbright, const FColormap *c
 
 	if (level.flags&LEVEL_HASFADETABLE)
 	{
-		fogdensity=70;
-		fogcolor=0x808080;
+		fogdensity = 70;
+		fogcolor = 0x808080;
 	}
 	else if (cmap != NULL && !fullbright)
 	{
 		fogcolor = cmap->FadeColor;
 		fogdensity = gl_GetFogDensity(lightlevel, fogcolor, cmap->FogDensity, cmap->BlendFactor);
-		fogcolor.a=0;
+		fogcolor.a = 0;
 	}
 	else
 	{
@@ -456,18 +456,18 @@ void gl_SetFog(int lightlevel, int rellight, bool fullbright, const FColormap *c
 	}
 
 	// Make fog a little denser when inside a skybox
-	if (GLPortal::inskybox) fogdensity+=fogdensity/2;
+	if (GLPortal::inskybox) fogdensity += fogdensity / 2;
 
 
 	// no fog in enhanced vision modes!
-	if (fogdensity==0 || gl_fogmode == 0)
+	if (fogdensity == 0 || gl_fogmode == 0)
 	{
 		gl_RenderState.EnableFog(false);
-		gl_RenderState.SetFog(0,0);
+		gl_RenderState.SetFog(0, 0);
 	}
 	else
 	{
-		if ((glset.lightmode == 2 || (glset.lightmode >= 8 && cmap->BlendFactor > 0)) && fogcolor == 0)
+		if (cmap && (glset.lightmode == 2 || (glset.lightmode >= 8 && cmap->BlendFactor > 0)) && fogcolor == 0)
 		{
 			float light = gl_CalcLightLevel(lightlevel, rellight, false, cmap->BlendFactor);
 			gl_SetShaderLight(light, lightlevel);
@@ -481,14 +481,14 @@ void gl_SetFog(int lightlevel, int rellight, bool fullbright, const FColormap *c
 		// so always use black
 		if (isadditive)
 		{
-			fogcolor=0;
+			fogcolor = 0;
 		}
 
 		gl_RenderState.EnableFog(true);
 		gl_RenderState.SetFog(fogcolor, fogdensity);
 
 		// Korshun: fullbright fog like in software renderer.
-		if (glset.lightmode >= 8 && cmap->BlendFactor == 0 && glset.brightfog && fogdensity != 0 && fogcolor != 0)
+		if (glset.lightmode >= 8 && cmap && cmap->BlendFactor == 0 && glset.brightfog && fogdensity != 0 && fogcolor != 0)
 		{
 			gl_RenderState.SetSoftLightLevel(255);
 		}

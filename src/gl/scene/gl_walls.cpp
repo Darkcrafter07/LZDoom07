@@ -1737,18 +1737,26 @@ void GLWall::Process(seg_t *seg, sector_t * frontsector, sector_t * backsector, 
 		{
 			lineportal = linePortalToGL[seg->linedef->portalindex];
 
-			FPortalCutHeights cut = GetLinePortalCutHeights(seg->linedef, seg->frontsector);
+			float portalFloor, portalCeiling, offsetVisDist = 0.0f;
 
-			float customFloor = cut.Floor;
-			float customCeiling = cut.Ceiling;
-			float offsetVisDist = cut.OffsetDistVisual;
+			FPortalCutHeights cut;
+			GetLinePortalCutHeights(seg->linedef, seg->frontsector, &cut);
+
+			portalFloor = cut.Floor;
+			portalCeiling = cut.Ceiling;
+			offsetVisDist = cut.OffsetDistVisual;
 
 			// If no dynamic or absolute heights are configured, fallback to native baseline sector limits
-			if (!cut.HasDynamicHeights) { customFloor = bfh1; customCeiling = bch1; }
+			if (!cut.HasDynamicHeights) { portalFloor = bfh1; portalCeiling = bch1; }
 
+			// At first do it the original way (no portal window cut) to prevent crashes
+			ztop[0] = bch1;
+			ztop[1] = bch2;
+			zbottom[0] = bfh1;
+			zbottom[1] = bfh2;
 			// Inject dynamically calculated variables straight to the hardware stencil mask
-			ztop[0] = ztop[1] = customCeiling;
-			zbottom[0] = zbottom[1] = customFloor;
+			ztop[0] = ztop[1] = portalCeiling;
+			zbottom[0] = zbottom[1] = portalFloor;
 
 			if (offsetVisDist > 0.0f)
 			{

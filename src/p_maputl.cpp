@@ -287,10 +287,12 @@ void P_LineOpening (FLineOpening &open, AActor *actor, const line_t *linedef, co
 		}
 
 		// Pull dynamic/absolute coordinates straight from informational harvester core
-		FPortalCutHeights cut = GetLinePortalCutHeights(linedef, targetSector);
+		float portalFloor, portalCeiling = 0.0f;
+		FPortalCutHeights cut;
+		GetLinePortalCutHeights(linedef, targetSector, &cut);
 
-		double portalFloor = (double)cut.Floor;
-		double portalCeiling = (double)cut.Ceiling;
+		portalFloor = (float)cut.Floor;
+		portalCeiling = (float)cut.Ceiling;
 
 		// Smart entity window-state verification logic only if valid heights exist
 		if (cut.HasDynamicHeights && actor != NULL)

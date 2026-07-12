@@ -1376,7 +1376,8 @@ bool PIT_CheckLine(FMultiBlockLinesIterator &mit, FMultiBlockLinesIterator::Chec
 	if (ld->isLinePortal())
 	{
 		// --- Line portal with window cut - START ---
-		FPortalCutHeights cut = GetLinePortalCutHeights(ld, ld->frontsector);
+		FPortalCutHeights cut;
+		GetLinePortalCutHeights(ld, ld->frontsector, &cut);
 
 		double portalFloor = (double)cut.Floor;
 		double portalCeiling = (double)cut.Ceiling;
@@ -1437,7 +1438,8 @@ static bool PIT_CheckPortal(FMultiBlockLinesIterator &mit, FMultiBlockLinesItera
 	// if the actor or projectile is safely flying ABOVE or BELOW the custom window frame.
 	if (cres.line && cres.line->isLinePortal())
 	{
-		FPortalCutHeights cut = GetLinePortalCutHeights(cres.line, cres.line->frontsector);
+		FPortalCutHeights cut;
+		GetLinePortalCutHeights(cres.line, cres.line->frontsector, &cut);
 
 		double portalFloor = cut.Floor;
 		double portalCeiling = cut.Ceiling;
@@ -2617,7 +2619,7 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 
 	// Line portal window variables - START
 	bool forcePassCheckPosition = false;
-	float portalFloor, portalCeiling = 0.0f;
+	float portalFloor, portalCeiling, OffsetDistMovement = 0.0f;
 	float actorMinZ, actorMaxZ = 0.0f;
 	// Line portal window variables - FINISH
 
@@ -2654,11 +2656,12 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 			if (ld && ld->isLinePortal())
 			{
 				// Clear informational harvest from our unified engine core inside the active loop
-				FPortalCutHeights cut = GetLinePortalCutHeights(ld, ld->frontsector);
+				FPortalCutHeights cut;
+				GetLinePortalCutHeights(ld, ld->frontsector, &cut);
 
-				float portalFloor = cut.Floor;
-				float portalCeiling = cut.Ceiling;
-				float OffsetDistMovement = cut.OffsetDistMovement;
+				portalFloor = cut.Floor;
+				portalCeiling = cut.Ceiling;
+				OffsetDistMovement = cut.OffsetDistMovement;
 
 				if (!cut.HasDynamicHeights) continue;
 
@@ -2667,15 +2670,15 @@ bool P_TryMove(AActor *thing, const DVector2 &pos,
 				bool insideWindowSafe = (actorMinZ >= (portalFloor + 16.0f) && actorMaxZ <= (portalCeiling - 16.0f));
 
 				// Extract precision double vectors for 2D line distance formulas safely inside the active pass
-				double x1 = ld->v1->fX();
-				double y1 = ld->v1->fY();
-				double dx = ld->Delta().X;
-				double dy = ld->Delta().Y;
-				double px = thing->X();
-				double py = thing->Y();
+				float x1 = ld->v1->fX();
+				float y1 = ld->v1->fY();
+				float dx = ld->Delta().X;
+				float dy = ld->Delta().Y;
+				float px = thing->X();
+				float py = thing->Y();
 
-				double lineLength = sqrt(dx * dx + dy * dy);
-				double distToLine = 99999.0;
+				float lineLength = sqrt(dx * dx + dy * dy);
+				float distToLine = 99999.0f;
 
 				if (lineLength > 0.0)
 				{

@@ -62,18 +62,18 @@ EXTERN_CVAR (Bool, r_deathcamera)
 //
 //==========================================================================
 
-void GLSceneDrawer::DrawPSprite (player_t * player,DPSprite *psp, float sx, float sy, bool hudModelStep, int OverrideShader, bool alphatexture)
+void GLSceneDrawer::DrawPSprite(player_t * player, DPSprite *psp, float sx, float sy, bool hudModelStep, int OverrideShader, bool alphatexture, double ticfrac)
 {
-	float			fU1,fV1;
-	float			fU2,fV2;
+	float			fU1, fV1;
+	float			fU2, fV2;
 	float			tx;
-	float			x1,y1,x2,y2;
+	float			x1, y1, x2, y2;
 	float			scale;
 	float			scalex;
 	float			ftexturemid;
-	
+
 	// [BB] In the HUD model step we just render the model and break out. 
-	if ( hudModelStep )
+	if (hudModelStep)
 	{
 		gl_RenderHUDModel(psp, sx, sy);
 		return;
@@ -87,7 +87,9 @@ void GLSceneDrawer::DrawPSprite (player_t * player,DPSprite *psp, float sx, floa
 	FMaterial * tex = FMaterial::ValidateTexture(lump, true, false);
 	if (!tex) return;
 
-	gl_RenderState.SetMaterial(tex, CLAMP_XY_NOMIP, psp->Flags & PSPF_PLAYERTRANSLATED ? psp->Owner->mo->Translation : 0, OverrideShader, alphatexture);
+	uint32_t trans = psp->GetTranslation() != 0 ? psp->GetTranslation() : 0;
+	if ((psp->Flags & PSPF_PLAYERTRANSLATED)) trans = psp->Owner->mo->Translation;
+	gl_RenderState.SetMaterial(tex, CLAMP_XY_NOMIP, trans, OverrideShader, alphatexture);
 
 	float vw = (float)viewwidth;
 	float vh = (float)viewheight;
@@ -99,13 +101,14 @@ void GLSceneDrawer::DrawPSprite (player_t * player,DPSprite *psp, float sx, floa
 	scalex = (320.0f / (240.0f * r_viewwindow.WidescreenRatio)) * vw / 320;
 
 	tx = (psp->Flags & PSPF_MIRROR) ? ((160 - r.width) - (sx + r.left)) : (sx - (160 - r.left));
-	x1 = tx * scalex + vw/2;
-	if (x1 > vw)	return; // off the right side
+	x1 = tx * scalex + vw / 2;
+	// [MC] Disabled these because vertices can be manipulated now.
+	//if (x1 > vw)	return; // off the right side
 	x1 += viewwindowx;
 
 	tx += r.width;
 	x2 = tx * scalex + vw / 2;
-	if (x2 < 0) return; // off the left side
+	//if (x2 < 0) return; // off the left side
 	x2 += viewwindowx;
 
 	// killough 12/98: fix psprite positioning problem
@@ -115,8 +118,8 @@ void GLSceneDrawer::DrawPSprite (player_t * player,DPSprite *psp, float sx, floa
 	y1 = viewwindowy + vh / 2 - (ftexturemid * scale);
 	y2 = y1 + (r.height * scale) + 1;
 
-
-	if (!(mirror) != !(psp->Flags & (PSPF_FLIP)))
+	const bool flip = (psp->Flags & PSPF_FLIP);
+	if (!(mirror) != !(flip))
 	{
 		fU2 = tex->GetSpriteUL();
 		fV1 = tex->GetSpriteVT();
@@ -129,7 +132,91 @@ void GLSceneDrawer::DrawPSprite (player_t * player,DPSprite *psp, float sx, floa
 		fV1 = tex->GetSpriteVT();
 		fU2 = tex->GetSpriteUR();
 		fV2 = tex->GetSpriteVB();
-		
+
+	}
+
+	// [MC] Code copied from DTA_Rotate.
+	// Big thanks to IvanDobrovski who helped me modify this.
+
+	WeaponInterp Vert;
+	Vert.v[0] = FVector2(x1, y1);
+	Vert.v[1] = FVector2(x1, y2);
+	Vert.v[2] = FVector2(x2, y1);
+	Vert.v[3] = FVector2(x2, y2);
+
+	for (int i = 0; i < 4; i++)
+	{
+		const float cx = (flip) ? -psp->Coord[i].X : psp->Coord[i].X;
+		Vert.v[i] += FVector2(cx * scalex, psp->Coord[i].Y * scale);
+	}
+	if (psp->rotation != 0.0 || !psp->scale.isZero())
+	{
+		// [MC] Sets up the alignment for starting the pivot at, in a corner.
+		float anchorx, anchory;
+		switch (psp->VAlign)
+		{
+		default:
+		case PSPA_TOP:		anchory = 0.0;	break;
+		case PSPA_CENTER:	anchory = 0.5;	break;
+		case PSPA_BOTTOM:	anchory = 1.0;	break;
+		}
+
+		switch (psp->HAlign)
+		{
+		default:
+		case PSPA_LEFT:		anchorx = 0.0;	break;
+		case PSPA_CENTER:	anchorx = 0.5;	break;
+		case PSPA_RIGHT:	anchorx = 1.0;	break;
+		}
+		// Handle PSPF_FLIP.
+		if (flip) anchorx = 1.0 - anchorx;
+
+		FAngle rot = float((flip) ? -psp->rotation.Degrees : psp->rotation.Degrees);
+		const float cosang = rot.Cos();
+		const float sinang = rot.Sin();
+
+		float xcenter, ycenter;
+		const float width = x2 - x1;
+		const float height = y2 - y1;
+		const float px = float((flip) ? -psp->pivot.X : psp->pivot.X);
+		const float py = float(psp->pivot.Y);
+
+		// Set up the center and offset accordingly. PivotPercent changes it to be a range [0.0, 1.0]
+		// instead of pixels and is enabled by default.
+		if (psp->Flags & PSPF_PIVOTPERCENT)
+		{
+			xcenter = x1 + (width * anchorx + width * px);
+			ycenter = y1 + (height * anchory + height * py);
+		}
+		else
+		{
+			xcenter = x1 + (width * anchorx + scalex * px);
+			ycenter = y1 + (height * anchory + scale * py);
+		}
+
+		// Now adjust the position, rotation and scale of the image based on the latter two.
+		for (int i = 0; i < 4; i++)
+		{
+			Vert.v[i] -= {xcenter, ycenter};
+			const float xx = xcenter + psp->scale.X * (Vert.v[i].X * cosang + Vert.v[i].Y * sinang);
+			const float yy = ycenter - psp->scale.Y * (Vert.v[i].X * sinang - Vert.v[i].Y * cosang);
+			Vert.v[i] = { xx, yy };
+		}
+	}
+	psp->Vert = Vert;
+
+	if (psp->scale.X == 0.0 || psp->scale.Y == 0.0)
+		return;
+
+	const bool interp = (psp->InterpolateTic || psp->Flags & PSPF_INTERPOLATE);
+
+	for (int i = 0; i < 4; i++)
+	{
+		FVector2 t = Vert.v[i];
+		if (interp)
+			t = psp->Prev.v[i] + (psp->Vert.v[i] - psp->Prev.v[i]) * ticfrac;
+
+		Vert.v[i] = t;
 	}
 
 	if (tex->GetTransparent() || OverrideShader != -1)
@@ -138,10 +225,10 @@ void GLSceneDrawer::DrawPSprite (player_t * player,DPSprite *psp, float sx, floa
 	}
 	gl_RenderState.Apply();
 	FQuadDrawer qd;
-	qd.Set(0, x1, y1, 0, fU1, fV1);
-	qd.Set(1, x1, y2, 0, fU1, fV2);
-	qd.Set(2, x2, y1, 0, fU2, fV1);
-	qd.Set(3, x2, y2, 0, fU2, fV2);
+	qd.Set(0, Vert.v[0].X, Vert.v[0].Y, 0, fU1, fV1);
+	qd.Set(1, Vert.v[1].X, Vert.v[1].Y, 0, fU1, fV2);
+	qd.Set(2, Vert.v[2].X, Vert.v[2].Y, 0, fU2, fV1);
+	qd.Set(3, Vert.v[3].X, Vert.v[3].Y, 0, fU2, fV2);
 	qd.Render(GL_TRIANGLE_STRIP);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.5f);
 }
@@ -212,13 +299,12 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 {
 	bool brightflash = false;
 	unsigned int i;
-	int lightlevel=0;
+	int lightlevel = 0;
 	FColormap cm;
-	cm.Clear();  // Initialize with default values
 	sector_t * fakesec;
-	AActor * playermo=players[consoleplayer].camera;
-	player_t * player=playermo->player;
-	
+	AActor * playermo = players[consoleplayer].camera;
+	player_t * player = playermo->player;
+
 	s3d::Stereo3DMode::getCurrentMode().AdjustPlayerSprites();
 
 	AActor *camera = r_viewpoint.camera;
@@ -227,7 +313,7 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 	if (!player ||
 		!r_drawplayersprites ||
 		!camera->player ||
-		(player->cheats & CF_CHASECAM) || 
+		(player->cheats & CF_CHASECAM) ||
 		(r_deathcamera && camera->health <= 0))
 		return;
 
@@ -259,7 +345,7 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 	if (FixedColormap)
 	{
 		lightlevel = 255;
-		cm.Clear();      // Re-initialize to ensure clean state
+		cm.Clear();
 		fakesec = viewsector;
 	}
 	else
@@ -273,20 +359,20 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 		if (viewsector->e->XFloor.ffloors.Size() && !(level.flags3 & LEVEL3_NOCOLOREDSPRITELIGHTING))
 		{
 			TArray<lightlist_t> & lightlist = viewsector->e->XFloor.lightlist;
-			for(i=0;i<lightlist.Size();i++)
+			for (i = 0; i < lightlist.Size(); i++)
 			{
 				double lightbottom;
 
-				if (i<lightlist.Size()-1) 
+				if (i < lightlist.Size() - 1)
 				{
-					lightbottom=lightlist[i+1].plane.ZatPoint(r_viewpoint.Pos);
+					lightbottom = lightlist[i + 1].plane.ZatPoint(r_viewpoint.Pos);
 				}
-				else 
+				else
 				{
-					lightbottom=viewsector->floorplane.ZatPoint(r_viewpoint.Pos);
+					lightbottom = viewsector->floorplane.ZatPoint(r_viewpoint.Pos);
 				}
 
-				if (lightbottom<player->viewz) 
+				if (lightbottom < player->viewz)
 				{
 					cm = lightlist[i].extra_colormap;
 					lightlevel = gl_ClampLight(*lightlist[i].p_lightlevel);
@@ -294,9 +380,9 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 				}
 			}
 		}
-		else 
+		else
 		{
-			cm=fakesec->Colormap;   // Fallback to sector's colormap
+			cm = fakesec->Colormap;
 			if (level.flags3 & LEVEL3_NOCOLOREDSPRITELIGHTING) cm.ClearColor();
 		}
 
@@ -320,7 +406,7 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 		lightlevel = gl_CheckSpriteGlow(viewsector, lightlevel, playermo->Pos());
 
 	}
-	
+
 	// Korshun: fullbright fog in opengl, render weapon sprites fullbright (but don't cancel out the light color!)
 	if (glset.brightfog && ((level.flags&LEVEL_HASFADETABLE) || cm.FadeColor != 0))
 	{
@@ -334,7 +420,7 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 	int oldlightmode = glset.lightmode;
 	if (glset.lightmode >= 8) glset.lightmode = 2;
 
-	for(DPSprite *psp = player->psprites; psp != nullptr && psp->GetID() < PSP_TARGETCENTER; psp = psp->GetNext())
+	for (DPSprite *psp = player->psprites; psp != nullptr && psp->GetID() < PSP_TARGETCENTER; psp = psp->GetNext())
 	{
 		auto rs = psp->GetRenderStyle(playermo->RenderStyle, playermo->Alpha);
 
@@ -412,13 +498,13 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 			: ThingColor.Modulate(viewsector->SpecialColors[sector_t::sprites]);
 		gl_RenderState.SetObjectColor(finalcol);
 
-		if (psp->GetState() != nullptr) 
+		if (psp->GetState() != nullptr)
 		{
 			FColormap cmc = cm;
 			int ll = lightlevel;
 			if (bright)
 			{
-				if (fakesec == viewsector || in_area != area_below)	
+				if (fakesec == viewsector || in_area != area_below)
 				{
 					cmc.MakeWhite();
 				}
@@ -426,8 +512,8 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 				{
 					// under water areas keep most of their color for fullbright objects
 					cmc.LightColor.r = (3 * cmc.LightColor.r + 0xff) / 4;
-					cmc.LightColor.g = (3*cmc.LightColor.g + 0xff)/4;
-					cmc.LightColor.b = (3*cmc.LightColor.b + 0xff)/4;
+					cmc.LightColor.g = (3 * cmc.LightColor.g + 0xff) / 4;
+					cmc.LightColor.b = (3 * cmc.LightColor.b + 0xff) / 4;
 				}
 				ll = 255;
 			}
@@ -460,8 +546,7 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 			if (psp->firstTic)
 			{ // Can't interpolate the first tic.
 				psp->firstTic = false;
-				psp->oldx = psp->x;
-				psp->oldy = psp->y;
+				psp->ResetInterpolation();
 			}
 
 			float sx = psp->oldx + (psp->x - psp->oldx) * r_viewpoint.TicFrac;
@@ -480,7 +565,7 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 			}
 
 
-			DrawPSprite(player, psp, sx, sy, hudModelStep, OverrideShader, !!(RenderStyle.Flags & STYLEF_RedIsAlpha));
+			DrawPSprite(player, psp, sx, sy, hudModelStep, OverrideShader, !!(RenderStyle.Flags & STYLEF_RedIsAlpha), r_viewpoint.TicFrac);
 		}
 	}
 	gl_RenderState.SetObjectColor(0xffffffff);
@@ -498,15 +583,15 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 
 void GLSceneDrawer::DrawTargeterSprites()
 {
-	AActor * playermo=players[consoleplayer].camera;
-	player_t * player=playermo->player;
-	
-	if(!player || playermo->renderflags&RF_INVISIBLE || !r_drawplayersprites ||
-		GLRenderer->mViewActor!=playermo) return;
+	AActor * playermo = players[consoleplayer].camera;
+	player_t * player = playermo->player;
+
+	if (!player || playermo->renderflags&RF_INVISIBLE || !r_drawplayersprites ||
+		GLRenderer->mViewActor != playermo) return;
 
 	gl_RenderState.EnableBrightmap(false);
 	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	gl_RenderState.AlphaFunc(GL_GEQUAL,gl_mask_sprite_threshold);
+	gl_RenderState.AlphaFunc(GL_GEQUAL, gl_mask_sprite_threshold);
 	gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	gl_RenderState.ResetColor();
 	gl_RenderState.SetTextureMode(TM_MODULATE);
@@ -514,6 +599,7 @@ void GLSceneDrawer::DrawTargeterSprites()
 	// The Targeter's sprites are always drawn normally.
 	for (DPSprite *psp = player->FindPSprite(PSP_TARGETCENTER); psp != nullptr; psp = psp->GetNext())
 	{
-		if (psp->GetState() != nullptr) DrawPSprite(player, psp, psp->x, psp->y, false, 0, false);
+		if (psp->GetState() != nullptr) DrawPSprite(player, psp, psp->x, psp->y, false, 0, false, r_viewpoint.TicFrac);
 	}
 }
+

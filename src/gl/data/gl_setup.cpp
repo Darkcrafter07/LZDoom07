@@ -411,47 +411,50 @@ static void InitVertexData()
 {
 	TArray<TArray<int>> vt_sectorlists(level.vertexes.Size(), true);
 
-	for(auto &line : level.lines)
+	for (auto &line : level.lines)
 	{
-		for(int j = 0; j < 2; ++j)
+		for (int j = 0; j < 2; ++j)
 		{
-			vertex_t * v = j==0? line.v1 : line.v2;
+			vertex_t * v = j == 0 ? line.v1 : line.v2;
 
-			for(int k = 0; k < 2; ++k)
+			for (int k = 0; k < 2; ++k)
 			{
-				sector_t * sec = k==0? line.frontsector : line.backsector;
+				sector_t * sec = k == 0 ? line.frontsector : line.backsector;
 
 				if (sec)
 				{
-					extsector_t::xfloor &x = sec->e->XFloor;
-
 					AddToVertex(sec, vt_sectorlists[v->Index()]);
 					if (sec->heightsec) AddToVertex(sec->heightsec, vt_sectorlists[v->Index()]);
+					extsector_t::xfloor& x = sec->e->XFloor;
+					for (auto& ff : x.ffloors)
+					{
+						AddToVertex(ff->model, vt_sectorlists[v->Index()]);
+					}
 				}
 			}
 		}
 	}
 
-	for(unsigned i = 0; i < level.vertexes.Size(); ++i)
+	for (unsigned i = 0; i < level.vertexes.Size(); ++i)
 	{
 		auto &vert = level.vertexes[i];
 		int cnt = vt_sectorlists[i].Size();
 
 		vert.dirty = true;
-		vert.numheights=0;
-		if (cnt>1)
+		vert.numheights = 0;
+		if (cnt > 1)
 		{
-			vert.numsectors= cnt;
-			vert.sectors=new sector_t*[cnt];
-			vert.heightlist = new float[cnt*2];
-			for(int j=0;j<cnt;j++)
+			vert.numsectors = cnt;
+			vert.sectors = new sector_t*[cnt];
+			vert.heightlist = new float[cnt * 2];
+			for (int j = 0; j < cnt; j++)
 			{
 				vert.sectors[j] = &level.sectors[vt_sectorlists[i][j]];
 			}
 		}
 		else
 		{
-			vert.numsectors=0;
+			vert.numsectors = 0;
 		}
 	}
 }

@@ -1156,11 +1156,11 @@ void GLHorizonPortal::DrawContents()
 	PortalAll.Clock();
 
 	FMaterial * gltexture;
-	player_t * player=&players[consoleplayer];
+	player_t * player = &players[consoleplayer];
 	GLSectorPlane * sp = &origin->plane;
 
-	gltexture=FMaterial::ValidateTexture(sp->texture, false, true);
-	if (!gltexture) 
+	gltexture = FMaterial::ValidateTexture(sp->texture, false, true);
+	if (!gltexture)
 	{
 		ClearScreen();
 		PortalAll.Unclock();
@@ -1175,7 +1175,7 @@ void GLHorizonPortal::DrawContents()
 		drawer->SetColor(255, 0, origin->colormap, 1.f);
 		drawer->SetFog(255, 0, &origin->colormap, false);
 	}
-	else 
+	else
 	{
 		int rel = getExtraLight();
 		drawer->SetColor(origin->lightlevel, rel, origin->colormap, 1.0f);
@@ -1183,12 +1183,13 @@ void GLHorizonPortal::DrawContents()
 	}
 
 
+	gl_RenderState.EnableBrightmap(true);
 	gl_RenderState.SetMaterial(gltexture, CLAMP_NONE, 0, -1, false);
 	gl_RenderState.SetObjectColor(origin->specialcolor);
 
 	gl_SetPlaneTextureRotation(sp, gltexture);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
-	gl_RenderState.BlendFunc(GL_ONE,GL_ZERO);
+	gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
 	gl_RenderState.Apply();
 
 
@@ -1202,7 +1203,6 @@ void GLHorizonPortal::DrawContents()
 	PortalAll.Unclock();
 
 }
-
 
 //-----------------------------------------------------------------------------
 //-----------------------------------------------------------------------------

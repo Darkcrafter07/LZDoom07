@@ -285,6 +285,6 @@ struct FPortalCutHeights
 	float OffsetDistMovement;
 	bool HasDynamicHeights;
 };
-FPortalCutHeights GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector);
+void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPortalCutHeights *result);
 
 #endif

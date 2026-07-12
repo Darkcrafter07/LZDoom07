@@ -266,10 +266,13 @@ void FTraceInfo::EnterLinePortal(FPathTraverse &pt, intercept_t *in)
 			targetSector = li->getPortalDestination()->frontsector;
 		}
 
-		FPortalCutHeights cut = GetLinePortalCutHeights(li, targetSector);
+		float portalFloor, portalCeiling = 0.0f;
 
-		double portalFloor = cut.Floor;
-		double portalCeiling = cut.Ceiling;
+		FPortalCutHeights cut;
+		GetLinePortalCutHeights(li, targetSector, &cut);
+
+		portalFloor = cut.Floor;
+		portalCeiling = cut.Ceiling;
 
 		// exit.Z contains the exact 3D height where the bullet hitscan ray intersects the line.
 		// Unconditional evaluation pass: regular windows bypass this smoothly via infinite bounds!
