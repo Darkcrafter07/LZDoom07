@@ -1379,8 +1379,8 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 	// CRITICAL SAFETY SHIELD: If line pointer is completely null or corrupted during resolution reset, abort!
 	if (!ld) return;
 
-	float customFloor = 0.0f;
-	float customCeiling = 0.0f;
+	float portalFloor = 0.0f;
+	float portalCeiling = 0.0f;
 	bool found3DfloorTop = false;
 	bool found3DfloorBot = false;
 	bool found3dfloorsOnLinePortals = false;
@@ -1450,14 +1450,33 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 					// FINAL DOUBLE CHECK: Ensure dummy model exists to protect plane projections
 					if (rover->model)
 					{
+						// VAVOOM DOOM ENGINE IMPLEMENTATION:
+						// We check Vavoom flags (0x800000 / 0x40000000) on the dummy 3d-floor sector control line
+						bool isVavoomInverted = (rover->flags & (0x800000 | 0x40000000)) != 0;
+
+						// ROVER ABOVE US (Acts as the Window Ceiling)
+						// Vanilla: We look at the BOTTOM plane of the ceiling box.
+						// Vavoom: Planes are swapped via std::swap, so we look at the TOP plane!
 						if (isTopRover == 1 && !found3DfloorTop)
 						{
-							customCeiling = (float)rover->model->floorplane.ZatPoint(windowVertexPos);
+							if (isVavoomInverted)
+								portalCeiling = (float)rover->top.plane->ZatPoint(windowVertexPos);
+							else
+								portalCeiling = (float)rover->bottom.plane->ZatPoint(windowVertexPos);
+
 							found3DfloorTop = true;
 						}
+
+						// ROVER BELOW US (Acts as the Window Floor)
+						// Vanilla: We look at the TOP plane of the floor box.
+						// Vavoom: Planes are swapped via std::swap, so we look at the BOTTOM plane!
 						if (isBotRover == 1 && !found3DfloorBot)
 						{
-							customFloor = (float)rover->model->ceilingplane.ZatPoint(windowVertexPos);
+							if (isVavoomInverted)
+								portalFloor = (float)rover->bottom.plane->ZatPoint(windowVertexPos);
+							else
+								portalFloor = (float)rover->top.plane->ZatPoint(windowVertexPos);
+
 							found3DfloorBot = true;
 						}
 					}
@@ -1474,8 +1493,9 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 	// STAGE 2 & 3: PRIORITY CHAIN FOUND EXPERIMENTING WITH P_TRACE.CPP
 	if (found3dfloorsOnLinePortals)
 	{
-		if (found3DfloorTop) result->Ceiling = customCeiling + (float)ld->args[4];
-		if (found3DfloorBot) result->Floor = customFloor + (float)ld->args[1];
+		// Standard GZDoom way: clean unmodified baseline offsets with strict brackets locked!
+		if (found3DfloorTop) result->Ceiling = portalCeiling + (float)ld->args[4];
+		if (found3DfloorBot) result->Floor = portalFloor + (float)ld->args[1];
 
 		if (!found3DfloorTop) result->Ceiling = 99999.0f;
 		if (!found3DfloorBot) result->Floor = -99999.0f;
@@ -1504,7 +1524,7 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 
 		result->OffsetDistMovement = result->OffsetDistVisual;
 
-		int physicsIntensity = GetUDMFInt(UDMF_Line, ld->Index(), "user_lineportaloffsetphysics");
+		int physicsIntensity = GetUDMFInt(UDMF_Line, ld->Index(), "user_lineportaloffsetmovement");
 		if (physicsIntensity > 1)
 		{
 			result->OffsetDistMovement *= (float)physicsIntensity;
