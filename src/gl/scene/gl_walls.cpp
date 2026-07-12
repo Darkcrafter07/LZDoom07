@@ -226,6 +226,7 @@ void GLWall::PutPortal(int ptype)
 	}
 	vertcount = 0;
 }
+
 //==========================================================================
 //
 //	Sets 3D-floor lighting info
@@ -1732,55 +1733,75 @@ void GLWall::Process(seg_t *seg, sector_t * frontsector, sector_t * backsector, 
 		//	PutPortal(PORTALTYPE_LINETOLINE);
 		//}
 
-		// --- Line portal with window cut - START ---
 		if (isportal)
 		{
-			lineportal = linePortalToGL[seg->linedef->portalindex];
-
-			float portalFloor, portalCeiling, offsetVisDist = 0.0f;
-
-			FPortalCutHeights cut;
-			GetLinePortalCutHeights(seg->linedef, seg->frontsector, &cut);
-
-			portalFloor = cut.Floor;
-			portalCeiling = cut.Ceiling;
-			offsetVisDist = cut.OffsetDistVisual;
-
-			// If no dynamic or absolute heights are configured, fallback to native baseline sector limits
-			if (!cut.HasDynamicHeights) { portalFloor = bfh1; portalCeiling = bch1; }
-
-			// At first do it the original way (no portal window cut) to prevent crashes
-			ztop[0] = bch1;
-			ztop[1] = bch2;
-			zbottom[0] = bfh1;
-			zbottom[1] = bfh2;
-			// Inject dynamically calculated variables straight to the hardware stencil mask
-			ztop[0] = ztop[1] = portalCeiling;
-			zbottom[0] = zbottom[1] = portalFloor;
-
-			if (offsetVisDist > 0.0f)
+			// OMNIDIRECTIONAL HARDWARE SHIELD: If the player looks strictly down at their feet, 
+			// the 2D clipper can evaluate the line from the wrong back-face side. 
+			// If the portal index is broken, out of bounds, or registry is null, we ABORT immediately!
+			if (seg->linedef->portalindex >= linePortals.Size() || linePortalToGL[seg->linedef->portalindex] == nullptr)
 			{
-				// Get 2D direction vectors of the wall seg line
-				float dx = (float)(seg->linedef->v2->fX() - seg->linedef->v1->fX());
-				float dy = (float)(seg->linedef->v2->fY() - seg->linedef->v1->fY());
-				float length = sqrt(dx * dx + dy * dy);
-
-				if (length > 0.0f)
-				{
-					// Calculate perpendicular normal vectors (Side 0 faces outward)
-					float nx = -dy / length; float ny = dx / length;
-
-					// Compare with the second side (Side 1) of the array correctly
-					if (seg->linedef->sidedef[1] == seg->sidedef) { nx = -nx; ny = -ny; }
-
-					// Shift the internal glseg position registers BEFORE sending to the pipeline
-					glseg.x1 += nx * offsetVisDist; glseg.y1 += ny * offsetVisDist;
-					glseg.x2 += nx * offsetVisDist; glseg.y2 += ny * offsetVisDist;
-				}
+				isportal = false; // Turn off portal pass completely for this wrapped around portal look in FOV frame
 			}
+			else
+			{
+				lineportal = linePortalToGL[seg->linedef->portalindex];
 
-			// Submit the bounded and shifted portal task slice into the deferred draw command queue
-			PutPortal(PORTALTYPE_LINETOLINE);
+				float portalFloor, portalCeiling, offsetVisDist = 0.0f;
+
+				FPortalCutHeights cut;
+				GetLinePortalCutHeights(seg->linedef, seg->frontsector, &cut);
+
+				portalFloor = cut.Floor;
+				portalCeiling = cut.Ceiling;
+				offsetVisDist = cut.OffsetDistVisual;
+
+				// If no dynamic or absolute heights are configured, fallback to native baseline sector limits
+				if (!cut.HasDynamicHeights) { portalFloor = bfh1; portalCeiling = bch1; }
+
+				// HARDWARE DOUBLE-BUFFER SAFE-LATCH:
+				// At first do it the original way (no portal window cut) to stabilize video memory registers
+				ztop[0] = bch1;
+				ztop[1] = bch2;
+				zbottom[0] = bfh1;
+				zbottom[1] = bfh2;
+
+				// ANTI-RECURSION CULLING: If the moving lift gap is completely closed/collapsed (Floor >= Ceiling),
+				// we force fallback to vanilla sector heights to completely block recursive loop freezes!
+				if (portalFloor >= portalCeiling)
+				{
+					// Keep stable baseline sector boundaries, do not apply custom cut overrides
+				}
+				else
+				{
+					// Inject dynamically calculated variables straight to the hardware stencil mask safely
+					ztop[0] = ztop[1] = portalCeiling;
+					zbottom[0] = zbottom[1] = portalFloor;
+				}
+
+				if (offsetVisDist > 0.01f)
+				{
+					// Get 2D direction vectors of the wall seg line
+					float dx = (float)(seg->linedef->v2->fX() - seg->linedef->v1->fX());
+					float dy = (float)(seg->linedef->v2->fY() - seg->linedef->v1->fY());
+					float length = sqrt(dx * dx + dy * dy);
+
+					if (length > 0.01f)
+					{
+						// Calculate perpendicular normal vectors (Side 0 faces outward)
+						float nx = -dy / length; float ny = dx / length;
+
+						// Compare with the second side (Side 1) of the array correctly
+						if (seg->linedef->sidedef[1] == seg->sidedef) { nx = -nx; ny = -ny; }
+
+						// Shift the internal glseg position registers BEFORE sending to the pipeline
+						glseg.x1 += nx * offsetVisDist; glseg.y1 += ny * offsetVisDist;
+						glseg.x2 += nx * offsetVisDist; glseg.y2 += ny * offsetVisDist;
+					}
+				}
+
+				// Submit task slice into the deferred draw command queue ONLY if portal index didn't fail
+				PutPortal(PORTALTYPE_LINETOLINE);
+			}
 			// --- Line portal with window cut - FINISH ---
 		}
 

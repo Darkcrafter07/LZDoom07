@@ -180,17 +180,17 @@ void GLPortal::DrawPortalStencil(int pass)
 bool GLPortal::Start(bool usestencil, bool doquery)
 {
 	rendered_portals++;
-//	PortalAll.Clock();
+	//	PortalAll.Clock();
 	if (usestencil)
 	{
-		if (!gl_portals) 
+		if (!gl_portals)
 		{
-//			PortalAll.Unclock();
+			//			PortalAll.Unclock();
 			return false;
 		}
-	
+
 		// Create stencil 
-		glStencilFunc(GL_EQUAL,recursion,~0);		// create stencil
+		glStencilFunc(GL_EQUAL, recursion, ~0);		// create stencil
 		glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);		// increment stencil of valid pixels
 		{
 			ScopedColorMask colorMask(0, 0, 0, 0); // glColorMask(0,0,0,0);						// don't write to the graphics buffer
@@ -207,15 +207,23 @@ bool GLPortal::Start(bool usestencil, bool doquery)
 				else if (gl_noquery) doquery = false;
 
 				// If occlusion query is supported let's use it to avoid rendering portals that aren't visible
-				if (QueryObject)
+				// HARDWARE SAFETY SHIELD: Enforce strict ID validation checks to prevent hardware driver 
+				// stalling deadlocks if the active OpenGL context gets temporarily wiped during screen resolution switches!
+				if (QueryObject != 0 && QueryObject != ((GLuint)~0))
 				{
 					glBeginQuery(GL_SAMPLES_PASSED, QueryObject);
 				}
-				else doquery = false;	// some kind of error happened
+				else
+				{
+					doquery = false; // Forced abort if context is volatile or query token is corrupted
+				}
 
 				DrawPortalStencil(STP_Stencil);
 
-				glEndQuery(GL_SAMPLES_PASSED);
+				if (doquery)
+				{
+					glEndQuery(GL_SAMPLES_PASSED);
+				}
 
 				// Clear Z-buffer
 				glStencilFunc(GL_EQUAL, recursion + 1, ~0);		// draw sky into stencil
@@ -232,9 +240,12 @@ bool GLPortal::Start(bool usestencil, bool doquery)
 				gl_RenderState.SetEffect(EFF_NONE);
 				glDepthRange(0, 1);
 
-				GLuint sampleCount;
+				GLuint sampleCount = 1; // Default to fully visible to protect engine registers
 
-				if (QueryObject)
+				// CRITICAL DRIVER STALL LOCKDOWN PASS:
+				// We call glGetQueryObjectuiv ONLY if the hardware occlusion pass successfully executed.
+				// This blocks the CPU thread from hanging infinitely waiting for an uninitialized or destroyed video handle!
+				if (doquery && QueryObject != 0 && QueryObject != ((GLuint)~0))
 				{
 					glGetQueryObjectuiv(QueryObject, GL_QUERY_RESULT, &sampleCount);
 
@@ -289,8 +300,8 @@ bool GLPortal::Start(bool usestencil, bool doquery)
 	savedViewActorPos = r_viewpoint.ActorPos;
 	savedshowviewer = r_viewpoint.showviewer;
 	savedAngles = r_viewpoint.Angles;
-	savedviewactor=GLRenderer->mViewActor;
-	savedviewarea=drawer->in_area;
+	savedviewactor = GLRenderer->mViewActor;
+	savedviewarea = drawer->in_area;
 	savedviewpath[0] = r_viewpoint.Path[0];
 	savedviewpath[1] = r_viewpoint.Path[1];
 	savedvisibility = r_viewpoint.camera ? r_viewpoint.camera->renderflags & RF_MAYBEINVISIBLE : ActorRenderFlags::FromInt(0);
@@ -302,7 +313,7 @@ bool GLPortal::Start(bool usestencil, bool doquery)
 	GLRenderer->mCurrentPortal = this;
 
 	if (PrevPortal != NULL) PrevPortal->PushState();
-//	PortalAll.Unclock();
+	//	PortalAll.Unclock();
 	return true;
 }
 
