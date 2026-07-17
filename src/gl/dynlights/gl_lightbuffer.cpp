@@ -21,7 +21,7 @@
 //
 /*
 ** gl_lightbuffer.cpp
-** Buffer data maintenance for dynamic lights
+** Buffer data maintenance for dynamic lights (D07 modern GL3+?)
 **
 **/
 

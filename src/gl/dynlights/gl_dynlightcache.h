@@ -24,6 +24,12 @@
 
 #pragma once
 
+//                           -----------------------
+//     -------------=========================================------------------------------
+// ================   DYNAMIC LIGHT 3D-MODEL OCCLUSION START   =================================
+//     -------------=========================================------------------------------
+//                           -----------------------
+
 struct FLegacyDynlight3DmdlCache
 {
 	float absX, absY, absZ; // Absolute world dynlight coordinates
@@ -60,3 +66,65 @@ struct F3DmdlDynlightUnifiedCacheEntry
 
 #define UNIFIED_3DMDL_DYNLIGHT_CACHE_SIZE 4096
 extern F3DmdlDynlightUnifiedCacheEntry g_3DmdlDynlightActorUnifiedCache[UNIFIED_3DMDL_DYNLIGHT_CACHE_SIZE];
+
+//                           -----------------------
+//     -------------=========================================------------------------------
+// ================   DYNAMIC LIGHT 3D-MODEL OCCLUSION FINISH   ================================
+//     -------------=========================================------------------------------
+//                           -----------------------
+
+
+
+
+
+
+
+//                           -----------------------
+//     -------------=========================================------------------------------
+// ================   DYNAMIC LIGHT MAP GEOMETRY OCCLUSION START   ===========================
+//     -------------=========================================------------------------------
+//                           -----------------------
+
+//class GLWall;
+//class GLFlat;
+//
+//// Struct to store baked wall segment parameters
+//struct FBakedWall
+//{
+//	GLWall* wallObj;
+//	int     masked;
+//	int     foggy;
+//};
+//
+//// Struct to store baked floor/ceiling flat parameters
+//struct FBakedFlat
+//{
+//	GLFlat* flatObj;
+//	int     masked;
+//	int     foggy;
+//};
+//
+//// Global high-speed linear cache descriptor
+//struct FGLBSPCache
+//{
+//	int lastCachedTime;
+//	bool isBakingActive;
+//
+//	TArray<FBakedWall> visibleWalls;
+//	TArray<FBakedFlat> visibleFlats;
+//
+//	void Clear()
+//	{
+//		visibleWalls.Clear();
+//		visibleFlats.Clear();
+//	}
+//};
+//
+//// Global cache instance variable shared across gl_bsp.cpp and gl_scene.cpp
+//extern FGLBSPCache g_BSPRenderCache;
+
+//                           -----------------------
+//     -------------=========================================------------------------------
+// ================   DYNAMIC LIGHT MAP GEOMETRY OCCLUSION FINISH   ==========================
+//     -------------=========================================------------------------------
+//                           -----------------------

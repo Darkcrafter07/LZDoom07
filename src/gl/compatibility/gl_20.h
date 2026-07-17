@@ -73,9 +73,13 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 // Setup parameters to project one dynamic light onto a flat plane (floor/ceiling)
 bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive);
 
+//// Bakes big radius static dynlights into gl_walls_draw.cpp, case "GLPASS_BRIGHTMAP_LEGACY" to save on CPU
+//bool gl_GetWallStaticLightmaps(seg_t *seg, float ztop, float zbottom, float *topLightmapColor, float *bottomLightmapColor);
+//// Bakes big radius static dynlights into gl_flats.cpp, case "GLPASS_BRIGHTMAP_LEGACY" to save on CPU
+//bool gl_GetFlatStaticLightmaps(subsector_t *sub, const Plane &plane, float *lightmapColor);
+
 // Binds the native dynamic light spotlight filter mask texture (glLight) to the render state
 bool gl_SetupLightTexture();
-bool gl_SetupLightTextureForDynlightLegacy();
 
 // Main rendering loops for legacy multipass fallback path
 void gl_FillScreen();

@@ -70,6 +70,7 @@
 #include "gl/utility/gl_clock.h"
 #include "gl/utility/gl_templates.h"
 #include "vm.h"
+#include "gl/dynlights/gl_dynlightcache.h"
 
 // GL1x/GL2x legacy includes, externs and vars - START
 bool gl_IsLegacyModelLightingPass;
@@ -86,7 +87,7 @@ CVAR(Float, gl_mask_threshold, 0.5f,CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Float, gl_mask_sprite_threshold, 0.5f,CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_sort_textures, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
-// *legacy* It deemed impossible to have software-renderer alike camera glow
+// It deemed impossible to have software-renderer alike camera glow
 // in fixed-pipeline old OpenGL1 or OpenGL2 without using shader. Well, here we go.
 // The CVAR is unused in this file but declared here, and later gets the job done
 // by spawning a special dynlight with a zscript flashlight alike mod.
@@ -373,7 +374,6 @@ void GLSceneDrawer::RenderScene(int recursion)
 			RenderMultipassStuff();
 
 			// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Start ---
-			// MAKES IT 1.5 TIMES SLOWER!
 			if (gl_legacy_dynlight_overbright && GLRenderer && GLRenderer->mLightCount > 0 && !FixedColormap)
 			{
 				// Pure OpenGL 1.1 State Machine Lock - 100% isolated from gl_RenderState caches!
@@ -469,33 +469,6 @@ void GLSceneDrawer::RenderScene(int recursion)
 
 	// Render models with their standard base pass (pass is GLPASS_PLAIN here)
 	gl_drawinfo->drawlists[GLDL_MODELS].Draw(pass);
-
-	//// [Darkcrafter07] - Legacy Mode 3D Models Dynamic Lighting Pass
-	//if (gl.lightmethod == LM_LEGACY && GLRenderer->mLightCount > 0 && !FixedColormap)
-	//{
-	//	// 1. Setup states for additive light accumulation overlay
-	//	glDepthMask(false);          
-	//	glDepthFunc(GL_EQUAL);       
-	//	gl_RenderState.EnableFog(false); 
-	//	gl_RenderState.BlendFunc(GL_ONE, GL_ONE); 
-	//	gl_RenderState.Apply();
-
-	//	// 2. Set the tracking flag for the model renderer
-	//	gl_IsLegacyModelLightingPass = true;
-
-	//	// 3. Redraw the models list using our specialized dynamic light pass
-	//	gl_drawinfo->drawlists[GLDL_MODELS].Draw(GLPASS_MODEL_DYNLIGHT_LEGACY);
-
-	//	// 4. Reset the tracking flag back immediately
-	//	gl_IsLegacyModelLightingPass = false;
-
-	//	// 5. Restore standard state right after the models are lit up
-	//	glDepthMask(true);
-	//	glDepthFunc(GL_LESS);
-	//	gl_RenderState.EnableFog(true);
-	//	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	//	gl_RenderState.Apply();
-	//}
 
 	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	// Part 4: Draw decals (not a real pass)
