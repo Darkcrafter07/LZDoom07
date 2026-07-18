@@ -42,11 +42,11 @@ CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)
 //CVAR(Bool, gl_legacy_dynlight_baked_huge, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CVAR(Bool, gl_legacy_dynlight_compress_range, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-CVAR(Float, gl_legacy_dynlight_brightness, 1.0f, CVAR_ARCHIVE)
-CVAR(Int, gl_legacy_dynlight_saturation_thresh, 148, CVAR_ARCHIVE)     // Dark surface cutoff ceiling (Range: 32 to 192)
-CVAR(Float, gl_legacy_dynlight_saturation_dark, 0.35f, CVAR_ARCHIVE)   // Color saturation modifier applied to dim/dark surfaces
-CVAR(Float, gl_legacy_dynlight_saturation_bright, 0.35f, CVAR_ARCHIVE) // Color saturation modifier applied to bright surfaces
-CVAR(Float, gl_legacy_dynlight_hue_shift, 0.0f, CVAR_ARCHIVE) // Shift dynamic light hue (-180.0 to 180.0). 0 = Disabled.
+CVAR(Float, gl_legacy_dynlight_brightness, 1.8f, CVAR_ARCHIVE)
+CVAR(Int, gl_legacy_dynlight_saturation_thresh, 90, CVAR_ARCHIVE)     // Dark surface cutoff ceiling (Range: 32 to 192)
+CVAR(Float, gl_legacy_dynlight_saturation_dark, 0.2, CVAR_ARCHIVE)   // Color saturation modifier applied to dim/dark surfaces
+CVAR(Float, gl_legacy_dynlight_saturation_bright, 0.5f, CVAR_ARCHIVE) // Color saturation modifier applied to bright surfaces
+CVAR(Float, gl_legacy_dynlight_hue_shift, 22.4f, CVAR_ARCHIVE) // Shift dynamic light hue (-180.0 to 180.0). 0 = Disabled.
 
 CVAR(Bool, gl_legacy_dynlight_overbright, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) // Dynlight overbright global switch used in gl_scene.cpp
 CVAR(Float, gl_legacy_dynlight_overbright_flats, 0.125f, CVAR_ARCHIVE) // Intensity multiplier for flats
@@ -271,7 +271,8 @@ void FRenderState::ApplyFixedFunction()
 		}
 		if (ffFogDensity != mLightParms[2])
 		{
-			glFogf(GL_FOG_DENSITY, mLightParms[2] * -0.6931471f);
+			//glFogf(GL_FOG_DENSITY, mLightParms[2] * -0.6931471f);
+			glFogf(GL_FOG_DENSITY, mLightParms[2] * -1.12f);
 			ffFogDensity = mLightParms[2];
 		}
 	}

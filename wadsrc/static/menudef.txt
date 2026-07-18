@@ -2633,6 +2633,7 @@ OptionMenu "GLLightOptions" protected
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAP",                 gl_light_shadowmap,            "YesNo"
 	Option "$GLLIGHTMNU_LEGACYDYNLIGHTCOMPRESSRANGE",    gl_legacy_dynlight_compress_range, "OnOff"
 	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTBRIGHTNESS",       gl_legacy_dynlight_brightness, 1.0, 1.75, 0.01
+	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTSATURATIONTHRESH", gl_legacy_dynlight_saturation_thresh, 32, 225, 1.0
 	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTSATURATIONDARK",   gl_legacy_dynlight_saturation_dark, 0.0, 1.25, 0.01
 	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTSATURATIONBRIGHT", gl_legacy_dynlight_saturation_bright, 0.0, 1.25, 0.01
 	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTHUESHIFT",         gl_legacy_dynlight_hue_shift, 0.0, 35.0, 0.01
