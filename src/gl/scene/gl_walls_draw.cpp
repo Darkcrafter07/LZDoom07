@@ -649,35 +649,29 @@ void GLWall::Draw(int pass)
 
 	case GLPASS_BRIGHTMAP_LEGACY:
 	{
-		// Use brightmap texture mode for glowing flats too to save CPU on sector iterations cycle
 		const float overallGlowIntensity = 0.9f;
 
-		// 1. Compute the native base brightmap asset light attenuation factor.
 		int wallLight = this->lightlevel;
 		float intensityFactor;
-		if (wallLight < 96)
-		{
-			intensityFactor = 1.0f; // Maintain maximum power in dark ambient configurations.
-		}
+		if (wallLight < 96) intensityFactor = 1.0f;
 		else
 		{
 			const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
 			float factor = 1.0f - ((float)(wallLight - 96) * rangeFactorInv);
-			factor = factor + 0.1f * factor * (1.0f - factor); // Apply subtle mid-range parabola boost.
+			factor = factor + 0.1f * factor * (1.0f - factor);
 			intensityFactor = (factor * 0.99f) + 0.01f;
 		}
 		if (intensityFactor > 1.0f) intensityFactor = 1.0f;
 		if (intensityFactor < 0.0f) intensityFactor = 0.0f;
 
-		// Initialize local vector blocks to safely extract sector floor/ceiling parameters.
 		float topglow[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 		float bottomglow[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-		// Extract hardware color variables and specific Glow Heights from the source sector.
 		bool hasWallGlow = (frontsector != nullptr) && gl_GetWallGlow(frontsector, topglow, bottomglow);
 		FMaterial *bm = gltexture ? gltexture->GetBrightmapLegacy() : nullptr;
 
-		// Extract local wall segment horizontal vectors and standard texture heights.
+		//if (!bm && !hasWallGlow) break; // why?
+
 		float x1 = (float)glseg.x1; float y1 = (float)glseg.y1;
 		float x2 = (float)glseg.x2; float y2 = (float)glseg.y2;
 		float zb0 = (float)zbottom[0]; float zt0 = (float)ztop[0];
@@ -688,14 +682,12 @@ void GLWall::Draw(int pass)
 
 		if (bm) // PASS A: RENDER NATIVE BRIGHTMAP TEXTURE MASK ASSET
 		{
-			// Bind the custom black-masked fullbright texture asset.
 			gl_RenderState.SetMaterial(bm, flags & 3, 0, -1, false);
 			gl_RenderState.Apply();
 
 			glBegin(GL_QUADS);
 			for (int i = 0; i < 4; i++)
 			{
-				// Standard non-clipped vertex projection pass for the texture emitters.
 				glTexCoord2f(tcs[i].u, tcs[i].v);
 				glColor4f(intensityFactor, intensityFactor, intensityFactor, 1.0f);
 
@@ -711,143 +703,126 @@ void GLWall::Draw(int pass)
 		//{
 		//	float topStaticLight[3] = { 0.0f, 0.0f, 0.0f };
 		//	float bottomStaticLight[3] = { 0.0f, 0.0f, 0.0f };
-
+		//
 		//	// Fetch pre-baked lightmaps utilizing original float bounds (zt0, zb0, zt1, zb1)
 		//	bool hasBakedLights = gl_GetWallStaticLightmaps(seg, zt0, zb0, topStaticLight, bottomStaticLight);
-
+		//
 		//	if (hasBakedLights)
 		//	{
 		//		// Re-bind the diffuse wall texture so that our lightmaps blend identically to glowing flats
 		//		gl_RenderState.SetTextureMode(TM_MODULATE);
 		//		gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
 		//		gl_RenderState.Apply();
-
+		//
 		//		// HARDWARE ANTI-Z-FIGHTING PIPELINE SECURE (Directly cloned from Graf's glow logic)
 		//		glDepthFunc(GL_LEQUAL);
 		//		glDepthMask(false);
 		//		glEnable(GL_POLYGON_OFFSET_FILL);
 		//		glPolygonOffset(-0.5f, -0.5f);
-
+		//
 		//		glBegin(GL_QUADS);
-
+		//
 		//		// Vertex 0: Bottom-Left Boundary
 		//		glTexCoord2f(tcs[0].u, tcs[0].v);
-		//		glColor4f(bottomStaticLight[0] * overallGlowIntensity, bottomStaticLight[1] * overallGlowIntensity, bottomStaticLight[2] * overallGlowIntensity, 1.0f);
+		//		glColor4f(bottomStaticLight[0] * overallGlowIntensity, bottomStaticLight[1] * 
+		//			overallGlowIntensity, bottomStaticLight[2] * overallGlowIntensity, 1.0f);
 		//		glVertex3f(x1, zb0, y1);
-
+		//
 		//		// Vertex 1: Top-Left Upper Edge
 		//		glTexCoord2f(tcs[1].u, tcs[1].v);
-		//		glColor4f(topStaticLight[0] * overallGlowIntensity, topStaticLight[1] * overallGlowIntensity, topStaticLight[2] * overallGlowIntensity, 1.0f);
+		//		glColor4f(topStaticLight[0] * overallGlowIntensity, topStaticLight[1] * 
+		//			overallGlowIntensity, topStaticLight[2] * overallGlowIntensity, 1.0f);
 		//		glVertex3f(x1, zt0, y1);
-
+		//
 		//		// Vertex 2: Top-Right Upper Edge
 		//		glTexCoord2f(tcs[2].u, tcs[2].v);
-		//		glColor4f(topStaticLight[0] * overallGlowIntensity, topStaticLight[1] * overallGlowIntensity, topStaticLight[2] * overallGlowIntensity, 1.0f);
+		//		glColor4f(topStaticLight[0] * overallGlowIntensity, topStaticLight[1] * 
+		//			overallGlowIntensity, topStaticLight[2] * overallGlowIntensity, 1.0f);
 		//		glVertex3f(x2, zt1, y2);
-
+		//
 		//		// Vertex 3: Bottom-Right Boundary
 		//		glTexCoord2f(tcs[3].u, tcs[3].v);
-		//		glColor4f(bottomStaticLight[0] * overallGlowIntensity, bottomStaticLight[1] * overallGlowIntensity, bottomStaticLight[2] * overallGlowIntensity, 1.0f);
+		//		glColor4f(bottomStaticLight[0] * overallGlowIntensity, bottomStaticLight[1] * 
+		//			overallGlowIntensity, bottomStaticLight[2] * overallGlowIntensity, 1.0f);
 		//		glVertex3f(x2, zb1, y2);
-
+		//
 		//		glEnd();
-
+		//
 		//		// Rollback temporary pipeline offset states cleanly
 		//		glDisable(GL_POLYGON_OFFSET_FILL);
 		//		glDepthMask(true);
 		//		glDepthFunc(GL_EQUAL);
-
+		//
 		//		// Re-synchronize back to brightmap state layer for the next conditional passes
 		//		gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
 		//	}
 		//}
 
-		if (hasWallGlow) // PASS C: RENDER PROCEDURAL SECTOR GLOW GRADIENTS (FIXED-FUNCTION EXTRACTION)
+		if (hasWallGlow) // PASS C: RENDER PROCEDURAL SECTOR GLOW GRADIENTS
 		{
-			// Re-bind the diffuse wall texture so that our glow multiplies correctly over the wall patterns.
 			gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
 			gl_RenderState.Apply();
 
-			// HARDWARE ANTI-Z-FIGHTING PIPELINE SECURE:
-			// 1. Force LEQUAL testing to allow the sub-pass geometry to overlap pixel-perfect layouts.
 			glDepthFunc(GL_LEQUAL);
-			// 2. Clear depth mask to lock writing operations and isolate alpha blending overhead.
 			glDepthMask(false);
-			// 3. Offset projection values slightly closer to camera viewpoint to eliminate shimmering.
 			glEnable(GL_POLYGON_OFFSET_FILL);
 			glPolygonOffset(-0.5f, -0.5f);
 
-			// Extract designated heights limits from index [3] of the verified float arrays.
 			float floorGlowHeight = bottomglow[3];
 			float ceilGlowHeight = topglow[3];
 
-			// --- SUB-PASS C1: REPLICATE FLOOR GLOW GRADIENT ---
 			if (floorGlowHeight > 0.0f)
 			{
-				// SECURE PORTAL HEIGHT FIXED BINDING:
-				// Calculate absolute physics level of fluid by querying sector planes directly.
-				// This completely stops the gradient from jumping up to upper portal/door arch archways.
 				float trueFloorZ0 = (float)frontsector->floorplane.ZatPoint(seg->v1->fPos());
 				float trueFloorZ1 = (float)frontsector->floorplane.ZatPoint(seg->v2->fPos());
-				// Compute target ceiling boundaries where procedural light falloff drops to zero.
 				float splitZ0 = trueFloorZ0 + floorGlowHeight;
 				float splitZ1 = trueFloorZ1 + floorGlowHeight;
-				// Clamp final execution spaces strictly inside the physical rendering coordinates of the current wall.
 				float rBottomZ0 = trueFloorZ0; if (rBottomZ0 < zb0) rBottomZ0 = zb0;
 				float rBottomZ1 = trueFloorZ1; if (rBottomZ1 < zb1) rBottomZ1 = zb1;
 				float rTopZ0 = splitZ0; if (rTopZ0 > zt0) rTopZ0 = zt0;
 				float rTopZ1 = splitZ1; if (rTopZ1 > zt1) rTopZ1 = zt1;
 
-				// Only execute vertex pipe if the calculated glow slice intersects visible wall space.
 				if (rTopZ0 > rBottomZ0 && rTopZ1 > rBottomZ1)
 				{
-					// HARDWARE STABILITY / TEXTURE SQUASHING FIX:
-					// Query full raw dimensions of texture mappings (Top minus Bottom) across both sides.
 					float v_range0 = tcs[1].v - tcs[0].v; float v_range1 = tcs[2].v - tcs[3].v;
 					float h_total0 = zt0 - zb0; float h_total1 = zt1 - zb1;
 
-					// Interpolate native V coordinate points proportionally to secure precise 1:1 pixel alignment.
-					// This completely stops texture crunching when drawing clipped sub-geometry on high walls.
 					float sliceBottomV0 = tcs[0].v + (h_total0 > 0.0f ? ((rBottomZ0 - zb0) / h_total0) * v_range0 : 0.0f);
 					float sliceBottomV1 = tcs[3].v + (h_total1 > 0.0f ? ((rBottomZ1 - zb1) / h_total1) * v_range1 : 0.0f);
 					float sliceTopV0 = tcs[0].v + (h_total0 > 0.0f ? ((rTopZ0 - zb0) / h_total0) * v_range0 : 0.0f);
 					float sliceTopV1 = tcs[3].v + (h_total1 > 0.0f ? ((rTopZ1 - zb1) / h_total1) * v_range1 : 0.0f);
 
-					// Determine individual vertex lighting factors depending on true distance from liquid floor.
 					float intensityBottom0 = 1.0f - ((rBottomZ0 - trueFloorZ0) / floorGlowHeight);
 					float intensityBottom1 = 1.0f - ((rBottomZ1 - trueFloorZ1) / floorGlowHeight);
 					float intensityTop0 = 1.0f - ((rTopZ0 - trueFloorZ0) / floorGlowHeight);
 					float intensityTop1 = 1.0f - ((rTopZ1 - trueFloorZ1) / floorGlowHeight);
 
 					glBegin(GL_QUADS);
-					// Vertex 0: Bottom-Left Boundary
 					glTexCoord2f(tcs[0].u, sliceBottomV0);
-					glColor4f(bottomglow[0] * intensityBottom0 * overallGlowIntensity, bottomglow[1] * intensityBottom0 *
+					glColor4f(bottomglow[0] * intensityBottom0 * overallGlowIntensity, bottomglow[1] * intensityBottom0 * 
 						overallGlowIntensity, bottomglow[2] * intensityBottom0 * overallGlowIntensity, 1.0f);
 					glVertex3f(x1, rBottomZ0, y1);
-					// Vertex 1: Top-Left Upper Slice Edge (Approaching 0% lighting brightness)
+
 					glTexCoord2f(tcs[1].u, sliceTopV0);
-					glColor4f(bottomglow[0] * intensityTop0 * overallGlowIntensity, bottomglow[1] * intensityTop0 *
+					glColor4f(bottomglow[0] * intensityTop0 * overallGlowIntensity, bottomglow[1] * intensityTop0 * 
 						overallGlowIntensity, bottomglow[2] * intensityTop0 * overallGlowIntensity, 1.0f);
 					glVertex3f(x1, rTopZ0, y1);
-					// Vertex 2: Top-Right Upper Slice Edge (Approaching 0% lighting brightness)
+
 					glTexCoord2f(tcs[2].u, sliceTopV1);
-					glColor4f(bottomglow[0] * intensityTop1 * overallGlowIntensity, bottomglow[1] * intensityTop1 *
+					glColor4f(bottomglow[0] * intensityTop1 * overallGlowIntensity, bottomglow[1] * intensityTop1 * 
 						overallGlowIntensity, bottomglow[2] * intensityTop1 * overallGlowIntensity, 1.0f);
 					glVertex3f(x2, rTopZ1, y2);
-					// Vertex 3: Bottom-Right Boundary
+
 					glTexCoord2f(tcs[3].u, sliceBottomV1);
-					glColor4f(bottomglow[0] * intensityBottom1 * overallGlowIntensity, bottomglow[1] * intensityBottom1 *
+					glColor4f(bottomglow[0] * intensityBottom1 * overallGlowIntensity, bottomglow[1] * intensityBottom1 * 
 						overallGlowIntensity, bottomglow[2] * intensityBottom1 * overallGlowIntensity, 1.0f);
 					glVertex3f(x2, rBottomZ1, y2);
 					glEnd();
 				}
 			}
 
-			// --- SUB-PASS C2: REPLICATE CEILING GLOW GRADIENT ---
 			if (ceilGlowHeight > 0.0f)
 			{
-				// Extract absolute ceiling heights by processing sector planes directly.
 				float trueCeilZ0 = (float)frontsector->ceilingplane.ZatPoint(seg->v1->fPos());
 				float trueCeilZ1 = (float)frontsector->ceilingplane.ZatPoint(seg->v2->fPos());
 				float splitZ0 = trueCeilZ0 - ceilGlowHeight;
@@ -861,50 +836,52 @@ void GLWall::Draw(int pass)
 				{
 					float v_range0 = tcs[1].v - tcs[0].v; float v_range1 = tcs[2].v - tcs[3].v;
 					float h_total0 = zt0 - zb0; float h_total1 = zt1 - zb1;
+
 					float sliceBottomV0 = tcs[0].v + (h_total0 > 0.0f ? ((rBottomZ0 - zb0) / h_total0) * v_range0 : 0.0f);
 					float sliceBottomV1 = tcs[3].v + (h_total1 > 0.0f ? ((rBottomZ1 - zb1) / h_total1) * v_range1 : 0.0f);
 					float sliceTopV0 = tcs[0].v + (h_total0 > 0.0f ? ((rTopZ0 - zb0) / h_total0) * v_range0 : 0.0f);
 					float sliceTopV1 = tcs[3].v + (h_total1 > 0.0f ? ((rTopZ1 - zb1) / h_total1) * v_range1 : 0.0f);
+
 					float intensityBottom0 = 1.0f - ((trueCeilZ0 - rBottomZ0) / ceilGlowHeight);
 					float intensityBottom1 = 1.0f - ((trueCeilZ1 - rBottomZ1) / ceilGlowHeight);
 					float intensityTop0 = 1.0f - ((trueCeilZ0 - rTopZ0) / ceilGlowHeight);
 					float intensityTop1 = 1.0f - ((trueCeilZ1 - rTopZ1) / ceilGlowHeight);
 
 					glBegin(GL_QUADS);
-
-					// Vertex 0: Lower Split Cut-off Edge
 					glTexCoord2f(tcs[0].u, sliceBottomV0);
-					glColor4f(topglow[0] * intensityBottom0 * overallGlowIntensity, topglow[1] * intensityBottom0 *
+					glColor4f(topglow[0] * intensityBottom0 * overallGlowIntensity, topglow[1] * intensityBottom0 * 
 						overallGlowIntensity, topglow[2] * intensityBottom0 * overallGlowIntensity, 1.0f);
 					glVertex3f(x1, rBottomZ0, y1);
-					// Vertex 1: True Top-Left Boundary
+
 					glTexCoord2f(tcs[1].u, sliceTopV0);
-					glColor4f(topglow[0] * intensityTop0 * overallGlowIntensity, topglow[1] * intensityTop0 *
+					glColor4f(topglow[0] * intensityTop0 * overallGlowIntensity, topglow[1] * intensityTop0 * 
 						overallGlowIntensity, topglow[2] * intensityTop0 * overallGlowIntensity, 1.0f);
 					glVertex3f(x1, rTopZ0, y1);
-					// Vertex 2: True Top-Right Boundary
+
 					glTexCoord2f(tcs[2].u, sliceTopV1);
-					glColor4f(topglow[0] * intensityTop1 * overallGlowIntensity, topglow[1] * intensityTop1 *
+					glColor4f(topglow[0] * intensityTop1 * overallGlowIntensity, topglow[1] * intensityTop1 * 
 						overallGlowIntensity, topglow[2] * intensityTop1 * overallGlowIntensity, 1.0f);
 					glVertex3f(x2, rTopZ1, y2);
-					// Vertex 3: Lower Split Cut-off Edge
+
 					glTexCoord2f(tcs[3].u, sliceBottomV1);
-					glColor4f(topglow[0] * intensityBottom1 * overallGlowIntensity, topglow[1] * intensityBottom1 *
+					glColor4f(topglow[0] * intensityBottom1 * overallGlowIntensity, topglow[1] * intensityBottom1 * 
 						overallGlowIntensity, topglow[2] * intensityBottom1 * overallGlowIntensity, 1.0f);
 					glVertex3f(x2, rBottomZ1, y2);
 					glEnd();
 				}
 			}
-			// Comprehensive symmetric hardware rollback execution.
+
 			glDisable(GL_POLYGON_OFFSET_FILL);
 			glDepthMask(true);
 			glDepthFunc(GL_EQUAL);
 		}
-		// Revert the texture environment state to safe modulation parameters.
+
+		// Clean hardware recovery matrix gate
+		glMatrixMode(GL_MODELVIEW);
 		gl_RenderState.SetTextureMode(TM_MODULATE);
+		gl_RenderState.Apply();
 	}
 	break;
-
 	}
 }
 
