@@ -103,10 +103,10 @@ bool SpriteBboxFacingCameraCrossed1sLineCachedWrapper(AActor* thing, AActor* vie
 bool SpriteCrossed1sidedLinedefCachedWrapper(AActor* thing, AActor* viewer);
 bool SpriteCrossed1sidedVoidLinedefCachedWrapper(AActor *thing, AActor *viewer);
 bool SpriteCrossed1sidedVoidBboxFaceCachedWrapper(AActor *thing, AActor *viewer);
+bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor* viewer, const DVector3& thingpos);
 bool SpriteCrossed2sidedLineSimpleCachedWrapper(AActor *thing, AActor *viewer);
 bool SpriteCrossed2sBBoxFaceLineCachedWrapper(AActor *thing, AActor *viewer);
 bool SpriteCrossed2sBboxFaceWallCachedWrapper(AActor *thing, AActor *viewer);
-bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor* thing, AActor* viewer, const DVector3& thingpos);
 bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor* viewer, AActor* thing);
 bool CheckFacingMidTextureProximityWrapper(AActor* thing, AActor* viewer, TVector3<double>& thingpos);
 bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thing);

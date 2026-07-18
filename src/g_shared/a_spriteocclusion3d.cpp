@@ -62,6 +62,7 @@ bool enableAnamorphCache = true; // gives it a really considerable speed-up
 //         ---===      ***************************************        ===---
 // ******* Anamorphic "Forced-Pespective" common early exit checks - start *******
 
+// --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 // Distance cull checks on big maps with lots of 3D-floors to speed up
 bool IsAnamorphicDistanceCulled(AActor *thing, float gl_anamorphic_spriteclip_distance_cull)
 {
@@ -127,6 +128,254 @@ static bool CheckFrustumCulling(AActor *thing)
 
 	return false; // Not culled by frustum
 }
+// --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+
+
+
+// --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+
+enum EGeometryRadarFlags : uint32_t
+{
+	RADAR_NONE = 0,
+	RADAR_HAS_1SIDED = 1 << 0,      // Solid walls / map boundaries
+	RADAR_HAS_2SIDED_WALL = 1 << 1, // Regular blocking or two-sided portals
+	RADAR_HAS_MIDTEXTURE = 1 << 2,  // Lines containing visible middle textures
+	RADAR_HAS_3DFLOOR = 1 << 3,     // Sectors with active 3D floors
+
+	RADAR_ANY_2SIDED_OBSTACLE = (RADAR_HAS_2SIDED_WALL | RADAR_HAS_MIDTEXTURE | RADAR_HAS_3DFLOOR)
+};
+TArray<uint32_t> SectorRadarMap;
+
+//if (!isGeometryTypePresent(thing->Sector, RADAR_HAS_1SIDED)) // unused yet
+bool isGeometryTypePresent(sector_t* sec, EGeometryRadarFlags targetType)
+{
+	if (!sec) return false;
+
+	// 1. Check for 3D floors layout match
+	if (targetType == RADAR_HAS_3DFLOOR)
+	{
+		if (sec->e && sec->e->XFloor.ffloors.Size() > 0)
+			return true;
+
+		return false;
+	}
+
+	// 2. Iterate through level lines to scan geometry bounds for this sector
+	for (unsigned int j = 0; j < level.lines.Size(); ++j)
+	{
+		line_t* line = &level.lines[j];
+
+		// Filter out lines that do not belong to or bound this specific sector
+		if (line->frontsector != sec && line->backsector != sec)
+			continue;
+
+		// Check for solid boundaries (one-sided lines)
+		if (line->backsector == nullptr)
+		{
+			if (targetType == RADAR_HAS_1SIDED) return true;
+			continue;
+		}
+
+		// Process valid two-sided portals using correct array index pointer tracking
+		if (line->flags & ML_TWOSIDED)
+		{
+			if (targetType == RADAR_HAS_MIDTEXTURE)
+			{
+				if ((line->sidedef[0] && line->sidedef[0]->GetTexture(side_t::mid).isValid()) ||
+					(line->sidedef[1] && line->sidedef[1]->GetTexture(side_t::mid).isValid()))
+				{
+					return true;
+				}
+			}
+			else if (targetType == RADAR_HAS_2SIDED_WALL)
+			{
+				// Ensure it's a regular step/ledge obstacle, not a transparent mid-texture wall
+				if (!((line->sidedef[0] && line->sidedef[0]->GetTexture(side_t::mid).isValid()) ||
+					(line->sidedef[1] && line->sidedef[1]->GetTexture(side_t::mid).isValid())))
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+//if (!isGeometryTypePresentInRadius(thing, RADAR_HAS_1SIDED)) return false;
+bool isGeometryTypePresentInRadius(AActor* thing, EGeometryRadarFlags targetType)
+{
+	if (!thing) return false;
+	const float adjustedRadius = 64.0f;
+
+	// --- 1. LOCAL SANITY CHECK ---
+	// If the adjusted radius is tight and the native sector is known, perform a direct local scan
+	if (adjustedRadius <= thing->radius && thing->Sector)
+	{
+		sector_t* sec = thing->Sector;
+
+		if (targetType == RADAR_HAS_3DFLOOR)
+		{
+			if (sec->e && sec->e->XFloor.ffloors.Size() > 0) return true;
+		}
+	}
+
+	// --- 2. BOUNDING BOX SETUP ---
+	// Establish blockmap coordinates based on the actor's world position and your dynamic particle scale radius
+	float tX = (float)thing->Pos().X;
+	float tY = (float)thing->Pos().Y;
+
+	int minBX = level.blockmap.GetBlockX(tX - adjustedRadius);
+	int maxBX = level.blockmap.GetBlockX(tX + adjustedRadius);
+	int minBY = level.blockmap.GetBlockY(tY - adjustedRadius);
+	int maxBY = level.blockmap.GetBlockY(tY + adjustedRadius);
+
+	// --- 3. GRID CELL SCANNING ---
+	// Loop through the overlapping blockmap grid squares surrounding the expanded sprite bounds
+	for (int bx = minBX; bx <= maxBX; bx++)
+	{
+		for (int by = minBY; by <= maxBY; by++)
+		{
+			// Ignore requests tracking outside legal map dimensions
+			if (!level.blockmap.isValidBlock(bx, by)) continue;
+
+			// Extract the list of lines intersecting this specific blockmap cell
+			int* list = level.blockmap.GetLines(bx, by);
+			for (int i = 0; list[i] != -1; i++)
+			{
+				line_t* line = &level.lines[list[i]];
+
+				// --- 4. LINE CLASSIFICATION PASSES ---
+
+				// Check A: One-sided solid map boundaries
+				if (line->backsector == nullptr)
+				{
+					if (targetType == RADAR_HAS_1SIDED)
+						return true; // Found a void boundary inside the scale radius
+
+					continue; // Skip further front/back evaluations for 1-sided lines
+				}
+
+				// Process sectors bounding this line to detect 3D floors and portals
+				for (int s = 0; s < 2; s++)
+				{
+					sector_t* sec = (s == 0) ? line->frontsector : line->backsector;
+					if (!sec) continue;
+
+					// Check B: Active 3D Floors lookup using your native structure tree path
+					if (targetType == RADAR_HAS_3DFLOOR)
+					{
+						if (sec->e && sec->e->XFloor.ffloors.Size() > 0)
+							return true; // Found a 3D floor plane in the proximity zone
+					}
+				}
+
+				// Check C: Two-sided portals (Windows, steps, railings, transparent textures)
+				if (line->flags & ML_TWOSIDED)
+				{
+					// Check if a mid-texture is explicitly rendered on either side of the portal
+					bool hasMidTex = (line->sidedef[0] && line->sidedef[0]->GetTexture(side_t::mid).isValid()) ||
+						(line->sidedef[1] && line->sidedef[1]->GetTexture(side_t::mid).isValid());
+
+					if (targetType == RADAR_HAS_MIDTEXTURE && hasMidTex)
+					{
+						return true; // Found a transparent grate / fence inside the zone
+					}
+
+					if (targetType == RADAR_HAS_2SIDED_WALL && !hasMidTex)
+					{
+						return true; // Found a solid step, ledge, or open viewport barrier
+					}
+				}
+			}
+		}
+	}
+
+	// The entire adjusted matrix zone is completely clean of this geometry type, safe to early-out
+	return false;
+}
+
+
+
+// Standalone Cache Key combining the unique actor pointer and the requested radar geometry flag
+struct FRadiusRadarCacheKey
+{
+	AActor*          thing;
+	uint32_t         targetType;
+
+	// Required by TMap find methods for direct structural equality checking
+	bool operator==(const FRadiusRadarCacheKey& other) const
+	{
+		return thing == other.thing && targetType == other.targetType;
+	}
+
+	// FIX: Required by THashTraits::Compare routine to compile successfully
+	bool operator!=(const FRadiusRadarCacheKey& other) const
+	{
+		return thing != other.thing || targetType != other.targetType;
+	}
+};
+
+// Explicit template specialization of THashTraits for the radar cache key structure.
+// This is critical for Lua-table maps to correctly resolve collision positions in memory.
+template<> struct THashTraits<FRadiusRadarCacheKey>
+{
+	// Generates a stable unique hash by combining pointer mapping bits and bitmask flags
+	hash_t Hash(const FRadiusRadarCacheKey key)
+	{
+		// Convert the actor pointer to an integer address and combine it with the flag
+		hash_t ptrHash = (hash_t)(intptr_t)key.thing;
+		return ptrHash ^ key.targetType;
+	}
+
+	// Compares two keys using your newly added operator!= to fulfill tarray.h constraints
+	int Compare(const FRadiusRadarCacheKey left, const FRadiusRadarCacheKey right)
+	{
+		return left != right;
+	}
+};
+
+struct FRadiusRadarCacheEntry
+{
+	int  lastMapTimeUpdateTick = -1; // Initialized to invalid tick state
+	bool cachedRadarResult = false;
+};
+TMap<FRadiusRadarCacheKey, FRadiusRadarCacheEntry> GeometryTypeRadarAroundActorRadiusCache;
+
+bool isGeometryTypePresentInRadiusCachedWrapper(AActor* thing, EGeometryRadarFlags targetType)
+{
+	if (!thing) return false;
+
+	if (enableAnamorphCache)
+	{
+		// 1. EXTRACT CURRENT TIMELINE INFORMATION
+		const int currentMapTimeTick = level.maptime;
+		FRadiusRadarCacheKey cacheKey = { thing, (uint32_t)targetType };
+
+		// Grab or construct the persistent matrix slot using native TMap lookups
+		FRadiusRadarCacheEntry& entry = GeometryTypeRadarAroundActorRadiusCache[cacheKey];
+
+		// 2. TEMPORAL TICK COMPLIANCE EVALUATION
+		// Verify if the cache is hot and has been processed within the 8-tick safety window
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 8)
+		{
+			return entry.cachedRadarResult; // Fast early exit with zero processing overhead
+		}
+
+		// 3. CACHE MISS FALLBACK PASS
+		// Invoke your intact underlying blockmap scanner to evaluate lines
+		entry.cachedRadarResult = isGeometryTypePresentInRadius(thing, targetType);
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+
+		return entry.cachedRadarResult;
+	}
+	else
+	{
+		// UNCACHED VERSION
+		return isGeometryTypePresentInRadius(thing, targetType);
+	}
+}
+
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
 
@@ -654,6 +903,8 @@ bool ViewerCrossed1sidedLinedefCachedWrapper(AActor *thing, AActor *viewer)
 {
 	// Fast escape checks
 	if (!thing || !viewer) return false;
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_1SIDED)) return false;
 
 	// Use caching if enabled matching your standard engine layout
 	if (enableAnamorphCache)
@@ -776,6 +1027,8 @@ bool SpriteCrossed1sidedLinedefCachedWrapper(AActor *thing, AActor *viewer)
 {
 	// Fast escape checks
 	if (!thing || !viewer) return false;
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_1SIDED)) return false;
 
 	// Use caching if enabled
 	if (enableAnamorphCache)
@@ -1126,6 +1379,8 @@ bool SpriteBboxFacingCameraCrossed1sLineCachedWrapper(AActor *thing, AActor *vie
 {
 	// Fast escape checks
 	if (!thing || !viewer) return false;
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_1SIDED)) return false;
 
 	// Use caching if enabled
 	if (enableAnamorphCache)
@@ -1328,6 +1583,8 @@ static TMap<AActor *, SpriteCrossed1sidedVoidCacheEntry> SpriteCrossed1sidedVoid
 bool SpriteCrossed1sidedVoidLinedefCachedWrapper(AActor *thing, AActor *viewer)
 {
 	if (!thing || !viewer) return false;
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_1SIDED)) return false;
 
 	if (enableAnamorphCache)
 	{
@@ -1534,6 +1791,8 @@ static TMap<AActor *, SpriteCrossed1sVoidBboxCacheEntry> SpriteCrossed1sVoidBbox
 bool SpriteCrossed1sidedVoidBboxFaceCachedWrapper(AActor *thing, AActor *viewer)
 {
 	if (!thing || !viewer) return false;
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_1SIDED)) return false;
 
 	if (enableAnamorphCache)
 	{
@@ -1622,8 +1881,9 @@ static TMap<AActor *, Visibility1sidedCacheEntry> Visibility1sidedCache;
 
 bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor *thing, AActor *viewer, const DVector3 &thingpos)
 {
-	// Fast escape checks
 	if (!thing || !viewer) return false;
+	// This function is called with "!" in front, that's why "return true" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_1SIDED)) return true;
 
 	// The FOV check is VERY BAD for 1 sided stuff!
 	//if (CheckFrustumCullingUNUSED(thing)) return false;
@@ -1745,6 +2005,8 @@ static TMap<AActor *, SpriteCrossed2SLineSimpleCacheEntry> SpriteCrossed2sLineSi
 bool SpriteCrossed2sidedLineSimpleCachedWrapper(AActor *thing, AActor *viewer)
 {
 	if (!thing || !viewer) return false;
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_2SIDED_WALL)) return false;
 
 	if (enableAnamorphCache) 	// Use caching if enabled
 	{
@@ -2127,6 +2389,8 @@ static TMap<AActor *, SpriteCrossed2SBboxFaceCacheEntry> SpriteCrossed2sBboxFace
 bool SpriteCrossed2sBBoxFaceLineCachedWrapper(AActor *thing, AActor *viewer)
 {
 	if (!thing || !viewer) return false;
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_2SIDED_WALL)) return false;
 
 	if (enableAnamorphCache) 	// Use caching if enabled
 	{
@@ -2418,6 +2682,8 @@ static TMap<AActor *, SpriteCrossed2sBboxWallCacheEntry> SpriteCrossed2sBboxWall
 bool SpriteCrossed2sBboxFaceWallCachedWrapper(AActor *thing, AActor *viewer)
 {
 	if (!thing || !viewer) return false;
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_2SIDED_WALL)) return false;
 
 	if (enableAnamorphCache)
 	{
@@ -3102,7 +3368,9 @@ static TMap<AActor *, Visibility2sidedObstrCacheEntry> Visibility2sidedObstrCach
 // IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
 bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AActor *thing)
 {
-	//if (!viewer || !thing || viewer == thing) return false;
+	if (!viewer || !thing || viewer == thing) return false;
+	// This function is called with "!" in front, that's why "return true" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_2SIDED_WALL)) return true;
 
 	// 1. Occlusion test - choose implementation based on toggle
 	if (enableAnamorphCache)
@@ -3722,7 +3990,9 @@ static TMap<AActor *, MidTextureProximityCacheEntry> MidTextureProximityCache;
 
 bool CheckFacingMidTextureProximityWrapper(AActor *thing, AActor *viewer, TVector3<double> &thingpos)
 {
-	// Use caching if enabled
+	// This function is called with "!" in front, that's why "return true" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_MIDTEXTURE)) return true;
+
 	if (enableAnamorphCache)
 	{
 		const int         currentMapTimeTick = level.maptime;
@@ -3977,7 +4247,9 @@ static TMap<AActor *, a3DFloorPlaneCacheEntry> a3DFloorPlaneCache; // Global cac
 
 bool IsSpriteBehind3DFloorPlaneCachedWrapper(DVector3 &cameraPos, DVector3 &spritePos, sector_t *sector, AActor *thing)
 {
-	// Use caching if enabled
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadius(thing, RADAR_HAS_3DFLOOR)) return false;
+
 	if (enableAnamorphCache)
 	{
 		const int   currentMapTimeTick = level.maptime;
@@ -4229,6 +4501,9 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 // Cached wrapper function
 bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thing)
 {
+	// This function is called with "!" in front, that's why "return true" for early exit
+	if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_3DFLOOR)) return true;
+
 	if (enableAnamorphCache)
 	{
 		const int currentMapTimeTick = level.maptime;
@@ -4258,7 +4533,7 @@ bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thin
 static int resetCounter = -1;
 void ResetAnamorphCache()
 {
-	// Only reset 1-5 caches per frame to spread out the cost
+	// Only reset 1-8 caches per frame to spread out the cost
 	switch (resetCounter % 8)
 	{
 	case 0:
@@ -4268,24 +4543,34 @@ void ResetAnamorphCache()
 	case 1:
 		SpriteCrossed2sLineSimpleCache.Clear(0);
 		SpriteCrossed2sBboxFaceLineCache.Clear(0);
-		SpriteCrossed2sBboxWallCache.Clear(0);
 		break;
 	case 2:
+		SpriteCrossed2sBboxWallCache.Clear(0);
+		SpriteCrossed2sLineSimpleCache.Clear(0);
+		break;
+	case 3:
+		SpriteCrossed2sBboxFaceLineCache.Clear(0);
+		SpriteCrossed2sBboxWallCache.Clear(0);
+		break;
+	case 4:
 		SpriteIntersectsLineCache.Clear(0);
 		SpriteBboxFacingCrossed1sCache.Clear(0);
 		break;
-	case 3:
+	case 5:
 		ViewerCrossed1sidedLineCache.Clear(0);
 		SpriteCrossed1sidedVoidCache.Clear(0);
+		break;
+	case 6:
 		SpriteCrossed1sVoidBboxCache.Clear(0);
-		break;
-	case 4:
 		SpriteCrossed1sidedLineCache.Clear(0);
-		MidTextureProximityCache.Clear(0);
 		break;
-	case 5:
+	case 7:
 		a3DFloorSideCache.Clear(0);
 		a3DFloorPlaneCache.Clear(0);
+		break;
+	case 8:
+		MidTextureProximityCache.Clear(0);
+		GeometryTypeRadarAroundActorRadiusCache.Clear(0);
 		break;
 	}
 	resetCounter++;
