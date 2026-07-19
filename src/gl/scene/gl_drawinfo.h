@@ -192,8 +192,9 @@ struct FDrawInfo
 
 	bool temporary;
 
-	// GL1x/GL2x legacy dynamic lights overbright
-	bool gl_IsLegacyGLBrighteningPass = false;
+
+	bool gl_IsLegacyGLBrighteningPass = false; // GL1x/GL2x legacy dynamic lights overbright - UNUSED
+	bool gl_IsLegacyGLBrightmapPass = false;   // GL1x/GL2x legacy brightmap pass - UNUSED
 	bool gl_IsFoggyPass = false; // Flag to notify geometry that we are drawing a fog list right now
 
 

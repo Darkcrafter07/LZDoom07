@@ -443,57 +443,6 @@ void GLSceneDrawer::RenderScene(int recursion)
 
 	gl_RenderState.EnableTexture(gl_texture);
 	gl_RenderState.EnableBrightmap(true);
-
-	// --- Legacy GL1x/GL2x brightmaps block start ---
-	if (gl.legacyMode && gl_RenderState.IsBrightmapEnabled())
-	{
-		// 1. Prepare global state
-		gl_RenderState.EnableFog(false);
-		gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
-		gl_RenderState.SetDynLight(0, 0, 0);
-		gl_RenderState.SetAddColor(0);
-		gl_RenderState.SetObjectColor(0xffffffff);
-		gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // Additive blending
-
-		// 2. Set Brightmap Intensity (Effect Amount)
-		// 1.0f is standard, 0.7f - 0.8f is more natural for legacy mode 
-		// to prevent over-saturation in lit areas.
-		float intensity = 1.0f;
-		gl_RenderState.SetColor(intensity, intensity, intensity, 1.0f);
-
-		// 3. Precision & Depth Control
-		glDepthFunc(GL_EQUAL);
-		glDepthMask(false);
-
-		// 4. Draw Static Geometry Lists
-		gl_drawinfo->drawlists[GLDL_PLAINWALLS].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-		gl_drawinfo->drawlists[GLDL_PLAINFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-		gl_drawinfo->drawlists[GLDL_MASKEDWALLS].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-		gl_drawinfo->drawlists[GLDL_MASKEDFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-
-		// 5. Draw Dynamic/Multipass Geometry Lists
-		// We have to limit draw only by those lists that contain exactly only walls, flats and 3DModels
-		if (gl_drawinfo->dldrawlists != nullptr)
-		{
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-		}
-
-		// 6. Restore states
-		glDepthFunc(GL_LESS);
-		glDepthMask(true);
-		gl_RenderState.EnableFog(true);
-		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		gl_RenderState.SetTextureMode(TM_MODULATE);
-	}
-	// --- Legacy GL1x/GL2x brightmaps block finish ---
-
 	gl_drawinfo->drawlists[GLDL_PLAINWALLS].DrawWalls(pass);
 	gl_drawinfo->drawlists[GLDL_PLAINFLATS].DrawFlats(pass);
 
@@ -558,6 +507,57 @@ void GLSceneDrawer::RenderScene(int recursion)
 
 	glPolygonOffset(0.0f, 0.0f);
 	glDisable(GL_POLYGON_OFFSET_FILL);
+
+	// --- Legacy GL1x/GL2x brightmaps block start ---
+	if (gl.legacyMode && gl_RenderState.IsBrightmapEnabled())
+	{
+		//if (gl_drawinfo) gl_drawinfo->gl_IsLegacyGLBrightmapPass = true;
+
+		// 1. Prepare global state
+		gl_RenderState.EnableFog(false);
+		gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
+		gl_RenderState.SetDynLight(0, 0, 0);
+		gl_RenderState.SetAddColor(0);
+		gl_RenderState.SetObjectColor(0xffffffff);
+		gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // Additive blending
+
+		// 2. Set Brightmap Intensity (Effect Amount)
+		float intensity = 1.0f;
+		gl_RenderState.SetColor(intensity, intensity, intensity, 1.0f);
+
+		// 3. Precision & Depth Control
+		glDepthFunc(GL_EQUAL);
+		glDepthMask(false);
+
+		// 4. Draw Static Geometry Lists
+		gl_drawinfo->drawlists[GLDL_PLAINWALLS].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+		gl_drawinfo->drawlists[GLDL_PLAINFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+		gl_drawinfo->drawlists[GLDL_MASKEDWALLS].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+		gl_drawinfo->drawlists[GLDL_MASKEDFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+
+		// 5. Draw Dynamic/Multipass Geometry Lists
+		if (gl_drawinfo->dldrawlists != nullptr)
+		{
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+		}
+
+		// 6. Restore states
+		glDepthFunc(GL_LESS);
+		glDepthMask(true);
+		gl_RenderState.EnableFog(true);
+		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		gl_RenderState.SetTextureMode(TM_MODULATE);
+
+		//if (gl_drawinfo) gl_drawinfo->gl_IsLegacyGLBrightmapPass = false;
+	}
+	// --- Legacy GL1x/GL2x brightmaps block finish ---
 
 	RenderAll.Unclock();
 }
