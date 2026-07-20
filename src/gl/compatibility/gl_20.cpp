@@ -271,8 +271,19 @@ void FRenderState::ApplyFixedFunction()
 		}
 		if (ffFogDensity != mLightParms[2])
 		{
-			//glFogf(GL_FOG_DENSITY, mLightParms[2] * -0.6931471f);
-			glFogf(GL_FOG_DENSITY, mLightParms[2] * -1.12f);
+			// Check if the incoming fog color is black or sits within the strict 5-unit tolerance threshold.
+			// If it's a software shadow simulation fog, fallback to standard soft legacy attenuation coefficients.
+			// If it's a true environmental map colored fog (brighter color fog), unlock dense multipliers.
+			if (mFogColor.r <= 5 && mFogColor.g <= 5 && mFogColor.b <= 5)
+			{
+				// Stock soft factory decay curve to protect shadows from blinding pitch black voids
+				glFogf(GL_FOG_DENSITY, mLightParms[2] * -0.6931471f);
+			}
+			else
+			{
+				// High-intensity vivid color fog injection cloned straight from the GL3 pipeline specs
+				glFogf(GL_FOG_DENSITY, mLightParms[2] * -1.12f);
+			}
 			ffFogDensity = mLightParms[2];
 		}
 	}

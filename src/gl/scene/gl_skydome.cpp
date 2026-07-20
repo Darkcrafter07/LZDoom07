@@ -415,8 +415,30 @@ void RenderDome(FMaterial * tex, float x_offset, float y_offset, bool mirror, in
 	}
 
 	GLRenderer->mSkyVBO->RenderDome(tex, mode);
+
+	// Force raw OpenGL registers to completely drop any matrix modes and texture 
+	// overrides that leaked during the 3D dome/mountain asset rendering loop.
+	// This shields map geometry from going black on camera rotation with brightmaps code
 	gl_RenderState.EnableTextureMatrix(false);
 	gl_RenderState.EnableModelMatrix(false);
+
+	if (gl.legacyMode)
+	{
+		// 1. Safely pop the low-level hardware matrix mode back to standard MODELVIEW
+		// This rips the fixed-function pipeline out of GL_TEXTURE matrix locks!
+		glMatrixMode(GL_MODELVIEW);
+
+		// 2. Reset color registers to clean unity white to prevent brightness leaks
+		gl_RenderState.ResetColor();
+
+		// 3. Flush the cleaned states straight to the GPU hardware registers right now
+		gl_RenderState.Apply();
+
+		// 4. Low-level hardware fallback override path for strict legacy OpenGL 1.1 compliance
+		glEnable(GL_FOG);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	}
 }
 
 
@@ -526,7 +548,7 @@ void GLSkyPortal::DrawContents()
 	}
 	else
 	{
-		if (origin->texture[0]==origin->texture[1] && origin->doublesky) origin->doublesky=false;	
+		if (origin->texture[0] == origin->texture[1] && origin->doublesky) origin->doublesky = false;
 
 		if (origin->texture[0])
 		{
@@ -534,15 +556,15 @@ void GLSkyPortal::DrawContents()
 			RenderDome(origin->texture[0], origin->x_offset[0], origin->y_offset, origin->mirrored, FSkyVertexBuffer::SKYMODE_MAINLAYER);
 			gl_RenderState.SetTextureMode(TM_MODULATE);
 		}
-		
+
 		gl_RenderState.AlphaFunc(GL_GREATER, 0.f);
-		
+
 		if (origin->doublesky && origin->texture[1])
 		{
 			RenderDome(origin->texture[1], origin->x_offset[1], origin->y_offset, false, FSkyVertexBuffer::SKYMODE_SECONDLAYER);
 		}
 
-		if (::level.skyfog>0 && drawer->FixedColormap == CM_DEFAULT && (origin->fadecolor & 0xffffff) != 0)
+		if (::level.skyfog > 0 && drawer->FixedColormap == CM_DEFAULT && (origin->fadecolor & 0xffffff) != 0)
 		{
 			PalEntry FadeColor = origin->fadecolor;
 			FadeColor.a = clamp<int>(::level.skyfog, 0, 255);
@@ -560,5 +582,28 @@ void GLSkyPortal::DrawContents()
 	gl_RenderState.ApplyMatrices();
 	glset.lightmode = oldlightmode;
 	gl_RenderState.SetDepthClamp(oldClamp);
-}
 
+	// [Darkcrafter07]
+	// Forces the raw OpenGL hardware registers to completely flush and restore
+	// background colors, blending, and fog parameters that leaked during the 
+	// skybox overlay draw pass. Rescues 3d models inside skybox darkening.
+	if (gl.legacyMode)
+	{
+		// 1. Explicitly restore fog tracking state and blending in the manager cache
+		gl_RenderState.EnableFog(true);
+		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		gl_RenderState.SetTextureMode(TM_MODULATE);
+		gl_RenderState.ResetColor(); // Clear color cache registers natively
+
+		// 2. Force the state machine to flush all changes directly into the GPU registers right now
+		// This guarantees that any sticky fadecolors or equal depth funcs completely drop!
+		gl_RenderState.Apply();
+
+		// 3. Secondary low-level fallback clean for raw OpenGL 1.1 hardware compliance
+		glEnable(GL_FOG);
+		glDepthFunc(GL_LESS);
+		glDepthMask(true);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+	}
+}
