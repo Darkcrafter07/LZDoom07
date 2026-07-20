@@ -34,7 +34,7 @@
 #include "gl_20.h"
 #include "gl/dynlights/gl_dynlightcache.h"
 
-//FGLBSPCache g_BSPRenderCache;
+//FGLBSPCache g_BSPRenderCache; 
 
 CVAR(Bool, gl_lights_additive, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)

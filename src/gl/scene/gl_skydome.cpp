@@ -26,7 +26,7 @@
 ** for FSkyVertexBuffer::SkyVertex only:
 **---------------------------------------------------------------------------
 ** Copyright 2003 Tim Stump
-** All rights reserved.
+** All rights reserved. 
 **
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions
@@ -78,7 +78,7 @@
 
 //-----------------------------------------------------------------------------
 //
-// Shamelessly lifted from Doomsday (written by Jaakko Keränen)
+// Shamelessly lifted from Doomsday (written by Jaakko Kerï¿½nen)
 // also shamelessly lifted from ZDoomGL! ;)
 //
 //-----------------------------------------------------------------------------
