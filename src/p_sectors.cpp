@@ -72,6 +72,8 @@
 #include "g_levellocals.h"
 #include "vm.h"
 
+#include "gl/system/gl_interface.h"
+
 
 // [RH]
 // P_NextSpecialSector()
@@ -1377,8 +1379,10 @@ CUSTOM_CVAR(Int, r_fakecontrast, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 //
 //==========================================================================
 
-int side_t::GetLightLevel (bool foggy, int baselight, bool is3dlight, int *pfakecontrast) const
+int side_t::GetLightLevel(bool foggy, int baselight, bool is3dlight, int *pfakecontrast) const
 {
+	const float gl_legacyvidmode_fakecontrast_scale = 2.0f;
+
 	if (!is3dlight && (Flags & WALLF_ABSLIGHTING))
 	{
 		baselight = Light;
@@ -1394,22 +1398,62 @@ int side_t::GetLightLevel (bool foggy, int baselight, bool is3dlight, int *pfake
 		if (!(Flags & WALLF_NOFAKECONTRAST) && r_fakecontrast != 0)
 		{
 			DVector2 delta = linedef->Delta();
-			int rel;
-			if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2) &&
-				delta.X != 0)
+			int rel = 0;
+
+			// --- [Darkcrafter07]: PATHWAY A - GL1x/GL2x LEGACY FIXED-FUNCTION WAY
+			if (gl.legacyMode)
 			{
-				rel = xs_RoundToInt // OMG LEE KILLOUGH LIVES! :/
+				if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2))
+				{
+					float len = sqrt(delta.X * delta.X + delta.Y * delta.Y);
+					if (len > 0.0001f)
+					{
+						// Calculate normalized directional components of the wall string line
+						float cosAngle = fabs(delta.X / len); // How close the wall is to horizontal axis (East-West)
+						float sinAngle = fabs(delta.Y / len); // How close the wall is to vertical axis (North-South)
+
+						// Smoothly interpolate between dark horizontal steps and bright vertical steps 
+						// using square of projections (trigonometric identity layout), matching native software behaviors!
+						float interp = (cosAngle * cosAngle);
+
+						// level.WallHorizLight is negative (e.g. -8), WallVertLight is positive (e.g. +8)
+						rel = xs_RoundToInt(interp * level.WallHorizLight + (1.0 - interp) * level.WallVertLight);
+					}
+					else
+					{
+						rel = 0;
+					}
+				}
+				else
+				{
+					// Standard vanilla step-contrast route for orthogonal walls
+					rel = delta.X == 0 ? level.WallVertLight :
+						delta.Y == 0 ? level.WallHorizLight : 0;
+				}
+
+				rel = xs_RoundToInt((float)rel * gl_legacyvidmode_fakecontrast_scale);
+			}
+			// --- PATHWAY B - MODERN GL3/GL4 WAY ---
+			// Maintains original atan calculations to feed shaders natively.
+			else
+			{
+				if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2) &&
+					delta.X != 0)
+				{
+					rel = xs_RoundToInt // OMG LEE KILLOUGH LIVES! :/
 					(
 						level.WallHorizLight
 						+ fabs(atan(delta.Y / delta.X) / 1.57079)
 						* (level.WallVertLight - level.WallHorizLight)
 					);
+				}
+				else
+				{
+					rel = delta.X == 0 ? level.WallVertLight :
+						delta.Y == 0 ? level.WallHorizLight : 0;
+				}
 			}
-			else
-			{
-				rel = delta.X == 0 ? level.WallVertLight : 
-					  delta.Y == 0 ? level.WallHorizLight : 0;
-			}
+
 			if (pfakecontrast != NULL)
 			{
 				*pfakecontrast = rel;
@@ -1426,5 +1470,4 @@ int side_t::GetLightLevel (bool foggy, int baselight, bool is3dlight, int *pfake
 	}
 	return baselight;
 }
-
 
