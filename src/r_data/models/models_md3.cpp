@@ -819,7 +819,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 				if (trueVisualRadius <= 0.01f) trueVisualRadius = 32.0f;
 				if (trueVisualHeight <= 0.01f) trueVisualHeight = 64.0f;
 
-				const float legacyVolumDynlightIntensity = 0.0075f;
+				const float legacyVolumDynlightIntensity = 0.0032f;
 
 				// Safe global registers light slots scope tracking variable
 				unsigned int maxLightsToBind = g_legacyModelLights.Size();
@@ -845,10 +845,10 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					for (unsigned int l = 0; l < g_legacyModelLights.Size(); ++l)
 					{
 						FLegacyDynlight3DmdlCache &light = g_legacyModelLights[l];
-						// Inject a smooth 10% global bounce light bleed from all active flares in space
-						baseAmbR += light.r * legacyVolumDynlightIntensity * 0.10f;
-						baseAmbG += light.g * legacyVolumDynlightIntensity * 0.10f;
-						baseAmbB += light.b * legacyVolumDynlightIntensity * 0.10f;
+						// Inject a smooth 2.5% global bounce light bleed from all active flares in space
+						baseAmbR += light.r * legacyVolumDynlightIntensity * 0.025f;
+						baseAmbG += light.g * legacyVolumDynlightIntensity * 0.025f;
+						baseAmbB += light.b * legacyVolumDynlightIntensity * 0.025f;
 					}
 					if (baseAmbR > 1.0f) baseAmbR = 1.0f;
 					if (baseAmbG > 1.0f) baseAmbG = 1.0f;
@@ -911,7 +911,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						glLightfv(lightSlot, GL_AMBIENT, zeroAmbient);
 
 						glLightf(lightSlot, GL_CONSTANT_ATTENUATION, 0.0f);
-						glLightf(lightSlot, GL_LINEAR_ATTENUATION, 1.0f / cachedLight.radius);
+						//glLightf(lightSlot, GL_LINEAR_ATTENUATION, 1.0f / cachedLight.radius);
+						// Perhaps, decrease the light blob size twice
+						glLightf(lightSlot, GL_LINEAR_ATTENUATION, 1.0f / cachedLight.radius * 2.0f);
 						glLightf(lightSlot, GL_QUADRATIC_ATTENUATION, 0.0f);
 					}
 
