@@ -343,13 +343,35 @@ void is3DmdlActorVisibToDynlightCachedWrapper(float modelX, float modelY, float 
 	if (targetSlot == -1) targetSlot = baseIdx;
 	F3DmdlDynlightUnifiedCacheEntry& cache = g_3DmdlDynlightActorUnifiedCache[targetSlot];
 
-	// Immediate return (CACHE HIT): If we're inside the same tick
-	// give data from the memory WITHOUT calling heavy BSPWalkCircle
-	if (cache.actorPtr == currentActor && cache.lastCachedTime == level.time && cache.lastCachedTime != -1)
+	// --- C-STYLE TICK HIBERNATION GENERATOR ---
+	int requiredSleepTics = 0;
+	if (cache.maxRadiusFound < 2048.0f) requiredSleepTics = 1;
+	else if (cache.maxRadiusFound < 8192.0f) requiredSleepTics = 2;
+	else if (cache.maxRadiusFound < 16000.0f) requiredSleepTics = 4;
+	else requiredSleepTics = 8; // Mega-dynlights to sleep for 8 tics
+
+	// --- GIANT MONOLITH ANTI-FLICKER INTERCEPTOR ---
+	// If the current asset is a massive rock mountain formation (radius >= 256.0f),
+	// we force requiredSleepTics to 0! This completely disables tick hibernation 
+	// strictly for giant cliffs, forcing them to pull fresh matrix synced lights every frame
+	// while keeping full optimization for grass and smaller assets!
+	if ((float)currentActor->RenderRadius() >= 256.0f)
+	{
+		requiredSleepTics = 0;
+	}
+
+	// --- HARDCORE ANTI-FLICKER CACHE HIT RECOVERY GATE ---
+	if (cache.actorPtr == currentActor && (level.time - cache.lastCachedTime) < requiredSleepTics && cache.lastCachedTime != -1)
 	{
 		if (gl.lightmethod == LM_LEGACY)
 		{
-			g_legacyModelLights = cache.legacyLights;
+			// --- HARDCORE DEEP COPY CONVEYOR ---
+			// We clear and rebuild the legacy lights array pool structure from scratch.
+			g_legacyModelLights.Clear();
+			for (unsigned int i = 0; i < cache.legacyLights.Size(); ++i)
+			{
+				g_legacyModelLights.Push(cache.legacyLights[i]);
+			}
 			g_legacyLightActive = cache.legacyActive;
 			if (GLModelLightContext::outR) *GLModelLightContext::outR = cache.outR;
 			if (GLModelLightContext::outG) *GLModelLightContext::outG = cache.outG;
@@ -357,16 +379,12 @@ void is3DmdlActorVisibToDynlightCachedWrapper(float modelX, float modelY, float 
 		}
 		else
 		{
-			modellightdata.Clear(); // Flicker fix: instead of copying the pointers, fill the arays from the scratch hardcore way
-			for (unsigned int i = 0; i < cache.arrays[0].Size(); ++i) modellightdata.arrays[0].Push(cache.arrays[0][i]);
-			for (unsigned int i = 0; i < cache.arrays[1].Size(); ++i) modellightdata.arrays[1].Push(cache.arrays[1][i]);
-			for (unsigned int i = 0; i < cache.arrays[2].Size(); ++i) modellightdata.arrays[2].Push(cache.arrays[2][i]);
-
-			// MODERN GL OPTIMIZATION: Pass the cached hardware index back to the renderer via context pointer if available
 			if (GLModelLightContext::modernDataPtr)
 			{
-				// We assume the context/renderer can store the index. 
-				// Since we also have access to the global slot 'targetSlot', we can look it up directly in the renderer loop
+				GLModelLightContext::modernDataPtr->Clear();
+				GLModelLightContext::modernDataPtr->arrays[0] = cache.arrays[0];
+				GLModelLightContext::modernDataPtr->arrays[1] = cache.arrays[1];
+				GLModelLightContext::modernDataPtr->arrays[2] = cache.arrays[2];
 			}
 		}
 		return; // A frame from the memory was drawn and didn't hog the CPU much

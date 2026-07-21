@@ -381,6 +381,13 @@ extern TArray<FLegacyDynlight3DmdlCache> g_legacyModelLights;
 bool isUsingVolumetric3DModelLegacyDynlight = false;  // for gl_20.cpp ApplyFixedFunction
 bool g_isCurrent3dMdlWeldedSolid = false;             // store current model computed topology weight
 
+struct FTriangleSortMeta
+{
+	FMD3Model::MD3Triangle originalTriangle;
+	float avgZ;
+	float ccwAngle;
+};
+
 void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 {
 	if (!GetVertexBuffer(renderer))
@@ -437,7 +444,6 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 			if (surf->numTriangles == 0 || surf->Vertices.Size() == 0 || surf->numVertices < 4) continue;
 
 			// Spatial CCW Sorter Pass (Ring Index Builder)
-			struct FTriangleSortMeta { MD3Triangle originalTriangle; float avgZ; float ccwAngle; };
 			TArray<FTriangleSortMeta> sortingPool;
 			sortingPool.Resize(surf->numTriangles);
 
@@ -703,8 +709,27 @@ int FMD3Model::FindFrame(const char * name)
 
 
 
+// ====================================================================================
+// --- [Darkcrafter07]: GOURAUD SHADING & VERTEX LIGHTING MANIFESTO ---
+//
+// HISTORICAL FIX LOG: Why native hardware 3D volumetric light shaded absolutely FLAT?
+// 1. THE ROOT OF THE PROBLEM: In LZDoom 07's legacy compatibility pipeline (GL1x/GL2x),
+//    the core state-manager explicitly enforces 'glDisableClientState(GL_NORMAL_ARRAY)'
+//    inside the FFlatVertexBuffer and FModelVertexBuffer binding passes. It assumed that 
+//    stepped software subsector lightlevels required no normal tracking vectors.
+// 2. THE HARDWARE BLINDSPOT: Because the driver client normal arrays were forced dead,
+//    the GPU hardware fixed-function pipeline was completely blind to smoothly averaged
+//    curvature normals baked inside 'bvert->SetNormal(finalNx, finalNz, finalNy)'
+//    during the load-time BuildVertexBuffer() pass. The driver fell back to a default vector 
+//    of (0,0,1) pointing straight up, wiping out all 3D depth and making the dynamic spots flat.
+//
+// Know how:
+// By overriding the pipeline locks directly inside the mesh dispatch loop and force-activating 
+// 'glEnableClientState(GL_NORMAL_ARRAY);', we ripped off the blindfold and forced the GPU
+// to see the pre-calculated geometric vertex curvature deltas. Combined with smooth shading,
+// the GPU instantly fired up its internal Gouraud Shading processors.
+// ====================================================================================
 
-static TArray<unsigned int> sliceIndicesPool[6]; // 6 completely independent and isolated 3D models in frame RAM
 void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frameno, int frameno2, double inter, int translation)
 {
 	// ==============================================================================
@@ -715,8 +740,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 		if ((unsigned)frameno >= Frames.Size() || (unsigned)frameno2 >= Frames.Size()) return;
 		renderer->SetInterpolation(inter);
 
-		const float inv255 = 1.0f / 255.0f;
-		float baseColor = (float)g_legacyModelSectorLight * inv255;
+		const float invMul127 = 1.0f / 127.0f;
+		const float invMul255 = 1.0f / 255.0f;
+		float baseColor = (float)g_legacyModelSectorLight * invMul255;
 		AActor* actor = (AActor*)g_CurrentRendering3dmdlActorPtr; // no need to add "AActor *actor" in RenderFrame
 
 		if (!gl_lights) // Dynligths are off, clear array cache and shutdown surfaces
@@ -765,19 +791,22 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 			bool isModeldefUseVolLegacyDynlightFlagSet = ((curSpriteMDLFrame->flags & MDL_USEGL1VOLUMEDYNLIGHT) != 0);
 
 			// ==============================================================================
-			// PATHWAY A: VOLUMETRIC DYNLIGHT 6-STAGE VERTICAL SLICER FOR SOLID MESHES
+			// PATHWAY A: VOLUMETRIC DYNLIGHT WITH GOURAD SHADING
 			// ==============================================================================
-			// Evaluate condition: Only proceed with volumetric slicing if lights are active, 
-			// triangles exist, and the model topology is confirmed as welded/solid.
-			bool useSlicingLight = (gl_lights && g_legacyLightActive && g_isCurrent3dMdlWeldedSolid && 
-				                    surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet && 
-                                                                      g_legacyModelLights.Size() > 0);
-			if (useSlicingLight)
+			// Do volumetric lighting if lights are active and triangles exist
+			//bool useLegacyVolumetricLighting = (gl_lights && g_legacyLightActive && g_isCurrent3dMdlWeldedSolid && 
+			//	                    surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet && 
+			//															g_legacyModelLights.Size() > 0);
+			bool useLegacyVolumetricLighting = (gl_lights && g_legacyLightActive && 
+				surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet && 
+				g_legacyModelLights.Size() > 0);
+			if (useLegacyVolumetricLighting)
 			{
 				isUsingVolumetric3DModelLegacyDynlight = true;
-				const auto *mat = gl_RenderState.mModelMatrix.get();
 
-				// Extract true model scales from the active render state
+				// Fetch the active model matrix from Graf's render state cache
+				auto *modelMatrixPtr = &gl_RenderState.mModelMatrix;
+
 				float finalScaleX = (float)curSpriteMDLFrame->xscale;
 				float finalScaleZ = (float)curSpriteMDLFrame->zscale;
 				if (finalScaleX <= 0.0f) finalScaleX = 1.0f;
@@ -790,289 +819,124 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 				if (trueVisualRadius <= 0.01f) trueVisualRadius = 32.0f;
 				if (trueVisualHeight <= 0.01f) trueVisualHeight = 64.0f;
 
-				// True actor coordinates on the map without camera distortion adjustments
-				float worldActorX = actor->X(); float worldActorY = actor->Y(); float worldActorZ = actor->Z();
-				float worldActorCenterZ = worldActorZ + ((float)trueVisualHeight * 0.5);
+				const float legacyVolumDynlightIntensity = 0.0075f;
 
-				// --- 1. ACCUMULATE TOTAL DIRECTION VECTOR TO DYNAMIC LIGHTS ---
-				float sumDx = 0.0; float sumDy = 0.0; float sumDz = 0.0;
-				int activeLightsCount = 0;
+				// Safe global registers light slots scope tracking variable
+				unsigned int maxLightsToBind = g_legacyModelLights.Size();
+				if (maxLightsToBind > 8) maxLightsToBind = 8; // OpenGL fixed function strict layout limits
 
-				for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
+				if (currentVBuf != nullptr)
 				{
-					FLegacyDynlight3DmdlCache *light = &g_legacyModelLights[l];
-					float dx = light->relX - (worldActorX * scaleNormalizeFactor);
-					float dy = light->relY - (worldActorY * scaleNormalizeFactor);
-					float dz = light->relZ - (worldActorCenterZ * scaleNormalizeFactor);
+					// --- STEP 1: INITIALIZE NATIVE VERTEX STREAM INTERPOLATION ---
+					auto* vertexBuffer = GetVertexBuffer(renderer);
+					vertexBuffer->SetupFrame(renderer, surf->vindex + frameno * surf->numVertices, surf->vindex + frameno2 * surf->numVertices, surf->numVertices);
 
-					float distSquared = dx * dx + dy * dy + dz * dz;
-					float interactionRadius = (light->radius + trueVisualRadius) * scaleNormalizeFactor;
+					glShadeModel(GL_SMOOTH);
+					glEnable(GL_LIGHTING);
+					glEnableClientState(GL_NORMAL_ARRAY);
 
-					if (distSquared < (float)(interactionRadius * interactionRadius))
+					// Map your beautifully baked smooth normal pointer layout from the VBO structure bounds
+					glNormalPointer(GL_FLOAT, sizeof(FModelVertex), (void*)(sizeof(float) * 5)); // Offset to nx/ny/nz fields
+
+					float baseAmbR = actor->Sector->lightlevel * invMul127;
+					float baseAmbG = actor->Sector->lightlevel * invMul127;
+					float baseAmbB = actor->Sector->lightlevel * invMul127;
+
+					for (unsigned int l = 0; l < g_legacyModelLights.Size(); ++l)
 					{
-						sumDx += dx; sumDy += dy; sumDz += dz;
-						activeLightsCount++;
+						FLegacyDynlight3DmdlCache &light = g_legacyModelLights[l];
+						// Inject a smooth 10% global bounce light bleed from all active flares in space
+						baseAmbR += light.r * legacyVolumDynlightIntensity * 0.10f;
+						baseAmbG += light.g * legacyVolumDynlightIntensity * 0.10f;
+						baseAmbB += light.b * legacyVolumDynlightIntensity * 0.10f;
 					}
-				}
+					if (baseAmbR > 1.0f) baseAmbR = 1.0f;
+					if (baseAmbG > 1.0f) baseAmbG = 1.0f;
+					if (baseAmbB > 1.0f) baseAmbB = 1.0f;
 
-				float wLdX = 0.0f; float wLdY = 0.0f; float wLdZ = 1.0f;
-				if (activeLightsCount > 0)
-				{
-					float totalVectorLen = sqrt(sumDx*sumDx + sumDy * sumDy + sumDz * sumDz);
-					if (totalVectorLen > 0.001)
-					{ wLdX = sumDx / totalVectorLen; wLdY = sumDy / totalVectorLen; wLdZ = sumDz / totalVectorLen; }
-				}
+					// Push compiled poor man's GI ambient floor directly into the master matrix slots!
+					float ambColor[4] = { baseAmbR, baseAmbG, baseAmbB, 1.0f };
+					glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambColor);
 
-				// ==============================================================================
-				// [Darkcrafter07]: THE ULTIMATE LEGACY OPENGL 1.1 COORD-TO-PHASE TRACKER
-				// ==============================================================================
-				// [HISTORY & ARCHITECTURE MANIFESTO]:
-				// After a brutal 3-day war against Graf Zahl's fixed-function state locks, we 
-				// discovered that monolith VBO buffers completely blind real-time index sorting
-				// or CPU normal generation. Video drivers lock baked vertex arrays in place,
-				// causing dynlight spots to freeze on a single static side of the model mesh.
-				//
-				// To shatter this lock, a "3D Spatial Compass Gate" was made. 
-				// We bypassed Graf's broken relative coordinates (PortalGroup PosRelative data)
-				// by hot-wiring raw, absolute world space vectors (PosAbsolute) from the engine's
-				// FDynamicLight core directly into a custom expanded legacy light array cache.
-				//
-				// This module translates linear, absolute coordinate deltas into a flawless
-				// full-amplitude polar wave phase [-1.0f .. 1.0f], completely immune to the 
-				// bounding scale limits that previously blinded small-caliber cylinder meshes.
-				//
-				// [SMOOTHING]: 
-				// To eliminate linear micro-stuttering, we adapted a classic 90s optimization 
-				// blueprint inspired by Ken Silverman's Build Engine (Duke Nukem 3D 2048-cell sin_table).
-				// By running the full-amplitude phase float through a continuous sinf() shaper, 
-				// the light spot visually shifts from jagged linear tracking to an incredibly 
-				// smooth, organic circular interpolation around the skin of any solid 3D asset.
-				//
-				// [THE GOLDEN LAWS - WHAT YOU CAN AND CANNOT DO]:
-				// 1. CANNOT: Never divide deltas by trueVisualRadius again. It destroys small-mesh ranges.
-				// 2. CANNOT: Never inject offsets inside intermediate Euler rotation stages (tx, ty, tz). 
-				//    Trigonometric sinf/cosf loops will shred the phase multiplier into total noise.
-				// 3. MUST DO: The final combined offset injection MUST be appended directly to the 
-				//    very end of the terminal vector output channels (locLightDirX/Y/Z) after all matrix 
-				//    transformations, perfectly "gl_gl1dynlightoffset" cvar shunt test
-				// ==============================================================================
-				float locLightDirX = wLdX; float locLightDirY = wLdY; float locLightDirZ = wLdZ;
-
-				if (actor != nullptr && g_legacyModelLights.Size() > 0)
-				{
-					// Constants for inverse multiplication optimization
-					const float inv180 = 1.0f / 180.0f; const float pi = 3.14159265f;
-					const float invPi = 1.0f / pi; const float coef4096 = 1.0f / 4096.0f;
-
-					// Virtual anchor forced projection: Forces 41-degree Yaw baseline to snap Quake MD3 vs Doom world axes
-					float radYaw = 41.0f * (pi * inv180); float radPitch = 0.0f; float radRoll = 0.0f;
-
-					float sy = sinf(radYaw);   float cy = cosf(radYaw);
-					float sp = sinf(radPitch); float cp = cosf(radPitch);
-					float sr = sinf(radRoll);  float cr = cosf(radRoll);
-
-					// Canonical inverse matrix conversion baseline for stable vertex array stream tracking [INDEX: 0.1.4]
-					float tx = wLdX * cy - wLdY * sy;
-					float ty_fixed = wLdX * sy + wLdY * cy;
-					float tz = wLdZ;
-
-					float px = tx;
-					float py = ty_fixed * cp + tz * sp;
-					float pz = -ty_fixed * sp + tz * cp;
-
-					// Cache actor absolute position coordinates to avoid redundant virtual calls in loop [INDEX: 0.1.4]
-					float actorX = static_cast<float>(actor->X());
-					float actorY = static_cast<float>(actor->Y());
-					float actorZ = static_cast<float>(actor->Z());
-					float midHeightOffset = actorZ + ((float)trueVisualHeight * 0.5f);
-
-					// ==============================================================================
-					// MASTER COMPASS EXPERIMENTAL SWITCH
-					// SET TO 'true' TO RUN 3D VOLUMETRIC COMPASS PATHWAY
-					// SET TO 'false' TO RUN 2D XY PLANAR REVENUE BLOCK FROM
-					// ==============================================================================
-					const bool useXYZ3Dcompass = true;
-
-					if (useXYZ3Dcompass)
+					// Compute inverse model matrix to cancel out OpenGL Eye Space double-multiplication bugs!
+					VSMatrix inverseModelMatrix;
+					inverseModelMatrix = *modelMatrixPtr;
+					if (!modelMatrixPtr->inverseMatrix(inverseModelMatrix))
 					{
-						// --- PATHWAY A: RECTIFIED 3D COMPASS TRACKING (DIRECT MOTION) ---
-						float sumHorizCompass3D = 0.0f;
-						float sumVertCompass3D = 0.0f;
-						float totalWeight3D = 0.0f;
-
-						for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
-						{
-							FLegacyDynlight3DmdlCache *light = &g_legacyModelLights[l];
-							float liveDx = light->absX - actorX;
-							float liveDy = light->absY - actorY;
-							float liveDz = light->absZ - midHeightOffset;
-							float distSquared = liveDx * liveDx + liveDy * liveDy + liveDz * liveDz;
-
-							// Extended visual radar buffer (+256 units) to expand the tracking horizon safely
-							float globalRadarRadius = (512.0f + 256.0f) * scaleNormalizeFactor;
-
-							if (distSquared < (globalRadarRadius * globalRadarRadius))
-							{
-								float groundDist = sqrtf(liveDx * liveDx + liveDy * liveDy);
-
-								if (groundDist > 0.1f || fabsf(liveDz) > 0.1f)
-								{
-									float liveHorizAngle = atan2f(liveDy, liveDx);
-									// FIXED: Removed input phase minus inversion for direct tracking alignment
-									float singleHorizCompass = (liveHorizAngle * invPi);
-
-									float liveVertAngle = atan2f(liveDz, groundDist);
-									float singleVertCompass = (liveVertAngle * invPi);
-
-									float lightWeight = 1.0f / ((light->radius + 1.0f) * coef4096);
-									if (lightWeight < 0.001f) lightWeight = 0.001f;
-
-									sumHorizCompass3D -= singleHorizCompass * lightWeight;
-									sumVertCompass3D += singleVertCompass * lightWeight;
-									totalWeight3D += lightWeight;
-								}
-							}
-						}
-
-						float finalHorizCompass3D = 0.0f; float finalVertCompass3D = 0.0f;
-						if (totalWeight3D > 0.001f)
-						{
-							float invTotalWeight = 1.0f / totalWeight3D;
-							finalHorizCompass3D = sumHorizCompass3D * invTotalWeight;
-							finalVertCompass3D = sumVertCompass3D * invTotalWeight;
-						}
-
-						float smoothedYawOffset = sinf(finalHorizCompass3D * pi);
-						float smoothedPitchOffset = sinf(finalVertCompass3D * pi);
-
-						// ==============================================================================
-						//              TERMINAL COORDINATE LOCK INJECTION SHUNT
-						// Offsets strictly moved to final vector tail
-						// Horizontal (X/Y) calculates offset using your proven stable 2D code (+),
-						// Vertical (Z) locks using our verified straightened Pitch with negative sign (-).
-						// ==============================================================================
-						locLightDirX = px * cr - pz * sr - smoothedYawOffset + 0.5f;
-						locLightDirY = px * sr + pz * cr + smoothedYawOffset;
-						locLightDirZ = py                - smoothedPitchOffset;
+						inverseModelMatrix.loadIdentity(); // Fallback to identity if inversion fails
 					}
-				}
 
-				// Complete terminal high-utility normalization pass on local space light rays [INDEX: 0.1.6]
-				float lLen = sqrtf(locLightDirX * locLightDirX + locLightDirY * locLightDirY + locLightDirZ * locLightDirZ);
-				if (lLen > 0.001f)
-				{
-					// OPTIMIZATION: Replaced three channel divisions with single vector length inversion multiplied across axes
-					float invLen = 1.0f / lLen; locLightDirX *= invLen; locLightDirY *= invLen; locLightDirZ *= invLen;
-				}
+					DVector3 modelPos = actor->Pos();
+					float midZ = (float)modelPos.Z + (trueVisualHeight * 0.5f);
 
-				int off1 = frameno * surf->numVertices; int off2 = frameno2 * surf->numVertices;
-				float interpFactor = (float)gl_RenderState.GetInterpolationFactor();
-
-				// Fully purge all 6 isolated RAM containers before boolean index assembly
-				const int totalSlices = 6;
-				for (int s = 0; s < totalSlices; s++) sliceIndicesPool[s].Resize(0);
-
-				// --- 2. BOOLEAN DISTRIBUTION OF TRIANGLES ACROSS 6 DISTINCT RAM SLICES ---
-				for (unsigned int k = 0; k < surf->numTriangles; k++)
-				{
-					unsigned int i0 = surf->Tris[k].VertIndex[0];
-					unsigned int i1 = surf->Tris[k].VertIndex[1];
-					unsigned int i2 = surf->Tris[k].VertIndex[2];
-
-					if (i0 >= surf->numVertices || i1 >= surf->numVertices || i2 >= surf->numVertices) continue;
-
-					float v0x = surf->Vertices[off1 + i0].x * (1.0f - interpFactor) + surf->Vertices[off2 + i0].x * interpFactor;
-					float v0y = surf->Vertices[off1 + i0].y * (1.0f - interpFactor) + surf->Vertices[off2 + i0].y * interpFactor;
-					float v0z = surf->Vertices[off1 + i0].z * (1.0f - interpFactor) + surf->Vertices[off2 + i0].z * interpFactor;
-
-					float v1x = surf->Vertices[off1 + i1].x * (1.0f - interpFactor) + surf->Vertices[off2 + i1].x * interpFactor;
-					float v1y = surf->Vertices[off1 + i1].y * (1.0f - interpFactor) + surf->Vertices[off2 + i1].y * interpFactor;
-					float v1z = surf->Vertices[off1 + i1].z * (1.0f - interpFactor) + surf->Vertices[off2 + i1].z * interpFactor;
-
-					float v2x = surf->Vertices[off1 + i2].x * (1.0f - interpFactor) + surf->Vertices[off2 + i2].x * interpFactor;
-					float v2y = surf->Vertices[off1 + i2].y * (1.0f - interpFactor) + surf->Vertices[off2 + i2].y * interpFactor;
-					float v2z = surf->Vertices[off1 + i2].z * (1.0f - interpFactor) + surf->Vertices[off2 + i2].z * interpFactor;
-
-					float edge1X = v1x - v0x; float edge1Y = v1y - v0y; float edge1Z = v1z - v0z;
-					float edge2X = v2x - v0x; float edge2Y = v2y - v0y; float edge2Z = v2z - v0z;
-
-					// True 3D Cross Product for the face plane normal with Doom-swapped Shadow axes
-					float rawNx = (edge1Y * edge2Z) - (edge1Z * edge2Y);
-					float rawNy = (edge1Z * edge2X) - (edge1X * edge2Z);
-					float rawNz = (edge1X * edge2Y) - (edge1Y * edge2X);
-
-					float faceNx = rawNx;
-					float faceNy = rawNz; // Axis swap: Y <- Z 
-					float faceNz = rawNy; // Axis swap: Z <- Y 
-
-					float nLen = sqrtf(faceNx*faceNx + faceNy * faceNy + faceNz * faceNz);
-					if (nLen > 0.001f) { faceNx /= nLen; faceNy /= nLen; faceNz /= nLen; }
-
-					// Evaluate alignment between the face normal and the active light vector (Dot Product)
-					float rawDot = (faceNx * locLightDirX) + (faceNy * locLightDirY) + (faceNz * locLightDirZ);
-					float normalizedRating = (rawDot + 1.0f) * 0.5f;
-
-					int targetSliceMeshID = (int)(normalizedRating * (float)totalSlices);
-					if (targetSliceMeshID < 0) targetSliceMeshID = 0;
-					if (targetSliceMeshID >= totalSlices) targetSliceMeshID = totalSlices - 1;
-
-					sliceIndicesPool[targetSliceMeshID].Push(i0);
-					sliceIndicesPool[targetSliceMeshID].Push(i1);
-					sliceIndicesPool[targetSliceMeshID].Push(i2);
-				}
-
-				// Unbind Graf Zahl's baked EBO to open the direct RAM array transfer path
-				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-				// --- 3. RENDER 6 COMPLETELY INDEPENDENT SUB-MODELS VIA LIGHTPARMS ---
-				for (int slice = 0; slice < totalSlices; slice++)
-				{
-					if (sliceIndicesPool[slice].Size() == 0) continue;
-
-					float sliceProgress = (float)slice / (float)totalSlices;
-					float diffuse = sliceProgress;
-
-					// 3D displacement of the frame pivot relative to Height (wLdZ)
-					float slicePivotOffsetFactor = trueVisualRadius * (1.0f - (sliceProgress * 2.0f));
-					float sliceWorldX = worldActorX + (float)(wLdX * slicePivotOffsetFactor);
-					float sliceWorldY = worldActorY + (float)(wLdY * slicePivotOffsetFactor);
-					float sliceWorldZ = worldActorCenterZ + (float)(wLdZ * slicePivotOffsetFactor);
-					float sliceInjectR = 0.0f; float sliceInjectG = 0.0f; float sliceInjectB = 0.0f;
-					for (unsigned int l = 0; l < g_legacyModelLights.Size(); l++)
+					for (unsigned int l = 0; l < maxLightsToBind; ++l)
 					{
-						FLegacyDynlight3DmdlCache *light = &g_legacyModelLights(l);
-						float dx = ((float)light->relX - sliceWorldX) * scaleNormalizeFactor;
-						float dy = ((float)light->relY - sliceWorldY) * scaleNormalizeFactor;
-						float dz = ((float)light->relZ - sliceWorldZ) * scaleNormalizeFactor;
-						float distSquared = dx * dx + dy * dy + dz * dz;
-						float interactionRadius = (light->radius + trueVisualRadius) * scaleNormalizeFactor;
-						if (distSquared < (float)(interactionRadius * interactionRadius))
-						{
-							float dist = sqrtf((float)distSquared);
-							float linearFrac = 1.0f - (dist / interactionRadius);
-							if (linearFrac > 0.0f)
-							{
-								float smoothFrac = linearFrac * linearFrac;
-								sliceInjectR += light->r * smoothFrac * 1.25f;
-								sliceInjectG += light->g * smoothFrac * 1.25f;
-								sliceInjectB += light->b * smoothFrac * 1.25f;
-							}
-						}
+						FLegacyDynlight3DmdlCache &cachedLight = g_legacyModelLights[l];
+						GLenum lightSlot = GL_LIGHT0 + l;
+
+						glEnable(lightSlot);
+
+						FLOATTYPE worldLightPos[4] = {
+							(FLOATTYPE)cachedLight.absX,
+							(FLOATTYPE)cachedLight.absZ,
+							(FLOATTYPE)cachedLight.absY,
+							1.0f
+						};
+						FLOATTYPE localLightPos[4] = { 0 };
+
+						inverseModelMatrix.multMatrixPoint(worldLightPos, localLightPos);
+
+						float lightPos[4] = { (float)localLightPos[0], (float)localLightPos[1], (float)localLightPos[2], 1.0f };
+
+						float dx = (float)cachedLight.absX - (float)modelPos.X;
+						float dy = (float)cachedLight.absY - (float)modelPos.Y;
+						float dz = (float)cachedLight.absZ - midZ;
+						float currentDist = sqrtf(dx * dx + dy * dy + dz * dz);
+
+						float distFactor = 1.0f - (currentDist / cachedLight.radius);
+						if (distFactor < 0.0f) distFactor = 0.0f;
+
+						float diffuseColor[4] = {
+							cachedLight.r * legacyVolumDynlightIntensity * distFactor,
+							cachedLight.g * legacyVolumDynlightIntensity * distFactor,
+							cachedLight.b * legacyVolumDynlightIntensity * distFactor,
+							1.0f
+						};
+
+						float zeroAmbient[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+						glLightfv(lightSlot, GL_POSITION, lightPos);
+						glLightfv(lightSlot, GL_DIFFUSE, diffuseColor);
+						glLightfv(lightSlot, GL_SPECULAR, diffuseColor);
+						glLightfv(lightSlot, GL_AMBIENT, zeroAmbient);
+
+						glLightf(lightSlot, GL_CONSTANT_ATTENUATION, 0.0f);
+						glLightf(lightSlot, GL_LINEAR_ATTENUATION, 1.0f / cachedLight.radius);
+						glLightf(lightSlot, GL_QUADRATIC_ATTENUATION, 0.0f);
 					}
-					// Final vivid slice shading using standard diffuse shading rules
-					float finalR = baseColor + (sliceInjectR * diffuse);
-					float finalG = baseColor + (sliceInjectG * diffuse);
-					float finalB = baseColor + (sliceInjectB * diffuse);
-					if (finalR > 1.0f) finalR = 1.0f;
-					if (finalG > 1.0f) finalG = 1.0f;
-					if (finalB > 1.0f) finalB = 1.0f;
-					glColor4f(finalR, finalG, finalB, 1.0f);
-					glDrawElements(GL_TRIANGLES, sliceIndicesPool[slice].Size(), GL_UNSIGNED_INT, sliceIndicesPool[slice].Data());
+
+					glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+					glEnable(GL_COLOR_MATERIAL);
 				}
 
-				// CRASH FIX FOR RESET: Restore the original VBO/EBO state immediately 
-				// after custom slice rendering to prevent LZDoom07 engine breakdown further down the line
+				// Dispatch the entire solid mesh geometry to the GPU using 1 single engine VBO Draw Call
+				renderer->DrawElements(surf->numTriangles * 3, surf->iindex * sizeof(unsigned int));
+
+				// --- STEP 4: RECOVERY CLEANUP RESTORE GATE ---
 				if (currentVBuf != nullptr) currentVBuf->BindVBO();
+
+				if (gl.legacyMode)
+				{
+					for (unsigned int l = 0; l < maxLightsToBind; ++l)
+					{
+						glDisable(GL_LIGHT0 + l);
+					}
+
+					glDisable(GL_LIGHTING);
+					glDisableClientState(GL_NORMAL_ARRAY); // Safely isolate normal tracking back to default
+					glDisable(GL_COLOR_MATERIAL);
+					glShadeModel(GL_FLAT); // Revert hardware tracker state back to default flat shading
+				}
 			}
 			else
 			{

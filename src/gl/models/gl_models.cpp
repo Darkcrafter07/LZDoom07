@@ -76,7 +76,10 @@ void FGLModelRenderer::BeginDrawModel(AActor *actor, FSpriteModelFrame *smf, con
 
 	glDepthFunc(GL_LEQUAL);
 	gl_RenderState.EnableTexture(true);
-
+	// [BB] In case the model should be rendered translucent, do back face culling.
+	// This solves a few of the problems caused by the lack of depth sorting.
+	// [Nash] Don't do back face culling if explicitly specified in MODELDEF
+	// TO-DO: Implement proper depth sorting.
 	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]) && !(smf->flags & MDL_DONTCULLBACKFACES))
 	{
 		glEnable(GL_CULL_FACE);
@@ -85,15 +88,6 @@ void FGLModelRenderer::BeginDrawModel(AActor *actor, FSpriteModelFrame *smf, con
 
 	gl_RenderState.mModelMatrix = objectToWorldMatrix;
 	gl_RenderState.EnableModelMatrix(true);
-
-	// [Darkcrafter07]: CRITICAL RESET FOR SOFT LIGHT LEVEL OVERRIDES
-	// We force set the soft light level register cleanly back to maximum 255 default factor.
-	// This forces mLightParms[3] to evaluate strictly to 1.0f, completely destroying 
-	// random flickering, frame fullbright burnouts, and shading drops on the model hulls!
-	if (gl.lightmethod == LM_LEGACY)
-	{
-		gl_RenderState.SetSoftLightLevel(255);
-	}
 }
 
 void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
@@ -109,7 +103,7 @@ void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
 			FTexture *skin = skinID.isValid() ? TexMan[skinID] : nullptr;
 			FMaterial *baseMat = FMaterial::ValidateTexture(skin, false);
 
-			// Get your colorized/clipped brightmap from gl_material.cpp logic
+			// Get colorized and transparent brightmap from gl_material.cpp logic
 			FMaterial *bmMat = baseMat ? baseMat->GetBrightmapLegacy() : nullptr;
 
 			if (bmMat)
@@ -484,6 +478,7 @@ void FModelVertexBuffer::UnlockIndexBuffer()
 //===========================================================================
 static TArray<FModelVertex> iBuffer;
 TArray<FVector3> legacyNormalsBuffer;
+// Legacy mode vertices are generated as dummy and are completely USELESS, do NOT use!
 void FModelVertexBuffer::SetupFrame(FModelRenderer *renderer, unsigned int frame1, unsigned int frame2, unsigned int size)
 {
 	glBindBuffer(GL_ARRAY_BUFFER, vbo_id);

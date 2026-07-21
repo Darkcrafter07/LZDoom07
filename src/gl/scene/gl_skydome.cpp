@@ -26,7 +26,7 @@
 ** for FSkyVertexBuffer::SkyVertex only:
 **---------------------------------------------------------------------------
 ** Copyright 2003 Tim Stump
-** All rights reserved. 
+** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions
@@ -78,7 +78,7 @@
 
 //-----------------------------------------------------------------------------
 //
-// Shamelessly lifted from Doomsday (written by Jaakko Kerï¿½nen)
+// Shamelessly lifted from Doomsday (written by Jaakko Keränen)
 // also shamelessly lifted from ZDoomGL! ;)
 //
 //-----------------------------------------------------------------------------
@@ -606,4 +606,21 @@ void GLSkyPortal::DrawContents()
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	}
+
+	// Alternative way (just in case):
+	//if (gl.legacyMode)
+	//{
+	//	// 1. Explicitly restore ONLY fog and color tracking registers in the cache
+	//	gl_RenderState.EnableFog(true);
+	//	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	//	gl_RenderState.ResetColor(); // Force-purge sticky skybox overlay colors from memory
+	//
+	//	// 2. Force the state machine to flush color data directly into the GPU registers right now
+	//	// This guarantees that any sticky fadecolors from the sky overlay pass completely drop!
+	//	gl_RenderState.Apply();
+	//
+	//	// 3. Raw hardware compliance fallback paths (Safe from breaking dome textures)
+	//	glEnable(GL_FOG);
+	//	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	//}
 }
