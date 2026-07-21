@@ -34,7 +34,7 @@
 #include "gl_20.h"
 #include "gl/dynlights/gl_dynlightcache.h"
 
-//FGLBSPCache g_BSPRenderCache; 
+//FGLBSPCache g_BSPRenderCache;
 
 CVAR(Bool, gl_lights_additive, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)
@@ -191,30 +191,6 @@ void gl_SetTextureMode(int type)
 		// Make sure that scale has reset to 1, otherwise overbright
 		glTexEnvi(GL_TEXTURE_ENV, GL_RGB_SCALE, 1);
 	}
-
-	//else if (type == TM_SHADEDLIGHT_LEGACY)
-	//{
-	//	// Switch the pipeline to advanced layer combining mode
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
-
-	//	// RGB CHANNEL: Multiply the spotlight texture (Texture0) by the vertex color (Primary Color).
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_TEXTURE0);
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB, GL_PRIMARY_COLOR);
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB, GL_SRC_COLOR);
-
-	//	// HARD ALPHA PROTECTION: Completely replace spotlight alpha with geometry alpha.
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_PRIMARY_COLOR);
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
-
-	//	// Enable hardware generation of eye space coordinates
-	//	glEnable(GL_TEXTURE_GEN_S);
-	//	glEnable(GL_TEXTURE_GEN_T);
-	//	glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_EYE_LINEAR);
-	//	glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_EYE_LINEAR);
-	//}
 
 	else // if (type == TM_MODULATE)
 	{

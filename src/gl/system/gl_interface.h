@@ -40,7 +40,6 @@ enum TexMode
 
 	TM_INVERTOPAQUE,					// used by GL 1x/2x fallback code.
 	TM_BRIGHTMAP_LEGACY,				// used by GL 1x/2x fallback code.
-	TM_SHADEDLIGHT_LEGACY, 				// used by GL 1x/2x fallback code.
 };
 
 enum ELightMethod

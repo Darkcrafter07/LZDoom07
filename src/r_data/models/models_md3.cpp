@@ -933,9 +933,17 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					}
 
 					glDisable(GL_LIGHTING);
+					glDisable(GL_COLOR_SUM); // Safely shut down hardware color summary blending pass
 					glDisableClientState(GL_NORMAL_ARRAY); // Safely isolate normal tracking back to default
 					glDisable(GL_COLOR_MATERIAL);
-					glShadeModel(GL_FLAT); // Revert hardware tracker state back to default flat shading
+
+					// Force immediate pipeline synchronization pass right now to flush cache registers cleanly
+					// The commented out lines are NOT needed here, otherwise some models get lit at all times but kept
+					//gl_RenderState.EnableFog(true); // NOT needed perhaps
+					//gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); // NOT needed perhaps
+					//gl_RenderState.SetTextureMode(TM_MODULATE); // NOT needed perhaps
+					//gl_RenderState.ResetColor(); // NOT needed perhaps
+					gl_RenderState.Apply();
 				}
 			}
 			else
