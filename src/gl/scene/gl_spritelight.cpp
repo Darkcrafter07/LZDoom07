@@ -61,6 +61,11 @@ T smoothstep(const T edge0, const T edge1, const T x)
 
 CVAR(Bool, gl_cachedynlightmdlocclusion, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
+
+void* g_CurrentRendering3dmdlActorPtr = nullptr; // no need to add "AActor *actor" in RenderFrame
+extern bool g_isCurrent3dMdlWeldedSolid;
+extern bool isUsingVolumetric3DModelLegacyDynlight;
+
 //==========================================================================
 //
 // Sets a single light value from all dynamic lights affecting the specified location
@@ -145,6 +150,8 @@ void gl_SetDynSpriteLight(AActor *self, float x, float y, float z, subsector_t *
 		}
 		node = node->nextLight;
 	}
+
+	// Maintain standard flat coloring for sprites and decorative props
 	gl_RenderState.SetDynLight(out[0], out[1], out[2]);
 	modellightindex = -1;
 }
@@ -197,11 +204,11 @@ void is3DmdlActorVisibToDynlightRegularWrapper(float x, float y, float radius, c
 
 	// ADAPTIVE FILTER:
 	// If a massive rock or giant asset enters (radius >= 256.0f),
-	// we COMPLETELY bypass the fast-path buffer and route it through proper original BSP traversal!
-	// This completely eliminates slicing artifacts and holes while maintaining cosmic speeds for foliage!
+	// COMPLETELY bypass the fast-path buffer and route it through proper original BSP traversal
+	// This eliminates slicing artifacts and holes while maintaining cosmic speeds for foliage
 	if ((float)self->RenderRadius() >= 256.0f)
 	{
-		// Честный глубокий радар Графа Захла строго для гигантских гор карты
+		// Faithful original radar for giant models spanning throughout the map
 		BSPWalkCircle(x, y, radius, callback);
 		return;
 	}
@@ -470,12 +477,10 @@ void is3DmdlActorVisibToDynlightMainWrapper(float x, float y, float radius, cons
 
 
 
-void* g_CurrentRendering3dmdlActorPtr = nullptr; // no need to add "AActor *actor" in RenderFrame
-extern bool g_isCurrent3dMdlWeldedSolid;
-extern bool isUsingVolumetric3DModelLegacyDynlight;
 int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old name: "gl_SetDynModelLight"
 {
 	g_CurrentRendering3dmdlActorPtr = (void*)self; // no need to add "AActor *actor" in RenderFrame
+	if (self != nullptr && isUsingVolumetric3DModelLegacyDynlight)
 	isUsingVolumetric3DModelLegacyDynlight = false;
 
 	if (gl.lightmethod == LM_DEFERRED && dynlightindex != -1)
@@ -696,7 +701,8 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 		}
 
 		// Flush flat lighting fallback outputs to baseline engine buffers
-		gl_RenderState.SetDynLight(outR / 4.0f, outG / 4.0f, outB / 4.0f);
+		// Must be 0,0,0 for Gourad light not to get mixed with flat light
+		gl_RenderState.SetDynLight(0.0f, 0.0f, 0.0f);
 		gl_RenderState.ResetColor();
 
 		if (g_legacyLightActive && g_legacyModelLights.Size() > 0)
@@ -796,7 +802,7 @@ int gl_Set3DmdlDynLightSimpleVisBounds(AActor *self, int dynlightindex)
 		return dynlightindex;
 	}
 
-	if (gl.lightmethod == LM_LEGACY) // GL1x/GL2x legacy render path gets the old flat model light
+	if (gl.lightmethod == LM_LEGACY) // GL1x/GL2x legacy render path for models without volumetric dynlight flag
 	{
 		gl_SetDynSpriteLight(self, nullptr);
 		return -1;

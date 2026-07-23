@@ -1,4 +1,4 @@
-// models_md3.cpp
+﻿// models_md3.cpp
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2006-2016 Christoph Oelckers
@@ -441,149 +441,93 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 		for (unsigned i = 0; i < Surfaces.Size(); i++)
 		{
 			MD3Surface * surf = &Surfaces[i];
-			if (surf->numTriangles == 0 || surf->Vertices.Size() == 0 || surf->numVertices < 4) continue;
-
-			// Spatial CCW Sorter Pass (Ring Index Builder)
-			TArray<FTriangleSortMeta> sortingPool;
-			sortingPool.Resize(surf->numTriangles);
-
-			for (unsigned int k = 0; k < surf->numTriangles; k++)
-			{
-				sortingPool[k].originalTriangle = surf->Tris[k];
-				float sumZ = 0.0f; float sumX = 0.0f; float sumY = 0.0f;
-				for (int l = 0; l < 3; l++)
-				{
-					unsigned int idx = surf->Tris[k].VertIndex[l];
-					if (idx < surf->numVertices)
-					{
-						sumX += surf->Vertices[idx].x; sumY += surf->Vertices[idx].y; sumZ += surf->Vertices[idx].z;
-					}
-				}
-				sortingPool[k].avgZ = sumZ / 3.0f;
-				sortingPool[k].ccwAngle = atan2f(sumY / 3.0f, sumX / 3.0f);
-			}
-
-			std::sort(sortingPool.Data(), sortingPool.Data() + surf->numTriangles,
-				[](const FTriangleSortMeta& a, const FTriangleSortMeta& b) -> bool
-			{
-				if (fabsf(a.avgZ - b.avgZ) > 2.0f) return a.avgZ < b.avgZ;
-				return a.ccwAngle < b.ccwAngle;
-			});
-
-			for (unsigned int k = 0; k < surf->numTriangles; k++) surf->Tris[k] = sortingPool[k].originalTriangle;
-
-			// --- THE ADJACENT LINE PERPENDICULAR TRACKER PASS ---
-			float prevPerpLineX = 0.0f; float prevPerpLineY = 0.0f; float prevPerpLineZ = 1.0f;
-			bool firstLineCaptured = false;
-			int off1 = 0; // Evaluate based on frame 0 baseline setup
-
-			for (unsigned int v = 0; v < surf->numVertices - 1; v++)
-			{
-				float x1 = surf->Vertices[off1 + v].x; float y1 = surf->Vertices[off1 + v].y; float z1 = surf->Vertices[off1 + v].z;
-				float x2 = surf->Vertices[off1 + v + 1].x; float y2 = surf->Vertices[off1 + v + 1].y; float z2 = surf->Vertices[off1 + v + 1].z;
-
-				float edgeX = x2 - x1; float edgeY = y2 - y1; float edgeZ = z2 - z1;
-				float edgeLen = sqrtf(edgeX*edgeX + edgeY * edgeY + edgeZ * edgeZ);
-				if (edgeLen <= 0.001f) continue;
-
-				// Extrude an explicit perpendicular cross-product line vector matching your layout!
-				float perpLineX = edgeY;
-				float perpLineY = -edgeX;
-				float perpLineZ = 0.0f;
-
-				if (fabsf(edgeX) < 0.01f && fabsf(edgeY) < 0.01f)
-				{
-					perpLineX = 1.0f; perpLineY = 0.0f; perpLineZ = 0.0f;
-				}
-
-				float perpLen = sqrtf(perpLineX*perpLineX + perpLineY * perpLineY + perpLineZ * perpLineZ);
-				if (perpLen > 0.001f) { perpLineX /= perpLen; perpLineY /= perpLen; perpLineZ /= perpLen; }
-
-				if (!firstLineCaptured)
-				{
-					prevPerpLineX = perpLineX; prevPerpLineY = perpLineY; prevPerpLineZ = perpLineZ;
-					firstLineCaptured = true;
-				}
-				else
-				{
-					float lineDotProduct = (perpLineX * prevPerpLineX) + (perpLineY * prevPerpLineY) + (perpLineZ * prevPerpLineZ);
-
-					// CRITICAL WRAPPING THRESHOLD GATE: cos(8 degrees) = ~0.9902f
-					if (fabsf(lineDotProduct) < 0.990f)
-					{
-						modelContainsSharp3DCurvatureBends = true;
-						break;
-					}
-
-					prevPerpLineX = perpLineX; prevPerpLineY = perpLineY; prevPerpLineZ = perpLineZ;
-				}
-			}
-			if (modelContainsSharp3DCurvatureBends) break;
-		}
-
-		// Save the final unified single-verdict token natively
-		g_isCurrent3dMdlWeldedSolid = modelContainsSharp3DCurvatureBends;
-
-		for (unsigned i = 0; i < Surfaces.Size(); i++)
-		{
-			MD3Surface * surf = &Surfaces[i];
-
 			surf->vindex = vindex;
 			surf->iindex = iindex;
 
-			// [Darkcrafter07]: PURE 3D SMOOTH NORMAL GENERATOR CONVEYOR
-			// Create a temp CPU-buffer to accumulate and smooth faithful 3D normals
-			TArray<float> accumNx; accumNx.Resize(surf->numVertices);
-			TArray<float> accumNy; accumNy.Resize(surf->numVertices);
-			TArray<float> accumNz; accumNz.Resize(surf->numVertices);
-			for (unsigned int v = 0; v < surf->numVertices; v++) { accumNx[v] = 0.0f; accumNy[v] = 0.0f; accumNz[v] = 0.0f; }
+			unsigned int totalNormalEntries = Frames.Size() * surf->numVertices;
+			TArray<float> accumNx; accumNx.Resize(totalNormalEntries);
+			TArray<float> accumNy; accumNy.Resize(totalNormalEntries);
+			TArray<float> accumNz; accumNz.Resize(totalNormalEntries);
 
-			// Pass 1: Calc 3D cross-product for each triangle of current frame
-			for (unsigned int k = 0; k < surf->numTriangles; k++)
+			for (unsigned int v = 0; v < totalNormalEntries; v++)
 			{
-				unsigned int i0 = surf->Tris[k].VertIndex[0];
-				unsigned int i1 = surf->Tris[k].VertIndex[1];
-				unsigned int i2 = surf->Tris[k].VertIndex[2];
+				accumNx[v] = 0.0f; accumNy[v] = 0.0f; accumNz[v] = 0.0f;
+			}
 
-				if (i0 < surf->numVertices && i1 < surf->numVertices && i2 < surf->numVertices)
+			// Pass 1: Compute true 3D Cross Product face normals for EVERY single frame individually
+			for (unsigned int f = 0; f < Frames.Size(); f++)
+			{
+				// --- FIX: FIXED TYPO AND SCOPE DEFINITION FOR FRAME VERTEX OFFSET ---
+				int frameVertexOffset = f * surf->numVertices;
+
+				for (unsigned int k = 0; k < surf->numTriangles; k++)
 				{
-					// Take baseline vertices of frame 0 to generate normals topology
-					float v0x = surf->Vertices[i0].x; float v0y = surf->Vertices[i0].y; float v0z = surf->Vertices[i0].z;
-					float v1x = surf->Vertices[i1].x; float v1y = surf->Vertices[i1].y; float v1z = surf->Vertices[i1].z;
-					float v2x = surf->Vertices[i2].x; float v2y = surf->Vertices[i2].y; float v2z = surf->Vertices[i2].z;
+					// --- FIX: RESTORED EXACT ARRAY INDEXATION SQUARE BRACKETS ---
+					unsigned int i0 = surf->Tris[k].VertIndex[0];
+					unsigned int i1 = surf->Tris[k].VertIndex[1];
+					unsigned int i2 = surf->Tris[k].VertIndex[2];
 
-					float edge1X = v1x - v0x; float edge1Y = v1y - v0y; float edge1Z = v1z - v0z;
-					float edge2X = v2x - v0x; float edge2Y = v2y - v0y; float edge2Z = v2z - v0z;
+					if (i0 < surf->numVertices && i1 < surf->numVertices && i2 < surf->numVertices)
+					{
+						// Fetch real dynamic vertex arrays mapping active animation frames natively
+						MD3Vertex* vert0 = &surf->Vertices[frameVertexOffset + i0];
+						MD3Vertex* vert1 = &surf->Vertices[frameVertexOffset + i1];
+						MD3Vertex* vert2 = &surf->Vertices[frameVertexOffset + i2];
 
-					// Faithful volumetric cross-product for plane
-					float fnx = (edge1Y * edge2Z) - (edge1Z * edge2Y);
-					float fny = (edge1Z * edge2X) - (edge1X * edge2Z);
-					float fnz = (edge1X * edge2Y) - (edge1Y * edge2X);
+						float edge1X = vert1->x - vert0->x; float edge1Y = vert1->z - vert0->z; float edge1Z = vert1->y - vert0->y;
+						float edge2X = vert2->x - vert0->x; float edge2Y = vert2->z - vert0->z; float edge2Z = vert2->y - vert0->y;
 
-					// Accumulate (smooth) normals on the angles vertices
-					accumNx[i0] += fnx; accumNy[i0] += fny; accumNz[i0] += fnz;
-					accumNx[i1] += fnx; accumNy[i1] += fny; accumNz[i1] += fnz;
-					accumNx[i2] += fnx; accumNy[i2] += fny; accumNz[i2] += fnz;
+						// Faithful SimSun cross-product face normal formula (Edge1 x Edge2)
+						float fnx = (edge1Y * edge2Z) - (edge1Z * edge2Y);
+						float fny = (edge1Z * edge2X) - (edge1X * edge2Z);
+						float fnz = (edge1X * edge2Y) - (edge1Y * edge2X);
+
+						// Accumulate smooth vector weights into vertex specific frame slots
+						accumNx[frameVertexOffset + i0] += fnx; accumNy[frameVertexOffset + i0] += fny; accumNz[frameVertexOffset + i0] += fnz;
+						accumNx[frameVertexOffset + i1] += fnx; accumNy[frameVertexOffset + i1] += fny; accumNz[frameVertexOffset + i1] += fnz;
+						accumNx[frameVertexOffset + i2] += fnx; accumNy[frameVertexOffset + i2] += fny; accumNz[frameVertexOffset + i2] += fnz;
+					}
 				}
 			}
 
-			// Pass 2: Normalize and pack faithful 3D-normals into the vertex VBO
+			// Pass 2: Normalize and pre-bake faithful 3D SimSun Sunlit weights into the vertex VBO arrays
 			for (unsigned j = 0; j < Frames.Size() * surf->numVertices; j++)
 			{
 				MD3Vertex* vert = &surf->Vertices[j];
 				FModelVertex *bvert = &vertptr[vindex++];
 				int tc = j % surf->numVertices;
+
 				bvert->Set(vert->x, vert->z, vert->y, surf->Texcoords[tc].s, surf->Texcoords[tc].t);
 
-				// Get accumulated smoothed-put 3D-normal for the current vertex
-				float finalNx = accumNx[tc]; float finalNy = accumNy[tc]; float finalNz = accumNz[tc];
+				// Get accumulated smoothed-put true 3D-normal for the current vertex frame entry
+				float finalNx = accumNx[j];
+				float finalNy = accumNy[j];
+				float finalNz = accumNz[j];
+
 				float normLen = sqrtf((finalNx * finalNx) + (finalNy * finalNy) + (finalNz * finalNz));
-
 				if (normLen > 0.001f) { finalNx /= normLen; finalNy /= normLen; finalNz /= normLen; }
-				else { finalNx = 1.0f; finalNy = 0.0f; finalNz = 0.0f; }
+				else { finalNx = 0.0f; finalNy = 0.0f; finalNz = 1.0f; }
 
-				// Bake the volumetric normal into VBO accounting Quake/Doom axes flips
-				bvert->SetNormal(finalNx, finalNz, finalNy);
+				float sunDirX = 1.0f; float sunDirY = -1.0f; float sunDirZ = -1.0f;
+				float sunLen = sqrtf(sunDirX * sunDirX + sunDirY * sunDirY + sunDirZ * sunDirZ);
+				float invSunLen = (sunLen > 0.001f) ? (1.0f / sunLen) : 1.0f;
+
+				// Compute pure spatial scalar dot product alignment relative to sun directional arrays
+				float dotProduct = (sunDirX * finalNx + sunDirY * finalNy + sunDirZ * finalNz) * invSunLen;
+				if (dotProduct > 1.0f)  dotProduct = 1.0f;
+				if (dotProduct < -1.0f) dotProduct = -1.0f;
+
+				float angle = acosf(dotProduct);
+				float lightLevel = angle * (1.0f / 3.14159265f); // pi inverse multiplication!
+
+				// Faithful SimSun brightness adjustment shift (+0.32) to secure soft mid-tones
+				lightLevel += 0.32f;
+				if (lightLevel > 1.0f) lightLevel = 1.0f;
+				if (lightLevel < 0.05f) lightLevel = 0.05f;
+
+				// Bake the compiled SimSun sunlit scale factor right inside the VBO normal coordinates vector,
+				// accounting for Quake/Doom axes flips
+				bvert->SetNormal(finalNx * lightLevel, finalNz * lightLevel, finalNy * lightLevel);
 
 				if (surf->numVertices > 0)
 				{
@@ -614,8 +558,11 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 		this->rawPositionsPool.Resize(vbufsize);
 		for (unsigned int v = 0; v < vindex; v++)
 		{
-			this->rawPositionsPool[v].X = vertptr[v].x; this->rawPositionsPool[v].Y = vertptr[v].y; this->rawPositionsPool[v].Z = vertptr[v].z;
+			this->rawPositionsPool[v].X = vertptr[v].x;
+			this->rawPositionsPool[v].Y = vertptr[v].y;
+			this->rawPositionsPool[v].Z = vertptr[v].z;
 		}
+
 		vbuf->UnlockVertexBuffer();
 		vbuf->UnlockIndexBuffer();
 	}
@@ -747,7 +694,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 
 		if (!gl_lights) // Dynligths are off, clear array cache and shutdown surfaces
 		// needs to be done, otherwise actors won't kill volumen dynlight when turned off in menu
-		{ g_legacyLightActive = false; g_legacyModelLights.Clear(); }
+		{
+			g_legacyLightActive = false; g_legacyModelLights.Clear();
+		}
 
 		if (!actor)
 		{
@@ -783,7 +732,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 
 			auto currentVBuf = (FModelVertexBuffer*)GetVertexBuffer(renderer);
 			if (currentVBuf != nullptr)
-			{ currentVBuf->SetupFrame(renderer, surf->vindex + frameno * surf->numVertices, surf->vindex + frameno2 * surf->numVertices, surf->numVertices); }
+			{
+				currentVBuf->SetupFrame(renderer, surf->vindex + frameno * surf->numVertices, surf->vindex + frameno2 * surf->numVertices, surf->numVertices);
+			}
 
 			// Repeat local check on empty memory of surface dynlights
 			if (g_legacyModelLights.Size() == 0) g_legacyLightActive = false;
@@ -797,20 +748,26 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 			//bool useLegacyVolumetricLighting = (gl_lights && g_legacyLightActive && g_isCurrent3dMdlWeldedSolid && 
 			//	                    surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet && 
 			//															g_legacyModelLights.Size() > 0);
-			bool useLegacyVolumetricLighting = (gl_lights && g_legacyLightActive && 
-				surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet && 
+			bool useLegacyVolumetricLighting = (gl_lights && g_legacyLightActive &&
+				surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet &&
 				g_legacyModelLights.Size() > 0);
 			if (useLegacyVolumetricLighting)
 			{
 				isUsingVolumetric3DModelLegacyDynlight = true;
-
-				// Fetch the active model matrix from Graf's render state cache
+				// Fetch the active model matrix from render state cache
 				auto *modelMatrixPtr = &gl_RenderState.mModelMatrix;
 
-				float finalScaleX = (float)curSpriteMDLFrame->xscale;
-				float finalScaleZ = (float)curSpriteMDLFrame->zscale;
+				// --- COMPOSITE MATRIX SCALE EQUALIZER ---
+				// Extract the map editor scale bound with MODELDEF multipliers layout
+				float finalScaleX = (float)actor->Scale.X * (float)curSpriteMDLFrame->xscale;
+				float finalScaleZ = (float)actor->Scale.Y * (float)curSpriteMDLFrame->zscale;
 				if (finalScaleX <= 0.0f) finalScaleX = 1.0f;
 				if (finalScaleZ <= 0.0f) finalScaleZ = 1.0f;
+
+				// --- SCALE NORMALIZER ---
+				// Measure average scaling factor to elegantly adapt attenuation properties.
+				float avgModelScale = (finalScaleX + finalScaleZ) * 0.5f;
+				if (avgModelScale <= 0.001f) avgModelScale = 1.0f;
 
 				float referenceRockScale = 368.0f;
 				float scaleNormalizeFactor = referenceRockScale / finalScaleZ;
@@ -819,7 +776,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 				if (trueVisualRadius <= 0.01f) trueVisualRadius = 32.0f;
 				if (trueVisualHeight <= 0.01f) trueVisualHeight = 64.0f;
 
-				const float legacyVolumDynlightIntensity = 0.0032f;
+				const float legacyVolumDynlightIntensity = 0.5f;
 
 				// Safe global registers light slots scope tracking variable
 				unsigned int maxLightsToBind = g_legacyModelLights.Size();
@@ -832,11 +789,17 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					vertexBuffer->SetupFrame(renderer, surf->vindex + frameno * surf->numVertices, surf->vindex + frameno2 * surf->numVertices, surf->numVertices);
 
 					glShadeModel(GL_SMOOTH);
-					glEnable(GL_LIGHTING);
-					glEnableClientState(GL_NORMAL_ARRAY);
+					glEnable(GL_LIGHTING); // Wake up hardware lighting engines
 
-					// Map your beautifully baked smooth normal pointer layout from the VBO structure bounds
-					glNormalPointer(GL_FLOAT, sizeof(FModelVertex), (void*)(sizeof(float) * 5)); // Offset to nx/ny/nz fields
+					// --- FORCE UNIT LENGTH NORMALS ---
+					// Automatically recalculate model compressed or stretched normals on the fly
+					glEnable(GL_NORMALIZE);
+
+					glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE); // Force two-sided math to secure all faces
+					glDisableClientState(GL_NORMAL_ARRAY); // Shut down the corrupted pointer stream
+
+					// Inject a baseline exterior normal to reset the fixed function driver pipeline registers
+					glNormal3f(0.0f, 0.0f, 1.0f);
 
 					float baseAmbR = actor->Sector->lightlevel * invMul127;
 					float baseAmbG = actor->Sector->lightlevel * invMul127;
@@ -845,20 +808,20 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					for (unsigned int l = 0; l < g_legacyModelLights.Size(); ++l)
 					{
 						FLegacyDynlight3DmdlCache &light = g_legacyModelLights[l];
-						// Inject a smooth 2.5% global bounce light bleed from all active flares in space
-						baseAmbR += light.r * legacyVolumDynlightIntensity * 0.025f;
-						baseAmbG += light.g * legacyVolumDynlightIntensity * 0.025f;
-						baseAmbB += light.b * legacyVolumDynlightIntensity * 0.025f;
+						// Inject a smooth 1% global bounce light bleed from all active flares in space
+						baseAmbR += light.r * legacyVolumDynlightIntensity * 0.01f;
+						baseAmbG += light.g * legacyVolumDynlightIntensity * 0.01f;
+						baseAmbB += light.b * legacyVolumDynlightIntensity * 0.01f;
 					}
 					if (baseAmbR > 1.0f) baseAmbR = 1.0f;
 					if (baseAmbG > 1.0f) baseAmbG = 1.0f;
 					if (baseAmbB > 1.0f) baseAmbB = 1.0f;
 
-					// Push compiled poor man's GI ambient floor directly into the master matrix slots!
+					// --- EXACT ARRAY INDEXATION SQUARE BRACKETS MUST BE HERE [4] ---
 					float ambColor[4] = { baseAmbR, baseAmbG, baseAmbB, 1.0f };
 					glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambColor);
 
-					// Compute inverse model matrix to cancel out OpenGL Eye Space double-multiplication bugs!
+					// Compute inverse model matrix to cancel out OpenGL Eye Space double-multiplication bugs
 					VSMatrix inverseModelMatrix;
 					inverseModelMatrix = *modelMatrixPtr;
 					if (!modelMatrixPtr->inverseMatrix(inverseModelMatrix))
@@ -867,15 +830,18 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					}
 
 					DVector3 modelPos = actor->Pos();
+
+					// --- VERTICAL HEIGHT SCALED PROPERLY BEFORE MATRIX ASSIGNMENT ---
 					float midZ = (float)modelPos.Z + (trueVisualHeight * 0.5f);
 
+					// --- STEP 3: BIND CACHED FLARES TO STANDARD HARDWARE LIGHT SLOTS ---
 					for (unsigned int l = 0; l < maxLightsToBind; ++l)
 					{
 						FLegacyDynlight3DmdlCache &cachedLight = g_legacyModelLights[l];
 						GLenum lightSlot = GL_LIGHT0 + l;
-
 						glEnable(lightSlot);
 
+						// Setup raw world position vectors of the light source
 						FLOATTYPE worldLightPos[4] = {
 							(FLOATTYPE)cachedLight.absX,
 							(FLOATTYPE)cachedLight.absZ,
@@ -884,25 +850,70 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						};
 						FLOATTYPE localLightPos[4] = { 0 };
 
+						// Multiply world parameters by inverse matrix using native multMatrixPoint pointer route
 						inverseModelMatrix.multMatrixPoint(worldLightPos, localLightPos);
 
+						// --- EXACT ARRAY INDEXATION SQUARE BRACKETS MUST BE HERE [4], [0], [1], [2] ---
 						float lightPos[4] = { (float)localLightPos[0], (float)localLightPos[1], (float)localLightPos[2], 1.0f };
 
-						float dx = (float)cachedLight.absX - (float)modelPos.X;
-						float dy = (float)cachedLight.absY - (float)modelPos.Y;
-						float dz = (float)cachedLight.absZ - midZ;
+						// --- HIGH-SPEED STRIDE VERTEX SAMPLER SHUNT ---
+						float closestVertexWorld[3] = { (float)modelPos.X, (float)modelPos.Y, (float)midZ };
+						float minVertexDistSquared = 99999999.0f;
+						int totalVerts = surf->numVertices;
+
+						if (totalVerts > 0 && surf->Vertices.Size() > 0)
+						{
+							int frameVertexOffset = frameno * totalVerts;
+							int strideStep = totalVerts / 8;
+							if (strideStep < 1) strideStep = 1;
+
+							// Cache alignment pointer stream shortcut
+							const MD3Vertex* verticesBase = &surf->Vertices[frameVertexOffset];
+							for (int vIdx = 0; vIdx < totalVerts; vIdx += strideStep)
+							{
+								const MD3Vertex* testVert = &verticesBase[vIdx];
+
+								// --- NATIVE 3D COORDINATE CONVERSION SYNCED WITH SCALES ---
+								float vWorldX = (float)modelPos.X + (testVert->x * finalScaleX);
+								float vWorldY = (float)modelPos.Y + (testVert->z * finalScaleX);
+								float vWorldZ = (float)modelPos.Z + (testVert->y * finalScaleZ);
+
+								float vDx = (float)cachedLight.absX - vWorldX;
+								float vDy = (float)cachedLight.absY - vWorldY;
+								float vDz = (float)cachedLight.absZ - vWorldZ;
+								float tDistSq = vDx * vDx + vDy * vDy + vDz * vDz;
+
+								if (tDistSq < minVertexDistSquared)
+								{
+									minVertexDistSquared = tDistSq;
+									closestVertexWorld[0] = vWorldX;
+									closestVertexWorld[1] = vWorldY;
+									closestVertexWorld[2] = vWorldZ;
+								}
+							}
+						}
+
+						// --- CLEAN SCALED DISTANCE CALCULATION ---
+						float dx = ((float)cachedLight.absX - closestVertexWorld[0]) / avgModelScale;
+						float dy = ((float)cachedLight.absY - closestVertexWorld[1]) / avgModelScale;
+						float dz = ((float)cachedLight.absZ - closestVertexWorld[2]) / avgModelScale;
 						float currentDist = sqrtf(dx * dx + dy * dy + dz * dz);
 
-						float distFactor = 1.0f - (currentDist / cachedLight.radius);
+						float scaledRadius = cachedLight.radius * avgModelScale;
+						if (scaledRadius <= 0.01f) scaledRadius = 1.0f;
+
+						float distFactor = 1.0f - (currentDist / (scaledRadius * 0.75f));
 						if (distFactor < 0.0f) distFactor = 0.0f;
 
+						// --- EXACT ARRAY INDEXATION SQUARE BRACKETS MUST BE HERE [4] ---
 						float diffuseColor[4] = {
-							cachedLight.r * legacyVolumDynlightIntensity * distFactor,
-							cachedLight.g * legacyVolumDynlightIntensity * distFactor,
-							cachedLight.b * legacyVolumDynlightIntensity * distFactor,
+							cachedLight.r * legacyVolumDynlightIntensity * distFactor * distFactor,
+							cachedLight.g * legacyVolumDynlightIntensity * distFactor * distFactor,
+							cachedLight.b * legacyVolumDynlightIntensity * distFactor * distFactor,
 							1.0f
 						};
 
+						// --- EXACT ARRAY INDEXATION SQUARE BRACKETS MUST BE HERE [4] ---
 						float zeroAmbient[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 
 						glLightfv(lightSlot, GL_POSITION, lightPos);
@@ -910,18 +921,17 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						glLightfv(lightSlot, GL_SPECULAR, diffuseColor);
 						glLightfv(lightSlot, GL_AMBIENT, zeroAmbient);
 
+						// --- CLEAN ATTENUATION INJECTOR ---
 						glLightf(lightSlot, GL_CONSTANT_ATTENUATION, 0.0f);
-						//glLightf(lightSlot, GL_LINEAR_ATTENUATION, 1.0f / cachedLight.radius);
-						// Perhaps, decrease the light blob size twice
-						glLightf(lightSlot, GL_LINEAR_ATTENUATION, 1.0f / cachedLight.radius * 2.0f);
+						glLightf(lightSlot, GL_LINEAR_ATTENUATION, (1.0f / scaledRadius) * currentDist * 6.0f);
 						glLightf(lightSlot, GL_QUADRATIC_ATTENUATION, 0.0f);
 					}
 
 					glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-					glEnable(GL_COLOR_MATERIAL);
+					glEnable(GL_COLOR_MATERIAL); // Enable native color tracking
 				}
 
-				// Dispatch the entire solid mesh geometry to the GPU using 1 single engine VBO Draw Call
+				// Dispatch the geometry using 1 single factory VBO Draw Call
 				renderer->DrawElements(surf->numTriangles * 3, surf->iindex * sizeof(unsigned int));
 
 				// --- STEP 4: RECOVERY CLEANUP RESTORE GATE ---
@@ -940,20 +950,21 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					glDisable(GL_COLOR_MATERIAL);
 
 					// Force immediate pipeline synchronization pass right now to flush cache registers cleanly
-					// The commented out lines are NOT needed here, otherwise some models get lit at all times but kept
+					// Commented lines are NOT needed here, otherwise some models get lit at all times - kept for history
 					//gl_RenderState.EnableFog(true); // NOT needed perhaps
 					//gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); // NOT needed perhaps
 					//gl_RenderState.SetTextureMode(TM_MODULATE); // NOT needed perhaps
 					//gl_RenderState.ResetColor(); // NOT needed perhaps
-					gl_RenderState.Apply();
+					//gl_RenderState.Apply();
 				}
+				isUsingVolumetric3DModelLegacyDynlight = false;
 			}
 			else
 			{
 				// ==============================================================================
 				// PATHWAY B: FLAT LIGHT NO-SLICE CONVEYOR ROUTE FOR FLAT/DECORATIVE MODELS
 				// ==============================================================================
-				isUsingVolumetric3DModelLegacyDynlight = false; // They look bad with Pathway A
+				isUsingVolumetric3DModelLegacyDynlight = false;
 				// PATHWAY B CRASH FIX: If a model was previously rendered using Pathway A, 
 				// GL_ELEMENT_ARRAY_BUFFER remains 0. Force-restore it now.
 				if (currentVBuf != nullptr) currentVBuf->BindVBO();

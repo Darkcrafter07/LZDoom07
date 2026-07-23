@@ -289,10 +289,10 @@ void FRenderState::ApplyFixedFunction()
 
 	FStateVec4 col = mColor;
 
-	// Legacy sprites and 3D models dynamic light (flat) - START
-	if (modellightindex == -2 && isUsingVolumetric3DModelLegacyDynlight)
+	// Legacy sprites and 3D models dynamic light - START
+	if (isUsingVolumetric3DModelLegacyDynlight)
 	{
-		// Disable flat coloring for legacy VOLUMETRIC dynamic lights
+		// Disable flat coloring for legacy VOLUMETRIC dynamic lights strictly for 3D meshes
 		//col.vec[0] += mDynColor.vec[0];
 		//col.vec[1] += mDynColor.vec[1];
 		//col.vec[2] += mDynColor.vec[2];
@@ -304,7 +304,7 @@ void FRenderState::ApplyFixedFunction()
 		col.vec[1] += mDynColor.vec[1];
 		col.vec[2] += mDynColor.vec[2];
 	}
-	// Legacy sprites and 3D models dynamic light (flat) - FINISH
+	// Legacy sprites and 3D models dynamic light - FINISH
 
 	col.vec[0] = clamp(col.vec[0], 0.f, 1.f);
 	col.vec[1] = clamp(col.vec[1], 0.f, 1.f);
