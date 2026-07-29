@@ -679,6 +679,31 @@ int FMD3Model::FindFrame(const char * name)
 
 void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frameno, int frameno2, double inter, int translation)
 {
+	AActor* actor = (AActor*)g_CurrentRendering3dmdlActorPtr; // no need to add "AActor *actor" in RenderFrame
+
+	float xscaleMdldef, yscaleMdldef, xyscaleMdldef, zscaleMdldef = 1.0f;
+	float xyscaleMap, zscaleMap = 1.0f;
+	float finalScaleX, finalScaleZ = 1.0f;
+	float map2mdldefRatioXY, mdldef2mapRatioXY = 1.0f;
+	float map2mdldefRatioXYinv, mdldef2mapRatioXYinv = 1.0f;
+	float scaleZcombo, scaleZcomboInvCompens = 1.0f;
+
+	if (actor != nullptr) // crash fix
+	{
+		xscaleMdldef = (float)curSpriteMDLFrame->xscale;
+		yscaleMdldef = (float)curSpriteMDLFrame->yscale;
+		zscaleMdldef = (float)curSpriteMDLFrame->zscale;
+		// So they decided to tie XY to X and Z to Y, where this decision came from?
+		xyscaleMap = (float)actor->Scale.X; // actually both X and Y axes wtf!
+		zscaleMap = (float)actor->Scale.Y;  // actually Z (vertical) axis only!
+	}
+
+	xyscaleMdldef = (xscaleMdldef + yscaleMdldef) * 0.5f;
+	map2mdldefRatioXY = xyscaleMap / (xyscaleMdldef + 0.0001f);
+	mdldef2mapRatioXY = xyscaleMdldef / (xyscaleMap + 0.0001f);
+	map2mdldefRatioXYinv = 1.0f / map2mdldefRatioXYinv;
+	mdldef2mapRatioXYinv = 1.0f / mdldef2mapRatioXYinv;
+
 	// ==============================================================================
 	// GL1x/GL2x legacy mode
 	// ==============================================================================
@@ -690,7 +715,6 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 		const float invMul127 = 1.0f / 127.0f;
 		const float invMul255 = 1.0f / 255.0f;
 		float baseColor = (float)g_legacyModelSectorLight * invMul255;
-		AActor* actor = (AActor*)g_CurrentRendering3dmdlActorPtr; // no need to add "AActor *actor" in RenderFrame
 
 		if (!gl_lights) // Dynligths are off, clear array cache and shutdown surfaces
 		// needs to be done, otherwise actors won't kill volumen dynlight when turned off in menu
@@ -754,19 +778,23 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 			if (useLegacyVolumetricLighting)
 			{
 				isUsingVolumetric3DModelLegacyDynlight = true;
-				// Fetch the active model matrix from render state cache
+				// Fetch the active model matrix from Graf's render state cache
 				auto *modelMatrixPtr = &gl_RenderState.mModelMatrix;
 
-				// --- COMPOSITE MATRIX SCALE EQUALIZER ---
-				// Extract the map editor scale bound with MODELDEF multipliers layout
-				float finalScaleX = (float)actor->Scale.X * (float)curSpriteMDLFrame->xscale;
-				float finalScaleZ = (float)actor->Scale.Y * (float)curSpriteMDLFrame->zscale;
+				// Dimensions setup
+				finalScaleX = xscaleMdldef * xyscaleMap;
+				//finalScaleZ = zscaleMdldef * yscaleMapedit; // insufficient for high objects
+				scaleZcombo = zscaleMdldef * zscaleMap;
+				// the higher the object, lesser the val is, so that it protects from overexpansion on smaller objects
+				scaleZcomboInvCompens = (1.0f - (1.0f / scaleZcombo + 0.001f) * 35.5f); // 50 was too much for small objects
+				finalScaleZ = scaleZcombo * expf(scaleZcombo * 0.5f) - (scaleZcomboInvCompens * scaleZcomboInvCompens);
 				if (finalScaleX <= 0.0f) finalScaleX = 1.0f;
 				if (finalScaleZ <= 0.0f) finalScaleZ = 1.0f;
 
 				// --- SCALE NORMALIZER ---
-				// Measure average scaling factor to elegantly adapt attenuation properties.
+				// Measure average scaling factor to elegantly adapt attenuation properties
 				float avgModelScale = (finalScaleX + finalScaleZ) * 0.5f;
+				float avgModelScaleInv = 1.0f / avgModelScale;
 				if (avgModelScale <= 0.001f) avgModelScale = 1.0f;
 
 				float referenceRockScale = 368.0f;
@@ -776,13 +804,13 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 				if (trueVisualRadius <= 0.01f) trueVisualRadius = 32.0f;
 				if (trueVisualHeight <= 0.01f) trueVisualHeight = 64.0f;
 
-				const float legacyVolumDynlightIntensity = 0.5f;
+				const float legacyVolumDynlightIntensity = 3.0f;
 
 				// Safe global registers light slots scope tracking variable
 				unsigned int maxLightsToBind = g_legacyModelLights.Size();
 				if (maxLightsToBind > 8) maxLightsToBind = 8; // OpenGL fixed function strict layout limits
 
-				if (currentVBuf != nullptr)
+				if (currentVBuf != nullptr && surf->numVertices > 0 && surf->Vertices.Size() > 0)
 				{
 					// --- STEP 1: INITIALIZE NATIVE VERTEX STREAM INTERPOLATION ---
 					auto* vertexBuffer = GetVertexBuffer(renderer);
@@ -792,34 +820,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					glEnable(GL_LIGHTING); // Wake up hardware lighting engines
 
 					// --- FORCE UNIT LENGTH NORMALS ---
-					// Automatically recalculate model compressed or stretched normals on the fly
 					glEnable(GL_NORMALIZE);
 
 					glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE); // Force two-sided math to secure all faces
-					glDisableClientState(GL_NORMAL_ARRAY); // Shut down the corrupted pointer stream
-
-					// Inject a baseline exterior normal to reset the fixed function driver pipeline registers
-					glNormal3f(0.0f, 0.0f, 1.0f);
-
-					float baseAmbR = actor->Sector->lightlevel * invMul127;
-					float baseAmbG = actor->Sector->lightlevel * invMul127;
-					float baseAmbB = actor->Sector->lightlevel * invMul127;
-
-					for (unsigned int l = 0; l < g_legacyModelLights.Size(); ++l)
-					{
-						FLegacyDynlight3DmdlCache &light = g_legacyModelLights[l];
-						// Inject a smooth 1% global bounce light bleed from all active flares in space
-						baseAmbR += light.r * legacyVolumDynlightIntensity * 0.01f;
-						baseAmbG += light.g * legacyVolumDynlightIntensity * 0.01f;
-						baseAmbB += light.b * legacyVolumDynlightIntensity * 0.01f;
-					}
-					if (baseAmbR > 1.0f) baseAmbR = 1.0f;
-					if (baseAmbG > 1.0f) baseAmbG = 1.0f;
-					if (baseAmbB > 1.0f) baseAmbB = 1.0f;
-
-					// --- EXACT ARRAY INDEXATION SQUARE BRACKETS MUST BE HERE [4] ---
-					float ambColor[4] = { baseAmbR, baseAmbG, baseAmbB, 1.0f };
-					glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambColor);
 
 					// Compute inverse model matrix to cancel out OpenGL Eye Space double-multiplication bugs
 					VSMatrix inverseModelMatrix;
@@ -829,10 +832,73 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						inverseModelMatrix.loadIdentity(); // Fallback to identity if inversion fails
 					}
 
-					DVector3 modelPos = actor->Pos();
+					// --- RAM INVERSE NORMAL REALIGNER ---
+					// We load raw unpacked float 3D normals straight from 'surf->Vertices'
+					// We transform them using inverse matrix cells to align with world transformations
+					// By unbinding the buffer array, we pipe data straight from system RAM safely
+					TArray<float> generatedNormals;
+					generatedNormals.Resize(surf->numVertices * 3);
 
-					// --- VERTICAL HEIGHT SCALED PROPERLY BEFORE MATRIX ASSIGNMENT ---
-					float midZ = (float)modelPos.Z + (trueVisualHeight * 0.5f);
+					int frameVertexOffset = frameno * surf->numVertices;
+					const MD3Vertex* verticesBase = &surf->Vertices[frameVertexOffset];
+
+					// Extract the internal 3x3 block arrays from the calculated inverseModelMatrix
+					const FLOATTYPE* invMat = inverseModelMatrix.get();
+
+					for (int v = 0; v < surf->numVertices; ++v)
+					{
+						float origNx = verticesBase[v].nx;
+						float origNy = verticesBase[v].ny;
+						float origNz = verticesBase[v].nz;
+
+						// Multiply by inverse matrix to align normal planes exactly with world transformations
+						float alignedNx = origNx * (float)invMat[0] + origNy * (float)invMat[1] + origNz * (float)invMat[2];
+						float alignedNy = origNx * (float)invMat[4] + origNy * (float)invMat[5] + origNz * (float)invMat[6];
+						float alignedNz = origNx * (float)invMat[8] + origNy * (float)invMat[9] + origNz * (float)invMat[10];
+
+						float nLen = sqrtf(alignedNx * alignedNx + alignedNy * alignedNy + alignedNz * alignedNz);
+						if (nLen > 0.001f)
+						{
+							alignedNx /= nLen; alignedNy /= nLen; alignedNz /= nLen;
+						}
+
+						generatedNormals[v * 3 + 0] = alignedNx;
+						generatedNormals[v * 3 + 1] = alignedNy;
+						generatedNormals[v * 3 + 2] = alignedNz;
+					}
+
+					float baseAmbR = actor->Sector->lightlevel * invMul127;
+					float baseAmbG = actor->Sector->lightlevel * invMul127;
+					float baseAmbB = actor->Sector->lightlevel * invMul127;
+
+					for (unsigned int l = 0; l < g_legacyModelLights.Size(); ++l)
+					{
+						FLegacyDynlight3DmdlCache &light = g_legacyModelLights[l];
+						baseAmbR += light.r * legacyVolumDynlightIntensity * 0.01f;
+						baseAmbG += light.g * legacyVolumDynlightIntensity * 0.01f;
+						baseAmbB += light.b * legacyVolumDynlightIntensity * 0.01f;
+					}
+					if (baseAmbR > 1.0f) baseAmbR = 1.0f;
+					if (baseAmbG > 1.0f) baseAmbG = 1.0f;
+					if (baseAmbB > 1.0f) baseAmbB = 1.0f;
+
+					// --- EXACT FIXED ARRAY INDEXATION SQUARE BRACKETS ---
+					float ambColor[4];
+					ambColor[0] = baseAmbR;
+					ambColor[1] = baseAmbG;
+					ambColor[2] = baseAmbB;
+					ambColor[3] = 1.0f;
+					glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambColor);
+
+					DVector3 modelPos = actor->Pos();
+					float midZ = (float)modelPos.Z;
+
+					// --- IDENTITY LIGHT STATE BINDING (EYE SPACE DOUBLE-MULT FIX) ---
+					// Temporarily drop modelMatrix register to Identity status before binding lights.
+					// This forces glLightfv to capture pure, un-inverted world light parameters,
+					// entirely curing the 180-degree sign inversion lag.
+					gl_RenderState.EnableModelMatrix(false);
+					gl_RenderState.Apply();
 
 					// --- STEP 3: BIND CACHED FLARES TO STANDARD HARDWARE LIGHT SLOTS ---
 					for (unsigned int l = 0; l < maxLightsToBind; ++l)
@@ -841,39 +907,31 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						GLenum lightSlot = GL_LIGHT0 + l;
 						glEnable(lightSlot);
 
-						// Setup raw world position vectors of the light source
-						FLOATTYPE worldLightPos[4] = {
-							(FLOATTYPE)cachedLight.absX,
-							(FLOATTYPE)cachedLight.absZ,
-							(FLOATTYPE)cachedLight.absY,
-							1.0f
-						};
-						FLOATTYPE localLightPos[4] = { 0 };
-
-						// Multiply world parameters by inverse matrix using native multMatrixPoint pointer route
-						inverseModelMatrix.multMatrixPoint(worldLightPos, localLightPos);
-
-						// --- EXACT ARRAY INDEXATION SQUARE BRACKETS MUST BE HERE [4], [0], [1], [2] ---
-						float lightPos[4] = { (float)localLightPos[0], (float)localLightPos[1], (float)localLightPos[2], 1.0f };
+						// Pure WORLD space parameters coordinates
+						float lightPos[4];
+						lightPos[0] = (float)cachedLight.absX;
+						lightPos[1] = (float)cachedLight.absZ;
+						lightPos[2] = (float)cachedLight.absY;
+						lightPos[3] = 1.0f;
 
 						// --- HIGH-SPEED STRIDE VERTEX SAMPLER SHUNT ---
-						float closestVertexWorld[3] = { (float)modelPos.X, (float)modelPos.Y, (float)midZ };
+						float closestVertexWorld[3];
+						closestVertexWorld[0] = (float)modelPos.X;
+						closestVertexWorld[1] = (float)modelPos.Y;
+						closestVertexWorld[2] = (float)midZ;
+
 						float minVertexDistSquared = 99999999.0f;
 						int totalVerts = surf->numVertices;
 
-						if (totalVerts > 0 && surf->Vertices.Size() > 0)
+						if (totalVerts > 0)
 						{
-							int frameVertexOffset = frameno * totalVerts;
 							int strideStep = totalVerts / 8;
 							if (strideStep < 1) strideStep = 1;
 
-							// Cache alignment pointer stream shortcut
-							const MD3Vertex* verticesBase = &surf->Vertices[frameVertexOffset];
 							for (int vIdx = 0; vIdx < totalVerts; vIdx += strideStep)
 							{
 								const MD3Vertex* testVert = &verticesBase[vIdx];
 
-								// --- NATIVE 3D COORDINATE CONVERSION SYNCED WITH SCALES ---
 								float vWorldX = (float)modelPos.X + (testVert->x * finalScaleX);
 								float vWorldY = (float)modelPos.Y + (testVert->z * finalScaleX);
 								float vWorldZ = (float)modelPos.Z + (testVert->y * finalScaleZ);
@@ -894,9 +952,9 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						}
 
 						// --- CLEAN SCALED DISTANCE CALCULATION ---
-						float dx = ((float)cachedLight.absX - closestVertexWorld[0]) / avgModelScale;
-						float dy = ((float)cachedLight.absY - closestVertexWorld[1]) / avgModelScale;
-						float dz = ((float)cachedLight.absZ - closestVertexWorld[2]) / avgModelScale;
+						float dx = ((float)cachedLight.absX - closestVertexWorld[0]) * avgModelScaleInv;
+						float dy = ((float)cachedLight.absY - closestVertexWorld[1]) * avgModelScaleInv;
+						float dz = ((float)cachedLight.absZ - closestVertexWorld[2]) * avgModelScaleInv;
 						float currentDist = sqrtf(dx * dx + dy * dy + dz * dz);
 
 						float scaledRadius = cachedLight.radius * avgModelScale;
@@ -905,30 +963,44 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						float distFactor = 1.0f - (currentDist / (scaledRadius * 0.75f));
 						if (distFactor < 0.0f) distFactor = 0.0f;
 
-						// --- EXACT ARRAY INDEXATION SQUARE BRACKETS MUST BE HERE [4] ---
-						float diffuseColor[4] = {
-							cachedLight.r * legacyVolumDynlightIntensity * distFactor * distFactor,
-							cachedLight.g * legacyVolumDynlightIntensity * distFactor * distFactor,
-							cachedLight.b * legacyVolumDynlightIntensity * distFactor * distFactor,
-							1.0f
-						};
+						// --- EXACT FIXED ARRAY INDEXATION SQUARE BRACKETS ---
+						float diffuseColor[4];
+						diffuseColor[0] = cachedLight.r * legacyVolumDynlightIntensity * distFactor * distFactor;
+						diffuseColor[1] = cachedLight.g * legacyVolumDynlightIntensity * distFactor * distFactor;
+						diffuseColor[2] = cachedLight.b * legacyVolumDynlightIntensity * distFactor * distFactor;
+						diffuseColor[3] = 1.0f;
 
-						// --- EXACT ARRAY INDEXATION SQUARE BRACKETS MUST BE HERE [4] ---
-						float zeroAmbient[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-
+						// --- THE QUAKE 2 STYLE DIFFUSE MIRRORING INJECTOR ---
+						// We mirror diffuseColor parameters straight into GL_AMBIENT
+						// When the projectile flies to the back-face, hardware diffuse equations drop to 0,
+						// but the ambient channel picks up the exact same value seamlessly.
+						// This retains tight linear attenuation properties from all 360 degrees perfectly!
 						glLightfv(lightSlot, GL_POSITION, lightPos);
 						glLightfv(lightSlot, GL_DIFFUSE, diffuseColor);
 						glLightfv(lightSlot, GL_SPECULAR, diffuseColor);
-						glLightfv(lightSlot, GL_AMBIENT, zeroAmbient);
+						glLightfv(lightSlot, GL_AMBIENT, diffuseColor); // Diffuse mirroring anchor channel
 
-						// --- CLEAN ATTENUATION INJECTOR ---
+						// --- CLEAN LINEAR ATTENUATION INJECTOR ---
+						float linAttA = (1.0f / cachedLight.radius) * currentDist * 48.0f;
+						float linAttB = (1.0f / cachedLight.radius) * avgModelScale * 0.4f;
+						float decrLightBlbSizOnBigMdl = map2mdldefRatioXY * 0.005f;
+						float avgAttAB = (linAttA + linAttB) * 0.5f;
 						glLightf(lightSlot, GL_CONSTANT_ATTENUATION, 0.0f);
-						glLightf(lightSlot, GL_LINEAR_ATTENUATION, (1.0f / scaledRadius) * currentDist * 6.0f);
+						//glLightf(lightSlot, GL_LINEAR_ATTENUATION, avgAttAB * map2mdldefRatioXY + (avgModelScale * 0.1f));
+						glLightf(lightSlot, GL_LINEAR_ATTENUATION, avgAttAB + decrLightBlbSizOnBigMdl);
 						glLightf(lightSlot, GL_QUADRATIC_ATTENUATION, 0.0f);
 					}
-
+					// --- RESTORE ACTIVE MATRIX CONTEXT PATHWAY ---
+					gl_RenderState.mModelMatrix = *modelMatrixPtr;
+					gl_RenderState.EnableModelMatrix(true);
+					gl_RenderState.Apply();
 					glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-					glEnable(GL_COLOR_MATERIAL); // Enable native color tracking
+					glEnable(GL_COLOR_MATERIAL);
+					// --- REGISTER COUPLING GATE ---
+					glBindBuffer(GL_ARRAY_BUFFER, 0);
+					glEnableClientState(GL_NORMAL_ARRAY);
+					glNormalPointer(GL_FLOAT, 0, generatedNormals.Size() ? generatedNormals.Data() : nullptr);
+					if (currentVBuf != nullptr) currentVBuf->BindVBO();
 				}
 
 				// Dispatch the geometry using 1 single factory VBO Draw Call
