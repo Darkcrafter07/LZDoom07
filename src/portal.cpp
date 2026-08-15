@@ -1328,7 +1328,7 @@ bool P_CollectConnectedGroups(int startgroup, const DVector3 &position, double u
 
 
 // ===================================================================================================================
-// --- UNIFIED AUTOMATIC 3D-FLOOR WINDOW PORTAL ENGINE CORE ---
+//                         --- UNIFIED AUTOMATIC 3D-FLOOR WINDOW PORTAL ENGINE CORE ---
 // 
 // DESCRIPTION:
 // This function acts as an isolated, high-performance information harvester that dynamically calculates 
@@ -1336,22 +1336,31 @@ bool P_CollectConnectedGroups(int startgroup, const DVector3 &position, double u
 // It synchronizes Graphics (gl_walls), Actor Physics (p_map), Projectiles (p_maputl), and Weapon Hitscans (p_trace) 
 // using a single, unified mathematical truth. Everything is executed in native float-precision.
 //
-// WHAT MAPPER SHOULD DO (HOW TO CONFIG IN ULTIMATE DOOM BUILDER):
-// 1. Assign a unique Line ID / Tag to your Entrance Window Portal line (e.g., Tag 4).
-// 2. Assign a unique Line ID / Tag to your Exit Street Portal line (e.g., Tag 5).
-// 3. Create your 3D-floors (lifts/borders) using Action 160 (Sector_Set3dFloor) inside a control dummy sector.
-// 4. On the CONTROL LINES of those 3D-floors, open the Custom UDMF fields tab and configure:
-//    - "user_lineportaltargetid" (Integer) = Set this to the Tag of your line portal tag (ID) (e.g., 4).
-//    - "user_lineportal3dfloortop" (Integer) = Set to 1 if this 3D-floor acts as the upper window trim/ceiling (104).
-//    - "user_lineportal3dfloorbot" (Integer) = Set to 1 if this 3D-floor acts as the lower window ledge/floor (24).
-// 5. On the portal line itself, you can configure custom offsets in the Custom UDMF fields tab:
-//    - "user_lineportaloffsetvisual" (Integer) = Distance to push the visual portal mesh inward to stop clipping.
-//    - "user_lineportaloffsetphysics" (Integer) = Multiplier for the physical clipping buffer zone.
-// 6. Edit args[1] (Floor Z) and args[4] (Ceiling Z) on the portal lines in the map editor.
-//    You may want to adjust them manually, in case when 3D-floors were detected they will expand-shrink window size,
-//    e.g. act as relative math offsets applied AFTER the engine extracts raw 3D-floor heights!
 //
-// WHAT CODE/MAPPERS MUST NEVER DO (CRITICAL RESTRICTIONS):
+//                                         WHAT MAPPER SHOULD DO:
+// 1. === RELATIVE PORTAL WINDOW CUT HEIGHTS CLAMPED BY 3D-FLOORS ===
+//   a. Assign a unique Line ID / Tag to your Entrance Window Portal line (e.g., Tag 4).
+//   b. Assign a unique Line ID / Tag to your Exit Street Portal line (e.g., Tag 5).
+//   c. Create your 3D-floors (lifts/borders) using Action 160 (Sector_Set3dFloor) inside a control dummy sector.
+//   d. On the CONTROL LINES of those 3D-floors, open the Custom UDMF fields tab and configure:
+//      - "user_lineportaltargetid" (Integer) = Set this to the Tag of your line portal tag (ID) (e.g., 4).
+//      - "user_lineportal3dfloortop" (Integer) = Set to 1 if this 3D-floor acts as the upper window trim/ceiling (104).
+//      - "user_lineportal3dfloorbot" (Integer) = Set to 1 if this 3D-floor acts as the lower window ledge/floor (24).
+//   f. Edit args[1] (Floor Z) and args[4] (Ceiling Z) on the portal lines in the map editor.
+//      You may want to adjust them manually, in case when 3D-floors were detected they will expand-shrink window size,
+//      e.g. act as relative math offsets applied AFTER the engine extracts raw 3D-floor heights!
+//
+// 2. === RELATIVE PORTAL WINDOW CUT HEIGHTS CLAMPED BY FLOORS-CEILINGS (REGULAR) ===
+//   a. Edit portal linedef (that with #156 action), give it a UDMF field "user_lineportalrelativeheights",
+//      set it to "integer" and the value to 1. Now args[1] and [4] act as relative cut heights and follow flat heights.
+//
+// 3. === COMMON ADDITIONAL PORTAL WINDOW CONFIGURATION ===
+//   a. On the portal line itself, you can configure custom offsets in the Custom UDMF fields tab:
+//      - "user_lineportaloffsetvisual" (Integer) = Distance to push the visual portal mesh inward to stop clipping.
+//      - "user_lineportaloffsetphysics" (Integer) = Multiplier for the physical clipping buffer zone.
+//
+//
+// WHAT CODERS/MAPPERS MUST NEVER DO (CRITICAL RESTRICTIONS):
 // - DO NOT pass raw 'DVector3 pos' coordinates or use 'ZatPoint(centerspot)' inside this core. Flat rovers 
 //   must evaluate heights strictly at the window vertex location via 'ld->v1->fPos()' to eliminate float-drift bugs.
 // - DO NOT apply hard uint8_t or int8_t typecasts to 'args' subtraction and addition steps. Doing so clips 
@@ -1372,8 +1381,8 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 	// HARDWARE WIPE: Guarantee that memory is completely clean and zeroed on every single call!
 	// This blocks any ghost frames from leaking memory junk during Resolution/Fullscreen switches.
 	memset(result, 0, sizeof(FPortalCutHeights));
-	result->Floor = -99999.0f;
-	result->Ceiling = 99999.0f;
+	result->Floor = -FLT_MAX; // max float val (3.402823466e+38F)
+	result->Ceiling = FLT_MAX;
 	result->HasDynamicHeights = false;
 
 	// CRITICAL SAFETY SHIELD: If line pointer is completely null or corrupted during resolution reset, abort!
@@ -1391,16 +1400,16 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 	// GEOMETRY ANCHOR: Fetch vertex coordinate straight from the window line itself!
 	DVector2 windowVertexPos = ld->v1->fPos();
 
-	// HOME SECTOR MATRIX: We force look strictly into the base room sector
-	// to completely neutralize the street's deep undercroft sector height corruptions!
+	// HOME SECTOR MATRIX: Force look strictly into the base room sector
+	// to neutralize the street's deep undercroft sector height corruptions
 	const sector_t* activeSector = ld->frontsector;
 	if (frontsector) activeSector = frontsector;
 
-	// CRITICAL SAFETY SHIELD: If the master sector pointer is invalid during Alt+Enter, abort pass!
+	// CRITICAL SAFETY SHIELD: If the master sector pointer is invalid when toggling fulscreen, abort pass
 	if (!activeSector) return;
 
 	// OMNIDIRECTIONAL SCANNER: Evaluate BOTH sides of the wall (front and back)
-	// Secure pointer validation logic inside array elements to permanently freeze memory crashes!
+	// Secure pointer validation logic inside array elements to permanently freeze memory crashes
 	const sector_t* sectorsToCheck[2] =
 	{
 		activeSector,
@@ -1411,9 +1420,10 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 	{
 		const sector_t* checkSector = sectorsToCheck[s];
 
-		// CRITICAL SAFETY SHIELD: If the target sector or its sub-extension doesn't exist yet, skip smoothly!
+		// CRITICAL SAFETY SHIELD: If the target sector or its sub-extension doesn't exist yet, skip
 		if (!checkSector || !checkSector->e) continue;
 
+		// ---==== BRANCH A: RELATIVE PORTAL WINDOW CUT HEIGHTS CLAMPED BY 3D-FLOORS ====---
 		for (auto rover : checkSector->e->XFloor.ffloors)
 		{
 			if (!(rover->flags & FF_EXISTS) || !rover->master || !rover->model) continue;
@@ -1450,13 +1460,9 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 					// FINAL DOUBLE CHECK: Ensure dummy model exists to protect plane projections
 					if (rover->model)
 					{
-						// VAVOOM DOOM ENGINE IMPLEMENTATION:
-						// We check Vavoom flags (0x800000 / 0x40000000) on the dummy 3d-floor sector control line
 						bool isVavoomInverted = (rover->flags & (0x800000 | 0x40000000)) != 0;
 
 						// ROVER ABOVE US (Acts as the Window Ceiling)
-						// Vanilla: We look at the BOTTOM plane of the ceiling box.
-						// Vavoom: Planes are swapped via std::swap, so we look at the TOP plane!
 						if (isTopRover == 1 && !found3DfloorTop)
 						{
 							if (isVavoomInverted)
@@ -1468,8 +1474,6 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 						}
 
 						// ROVER BELOW US (Acts as the Window Floor)
-						// Vanilla: We look at the TOP plane of the floor box.
-						// Vavoom: Planes are swapped via std::swap, so we look at the BOTTOM plane!
 						if (isBotRover == 1 && !found3DfloorBot)
 						{
 							if (isVavoomInverted)
@@ -1483,6 +1487,54 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 				}
 			}
 		}
+
+		// ---==== BRANCH B: RELATIVE PORTAL WINDOW CUT HEIGHTS CLAMPED BY FLOORS-CEILINGS (REGULAR) ====---
+		// Triggered if the portal line contains the 'user_lineportalrelativeheights' flag.
+		// Evaluates space immediately around the portal, completely avoiding dummy sectors
+		if (!found3DfloorTop || !found3DfloorBot)
+		{
+			// Read the relative flag directly from the current window portal linedef index
+			int isRelativePortal = GetUDMFInt(UDMF_Line, currentLineIndex, "user_lineportalrelativeheights");
+
+			if (isRelativePortal == 1)
+			{
+				// STAGE 1: Extract baseline environment heights directly from the containing room sector
+				// Use windowVertexPos to perfectly evaluate sloped ceilings and floors on site
+				float roomCeiling = (float)activeSector->ceilingplane.ZatPoint(windowVertexPos);
+				float roomFloor = (float)activeSector->floorplane.ZatPoint(windowVertexPos);
+
+				// STAGE 2: If the portal is 2-sided, restrict window clip by evaluating the opposite sector 
+				// (Prevent transparent windows from drilling through solid low ceilings/high floors)
+				const sector_t* backsector = (ld->sidedef && ld->sidedef[1] != nullptr) ? ld->sidedef[1]->sector : nullptr;
+				if (backsector)
+				{
+					float backCeiling = (float)backsector->ceilingplane.ZatPoint(windowVertexPos);
+					float backFloor = (float)backsector->floorplane.ZatPoint(windowVertexPos);
+
+					// Window opening narrows down smoothly down to the tightest frame opening
+					roomCeiling = MIN(roomCeiling, backCeiling);
+					roomFloor = MAX(roomFloor, backFloor);
+				}
+
+				// STAGE 3: Treat editor arguments strictly as relative offsets (deltas) 
+				// args[4] directly offsets the ceiling window trim down/up from room ceiling
+				if (!found3DfloorTop)
+				{
+					portalCeiling = roomCeiling + (float)ld->args[4];
+					found3DfloorTop = true;
+				}
+
+				// args[1] directly offsets the lower window ledge up/down from room floor
+				if (!found3DfloorBot)
+				{
+					portalFloor = roomFloor + (float)ld->args[1];
+					found3DfloorBot = true;
+				}
+
+				// CRITICAL BREAK: Local relative space evaluation achieved, bypass any remaining loops!
+				break;
+			}
+		}
 	}
 
 	if (found3DfloorTop || found3DfloorBot)
@@ -1490,15 +1542,15 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 		found3dfloorsOnLinePortals = true;
 	}
 
-	// STAGE 2 & 3: PRIORITY CHAIN FOUND EXPERIMENTING WITH P_TRACE.CPP
+	// STAGE 4 & 5: PRIORITY CHAIN FOUND EXPERIMENTING WITH P_TRACE.CPP
 	if (found3dfloorsOnLinePortals)
 	{
-		// Standard GZDoom way: clean unmodified baseline offsets with strict brackets locked!
+		// Standard GZDoom way: clean unmodified baseline offsets with array brackets CEIL[4], FLOOR[1]
 		if (found3DfloorTop) result->Ceiling = portalCeiling + (float)ld->args[4];
 		if (found3DfloorBot) result->Floor = portalFloor + (float)ld->args[1];
 
-		if (!found3DfloorTop) result->Ceiling = 99999.0f;
-		if (!found3DfloorBot) result->Floor = -99999.0f;
+		if (!found3DfloorTop) result->Ceiling = FLT_MAX;
+		if (!found3DfloorBot) result->Floor = -FLT_MAX;
 
 		result->HasDynamicHeights = true;
 	}
@@ -1510,12 +1562,12 @@ void GetLinePortalCutHeights(const line_t *ld, const sector_t *frontsector, FPor
 	}
 	else
 	{
-		result->Floor = -99999.0f;
-		result->Ceiling = 99999.0f;
+		result->Floor = -FLT_MAX;
+		result->Ceiling = FLT_MAX;
 		result->HasDynamicHeights = false;
 	}
 
-	// STAGE 4: PROCESS VISUAL AND MOVEMENT OFFSETS INDEPENDENTLY
+	// STAGE 6: PROCESS VISUAL AND MOVEMENT OFFSETS SEPARATELY
 	float rawOffset = (float)GetUDMFInt(UDMF_Line, ld->Index(), "user_lineportaloffsetvisual");
 	if (rawOffset != 0.0f)
 	{
