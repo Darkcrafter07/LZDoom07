@@ -2,7 +2,7 @@
 // Based on "Flashlight++" by SuaveSteve: https:// forum.zdoom.org/viewtopic.php?t=75585
 
 // This is the Light itself, controlled by the Engine CVar and player movement
-class camglow_Light : SpotLight
+class camglow_Light : SpotLightCamGlowStraight
 {
 	bool thisIsLight2;
 	color baseColor;

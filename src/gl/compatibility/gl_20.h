@@ -21,15 +21,29 @@
 //--------------------------------------------------------------------------
 //
 
-/*
-** gl_20.h
-**
-** Fallback code for ancient hardware
-** This file collects everything larger that is only needed for
-** OpenGL v1.1 is required (1997+ cards?), the same file for GL2x path.
-** The difference GL2 makes is no blurry textures thanks to NPOT support.
-**
-*/
+//gl_20.h - added later in LZDoom07 to include in other rendering files
+//Fallback code for ancient hardware
+//
+//LZDoom 3.88b (GZDoom 3.3 fork) required at least GL2 card
+//GL1 support was added in LZDoom07 mainly by editing gl_postprocessstate.cpp,
+//by writing a special conversion struct:
+//
+//	// Maps blend modes to a single (Src, Dest) pair required by glBlendFunc (GL1.x)
+//struct GL1BlendFuncEntry
+//{
+//	int blendSrcRgb;
+//	int blendDestRgb;
+//	int mapSrcRgb;    // The blendSrcRgb  we are looking up
+//	int mapDestRgb;   // The blendDestRgb we are looking up
+//};
+//
+// ...then npot support was added by resizing all npot textures
+// to the square ones via bilinear interpolation
+// but there must be some other better, yet undiscovered ways
+//
+//This file collects everything larger that is only needed for
+//OpenGL v1.1 is required (1997+ cards?), the same file for GL2x path.
+//The difference GL2 makes is no blurry textures thanks to NPOT support.
 
 #ifndef __GL_20_H__
 #define __GL_20_H__

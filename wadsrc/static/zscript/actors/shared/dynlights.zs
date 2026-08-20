@@ -15,6 +15,7 @@ class DynamicLight : Actor
 	flagdef noshadowmap: lightflags, 4;
 	flagdef dontlightactors: lightflags, 5;
 	flagdef spot: lightflags, 6;
+	flagdef camglowstraight: lightflags, 7;
 
 	enum EArgs
 	{
@@ -337,6 +338,16 @@ class SpotLightFlickerAdditive : SpotLightFlicker
 	Default
 	{
 		+DYNAMICLIGHT.ADDITIVE
+	}
+}
+
+class SpotLightCamGlowStraight : DynamicLight
+{
+	Default
+	{
+		DynamicLight.Type "Point";
+		+DYNAMICLIGHT.SPOT
+		+DYNAMICLIGHT.CAMGLOWSTRAIGHT
 	}
 }
 

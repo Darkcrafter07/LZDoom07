@@ -21,15 +21,29 @@
 //--------------------------------------------------------------------------
 //
 
-/*
-** gl_20.cpp
-**
-** Fallback code for ancient hardware
-** This file collects everything larger that is only needed for
-** OpenGL v1.1 is required (1997+ cards?), the same file for GL2x path.
-** The difference GL2 makes is no blurry textures thanks to NPOT support.
-**
-*/
+//gl_20.cpp
+//Fallback code for ancient hardware
+//
+//LZDoom 3.88b (GZDoom 3.3 fork) required at least GL2 card
+//GL1 support was added in LZDoom07 mainly by editing gl_postprocessstate.cpp,
+//by writing a special conversion struct:
+//
+//	// Maps blend modes to a single (Src, Dest) pair required by glBlendFunc (GL1.x)
+//struct GL1BlendFuncEntry
+//{
+//	int blendSrcRgb;
+//	int blendDestRgb;
+//	int mapSrcRgb;    // The blendSrcRgb  we are looking up
+//	int mapDestRgb;   // The blendDestRgb we are looking up
+//};
+//
+// ...then npot support was added by resizing all npot textures
+// to the square ones via bilinear interpolation
+// but there must be some other better, yet undiscovered ways
+//
+//This file collects everything larger that is only needed for
+//OpenGL v1.1 is required (1997+ cards?), the same file for GL2x path.
+//The difference GL2 makes is no blurry textures thanks to NPOT support.
 
 #include "gl_20.h"
 #include "gl/dynlights/gl_dynlightcache.h"
@@ -51,6 +65,10 @@ CVAR(Float, gl_legacy_dynlight_hue_shift, 22.4f, CVAR_ARCHIVE) // Shift dynamic 
 CVAR(Bool, gl_legacy_dynlight_overbright, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) // Dynlight overbright global switch used in gl_scene.cpp
 CVAR(Float, gl_legacy_dynlight_overbright_flats, 0.125f, CVAR_ARCHIVE) // Intensity multiplier for flats
 CVAR(Float, gl_legacy_dynlight_overbright_walls, 0.125f, CVAR_ARCHIVE) // Intensity multiplier for walls
+
+FDynamicLight *g_CurrentProcessingLight = nullptr;
+// Runtime marker to distinguish between walls (false) and flats (true) inside texture setup
+bool g_IsProcessingFlat = false;
 
 //==========================================================================
 //
@@ -77,22 +95,24 @@ void gl_PatchMenu()
 		}
 	}
 
-	opt = OptionValues.CheckKey("FogMode");
-	if (opt != NULL)
-	{
-		for (int i = (*opt)->mValues.Size() - 1; i >= 0; i--)
-		{
-			// Delete 'Radial' fog mode
-			if ((*opt)->mValues[i].Value == 2.0)
-			{
-				(*opt)->mValues.Delete(i);
-			}
-		}
-	}
-
 	// disable features that don't work without shaders.
 	if (gl_lightmode == 2 || gl_lightmode == 8 || gl_lightmode == 16) gl_lightmode = 3;
-	if (gl_fogmode == 2) gl_fogmode = 1;
+
+	// gl_fogmode used to be disabled in GL1x/GL2x legacy path
+	// but it affects the way camglow dynlight works
+	//opt = OptionValues.CheckKey("FogMode");
+	//if (opt != NULL)
+	//{
+	//	for (int i = (*opt)->mValues.Size() - 1; i >= 0; i--)
+	//	{
+	//		// Delete 'Radial' fog mode
+	//		if ((*opt)->mValues[i].Value == 2.0)
+	//		{
+	//			(*opt)->mValues.Delete(i);
+	//		}
+	//	}
+	//}
+	//if (gl_fogmode == 2) gl_fogmode = 1;
 
 	// remove more unsupported stuff like postprocessing options.
 	// This cannot be done with a menu filter because the renderer gets initialized long after the menu is set up.
@@ -127,6 +147,7 @@ void gl_PatchMenu()
 //
 //==========================================================================
 
+// It looks like textures modes function is similar to PRBoom.
 void gl_SetTextureMode(int type)
 {
 	if (type == TM_MASK)
@@ -565,6 +586,45 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	fn = p.Normal();
 	fn.GetRightUp(right, up);
 
+	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - START ===
+	// The whole thing is done with a zscript spawning a special dynlight on players
+	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
+	// *Walls: expand the dynlight blob texture (gllight.png) vertically
+	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
+	//
+	// ANTI-FLIP COMPASS BUGFIX : Reconstruct the 'up' vector to be a strict 
+	// world-space vertical axis {0, 1, 0}.
+	// Prevents the light pillar from turning horizontal on East-West or angled walls.
+	// Manual Cross Product replaces overloaded pipe operators to guarantee compilation.
+	//
+	// THE WALLS PART IMPLEMENTATION BELOW:
+	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
+	{
+		// Force 'up' to be a pure, straight world-space vertical height axis vector.
+		// In GLWall fixed-function space, the Y axis handles floor-to-ceiling elevation.
+		up = { 0.0f, 1.0f, 0.0f };
+
+		// Hardcoded explicit cross product (up x fn) to guarantee flawless compilation 
+		// without depending on type-overloaded class methods or operators
+		right.X = (up.Y * fn.Z) - (up.Z * fn.Y);
+		right.Y = (up.Z * fn.X) - (up.X * fn.Z);
+		right.Z = (up.X * fn.Y) - (up.Y * fn.X);
+
+		// Shrink 2nd brighter small dynlight radius 
+		// so that it doesn't look like a too obvious light strip
+		if (radius <= 128.0f)
+		{
+			right *= 2.0f;  // Horizontal radius expansion (less is wider)
+		}
+		else
+		{
+			right *= 0.75f; // Horizontal radius expansion (less is wider)
+		}
+		// Massively expand the vertical layout (0.1f) to stretch it up the walls
+		up *= 0.1f;         // Vertical expansion
+	}
+	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
+
 	FVector3 tmpVec = fn * dist;
 	nearPt = pos + tmpVec;
 
@@ -738,6 +798,38 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	fn = p.Normal();
 	fn.GetRightUp(right, up);
 
+	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - START ===
+	// The whole thing is done with a zscript spawning a special dynlight on players
+	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
+	// *Walls: expand the dynlight blob texture (gllight.png) vertically
+	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
+	//
+	// FIX PROLONGED DEPTH BUG: Rotates flat light vectors based on camera Yaw,
+	// and changes multipliers to stretch the light spot FAR AWAY forward from the player,
+	// creating a rich, deep, wide software ambient ellipse on floors and ceilings.
+	//
+	// THE FLATS PART IMPLEMENTATION BELOW:
+	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
+	{
+		// 1. Fetch current player camera horizontal viewport orientation matrices
+		float s = (float)r_viewpoint.Sin;
+		float c = (float)r_viewpoint.Cos;
+
+		// 2. Rotate the base vectors on the horizontal (X/Z) plane relative to camera Yaw
+		float r_oldX = right.X; float r_oldZ = right.Z;
+		right.X = (r_oldX * c) - (r_oldZ * s);
+		right.Z = (r_oldX * s) + (r_oldZ * c);
+
+		float u_oldX = up.X; float u_oldZ = up.Z;
+		up.X = (u_oldX * c) - (u_oldZ * s);
+		up.Z = (u_oldX * s) + (u_oldZ * c);
+
+		// 3. LONG-RANGE SOFTWARE PROJECT MULTIPLIERS
+		right *= 1.0f; // Vertical multiplier
+		up *= 0.36f;   // Expand horizontaly, too much will cause artifacts
+	}
+	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
+
 	FVector3 tmpVec = fn * dist;
 	nearPt = pos + tmpVec;
 
@@ -910,6 +1002,45 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //
 //	fn.GetRightUp(right, up);
 //
+//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - START ===
+//	// The whole thing is done with a zscript spawning a special dynlight on players
+//	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
+//	// *Walls: expand the dynlight blob texture (gllight.png) vertically
+//	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
+//	//
+//	// ANTI-FLIP COMPASS BUGFIX : Reconstruct the 'up' vector to be a strict 
+//	// world-space vertical axis {0, 1, 0}.
+//	// Prevents the light pillar from turning horizontal on East-West or angled walls.
+//	// Manual Cross Product replaces overloaded pipe operators to guarantee compilation.
+//	//
+//	// THE WALLS PART IMPLEMENTATION BELOW:
+//	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
+//	{
+//		// Force 'up' to be a pure, straight world-space vertical height axis vector.
+//		// In GLWall fixed-function space, the Y axis handles floor-to-ceiling elevation.
+//		up = { 0.0f, 1.0f, 0.0f };
+//
+//		// Hardcoded explicit cross product (up x fn) to guarantee flawless compilation 
+//		// without depending on type-overloaded class methods or operators
+//		right.X = (up.Y * fn.Z) - (up.Z * fn.Y);
+//		right.Y = (up.Z * fn.X) - (up.X * fn.Z);
+//		right.Z = (up.X * fn.Y) - (up.Y * fn.X);
+//
+//		// Shrink 2nd brighter small dynlight radius 
+//		// so that it doesn't look like a too obvious light strip
+//		if (radius <= 128.0f)
+//		{
+//			right *= 2.0f;  // Horizontal radius expansion (less is wider)
+//		}
+//		else
+//		{
+//			right *= 0.75f; // Horizontal radius expansion (less is wider)
+//		}
+//		// Massively expand the vertical layout (0.1f) to stretch it up the walls
+//		up *= 0.1f;         // Vertical expansion
+//	}
+//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
+//
 //	FVector3 tmpVec = fn * dist;
 //	nearPt = pos + tmpVec;
 //
@@ -1008,6 +1139,38 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	pos = { (float)lpos.X, (float)lpos.Z, (float)lpos.Y };
 //	fn = p.Normal();
 //	fn.GetRightUp(right, up);
+//
+//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - START ===
+//	// The whole thing is done with a zscript spawning a special dynlight on players
+//	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
+//	// *Walls: expand the dynlight blob texture (gllight.png) vertically
+//	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
+//	//
+//	// FIX PROLONGED DEPTH BUG: Rotates flat light vectors based on camera Yaw,
+//	// and changes multipliers to stretch the light spot FAR AWAY forward from the player,
+//	// creating a rich, deep, wide software ambient ellipse on floors and ceilings.
+//	//
+//	// THE FLATS PART IMPLEMENTATION BELOW:
+//	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
+//	{
+//		// 1. Fetch current player camera horizontal viewport orientation matrices
+//		float s = (float)r_viewpoint.Sin;
+//		float c = (float)r_viewpoint.Cos;
+//
+//		// 2. Rotate the base vectors on the horizontal (X/Z) plane relative to camera Yaw
+//		float r_oldX = right.X; float r_oldZ = right.Z;
+//		right.X = (r_oldX * c) - (r_oldZ * s);
+//		right.Z = (r_oldX * s) + (r_oldZ * c);
+//
+//		float u_oldX = up.X; float u_oldZ = up.Z;
+//		up.X = (u_oldX * c) - (u_oldZ * s);
+//		up.Z = (u_oldX * s) + (u_oldZ * c);
+//
+//		// 3. LONG-RANGE SOFTWARE PROJECT MULTIPLIERS
+//		right *= 1.0f; // Vertical multiplier
+//		up *= 0.36f;   // Expand horizontaly, too much will cause artifacts
+//	}
+//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 //
 //	FVector3 tmpVec = fn * dist;
 //	nearPt = pos + tmpVec;
@@ -1469,15 +1632,15 @@ bool GLWall::PutWallCompat(int passflag)
 				// Create a plane from the wall
 				// The plane equation is: ax + by + cz + d = 0
 				// We need to calculate a, b, c, d from the wall's vertices
-				double dx = v2->fX() - v1->fX();
-				double dy = v2->fY() - v1->fY();
+				float dx = v2->fX() - v1->fX();
+				float dy = v2->fY() - v1->fY();
 
 				// Normal is perpendicular to the wall (in 2D, just rotate 90 degrees)
-				double nx = -dy;
-				double ny = dx;
+				float nx = -dy;
+				float ny = dx;
 
 				// Normalize the normal vector
-				double len = sqrt(nx*nx + ny * ny);
+				float len = sqrt(nx*nx + ny * ny);
 				if (len > 0)
 				{
 					nx /= len;
@@ -1485,7 +1648,7 @@ bool GLWall::PutWallCompat(int passflag)
 				}
 
 				// Calculate d using one of the vertices
-				double d = -(nx * v1->fX() + ny * v1->fY());
+				float d = -(nx * v1->fX() + ny * v1->fY());
 
 				// Now create a plane with these values
 				secplane_t wallPlane;
@@ -1647,16 +1810,6 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	while (node)
 	{
 		FDynamicLight * light = node->lightsource;
-
-		//	// No reason to draw it like usual if we bake huge radius lights
-		//if (gl_legacy_dynlight_baked_huge && light->GetRadius() >= 512.0f)
-		//{
-		//	if (pass == GLPASS_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE || pass == GLPASS_LIGHTTEX_FOGGY)
-		//	{
-		//		node = node->nextLight;
-		//		continue; // Skip standard multi-pass accumulation to avoid double lighting math!
-		//	}
-		//}
 
 		if (!(light->IsActive()) ||
 			(pass == GLPASS_LIGHTTEX && light->IsAdditive()) ||
