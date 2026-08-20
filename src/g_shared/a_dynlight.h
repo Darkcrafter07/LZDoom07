@@ -3,6 +3,7 @@
 #include "actor.h"
 #include "cycler.h"
 #include "g_levellocals.h"
+#include "r_utility.h"
 
 EXTERN_CVAR(Bool, gl_lights)
 
@@ -18,7 +19,7 @@ enum ELightType
 	DummyLight,
 	ColorPulseLight,
 	ColorFlickerLight,
-	RandomColorFlickerLight
+	RandomColorFlickerLight,
 };
 
 enum
@@ -38,7 +39,10 @@ enum LightFlag
 	LF_ATTENUATE = 8,
 	LF_NOSHADOWMAP = 16,
 	LF_DONTLIGHTACTORS = 32,
-	LF_SPOT = 64
+	LF_SPOT = 64,
+	LF_DONTLIGHTOTHERS = 128,
+	LF_DONTLIGHTMAP = 256, 
+	LF_CAMGLOWSTRAIGHT = 512, // GL1x/GL2x software sector light mode straight (non-radial) dynlight imitation
 };
 
 typedef TFlags<LightFlag> LightFlags;
@@ -70,6 +74,8 @@ public:
 	void SetDontLightSelf(bool add) { if (add) m_lightFlags |= LF_DONTLIGHTSELF; else m_lightFlags &= ~LF_DONTLIGHTSELF; }
 	void SetAttenuate(bool on) { m_attenuate = on; if (on) m_lightFlags |= LF_ATTENUATE; else m_lightFlags &= ~LF_ATTENUATE; }
 	void SetDontLightActors(bool on) { if (on) m_lightFlags |= LF_DONTLIGHTACTORS; else m_lightFlags &= ~LF_DONTLIGHTACTORS; }
+	void SetDontLightOthers(bool on) { if (on) m_lightFlags |= LF_DONTLIGHTOTHERS; else m_lightFlags &= ~LF_DONTLIGHTOTHERS; }
+	void SetDontLightMap(bool on) { if (on) m_lightFlags |= LF_DONTLIGHTMAP; else m_lightFlags &= ~LF_DONTLIGHTMAP; }
 	void SetNoShadowmap(bool on) { if (on) m_lightFlags |= LF_NOSHADOWMAP; else m_lightFlags &= ~LF_NOSHADOWMAP; }
 	void SetSpot(bool spot) { if (spot) m_lightFlags |= LF_SPOT; else m_lightFlags &= ~LF_SPOT; }
 	void SetSpotInnerAngle(double angle) { m_spotInnerAngle = angle; }
@@ -207,6 +213,36 @@ struct FDynamicLight
 		return visibletoplayer && IsActive() && (!((*pLightFlags) & LF_DONTLIGHTSELF) || target != check) && !((*pLightFlags) & LF_DONTLIGHTACTORS);
 	}
 
+	//	// This network check is not necessary but why not?
+	//bool FDynamicLight::ShouldLightActor(AActor *check)
+	//{
+	//	AActor *rawLightActor = this->target.pp;
+	//
+	//	// === CAMGLOW CLIENT-SIDE MONSTERS FILTER (TRUE NET ROUTE) ===
+	//	// If the light has the LF_DONTLIGHTOTHERS flag enabled, we check its owner.
+	//	if (IsDontLightOthers())
+	//	{
+	//		if (rawLightActor != nullptr)
+	//		{
+	//			// Extract the genuine player pawn owner from the helper's master pointer
+	//			AActor *rawPlayerOwner = rawLightActor->master.pp;
+	//
+	//			if (rawPlayerOwner != nullptr && r_viewpoint.camera != nullptr)
+	//			{
+	//				// NET FILTER: If the player who owns this flashlight is NOT the active 
+	//				// camera currently rendering this viewport frame, hide the light from ALL actors!
+	//				if (rawPlayerOwner != r_viewpoint.camera)
+	//				{
+	//					return false;
+	//				}
+	//			}
+	//		}
+	//	}
+	//	// ==========================================================
+	//	// Native factory GZDoom/LZDoom dynamic light visibility paths below:
+	//	return visibletoplayer && IsActive() && (!((*pLightFlags) & LF_DONTLIGHTSELF) || target != check) && !((*pLightFlags) & LF_DONTLIGHTACTORS);
+	//}
+
 	void SetOffset(const DVector3 &pos)
 	{
 		m_off = pos;
@@ -214,6 +250,9 @@ struct FDynamicLight
 
 
 	bool IsActive() const { return m_active; }
+	bool IsCamGlowStraight() const { return !!((*pLightFlags) & LF_CAMGLOWSTRAIGHT); }
+	bool IsDontLightOthers() const { return !!((*pLightFlags) & LF_DONTLIGHTOTHERS); }
+	bool IsDontLightMap() const { return !!((*pLightFlags) & LF_DONTLIGHTMAP); }
 	float GetRadius() const { return (IsActive() ? m_currentRadius * 2.f : 0.f); }
 	int GetRed() const { return pArgs[LIGHT_RED]; }
 	int GetGreen() const { return pArgs[LIGHT_GREEN]; }

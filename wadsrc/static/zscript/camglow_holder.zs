@@ -20,7 +20,14 @@ class camglow_Holder : Inventory
 			{
 				light1.destroy();
 			}
-			light1 = camglow_Light( owner.Spawn( "camglow_Light" ) ).Init( pp, false );
+			light1 = camglow_Light( owner.Spawn( "camglow_Light" ) );
+			if (light1)
+			{
+				// Используем master вместо target, чтобы не активировать 
+				// внутреннюю блокировку LF_DONTLIGHTSELF
+				light1.master = owner; 
+				light1.Init( pp, false );
+			}
 			
 			if( CVar.GetCVar( "cl_camglow_plus_second_beam", owner.player ).GetBool() )
 			{
@@ -28,7 +35,12 @@ class camglow_Holder : Inventory
 				{
 					light2.destroy();
 				}
-				light2=camglow_Light( owner.Spawn( "camglow_Light" ) ).Init( pp, true );
+				light2 = camglow_Light( owner.Spawn( "camglow_Light" ) );
+				if (light2)
+				{
+					light2.master = owner; // Исправление для второго луча
+					light2.Init( pp, true );
+				}
 			}
 		}
 		on = true;

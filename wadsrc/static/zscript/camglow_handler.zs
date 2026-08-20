@@ -97,4 +97,53 @@ class camglow_Handler : StaticEventHandler
             Console.Printf("Camglow Mod: Uninstalled successfully.");
         }
     }
+
+    // === FIX DOUBLE FLASHLIGHT ON DEATH / RESPAWN ===   
+    // Instead of PlayerDied, old GZDoom 3.x uses WorldThingDied for all map casualties
+    override void WorldThingDied(WorldEvent e)
+    {
+        // Check if the entity that died is a valid player character
+        if (e.Thing && e.Thing.player)
+        {
+            let holder = camglow_Holder(e.Thing.FindInventory("camglow_Holder"));
+            if (holder)
+            {
+                holder.Disable(); // Cleanly calls .destroy() on light1 and light2 instantly
+                holder.on = false;
+            }
+        }
+    }
+
+    // Instead of PlayerRespawned, we intercept when the new PlayerPawn body spawns into the map
+    override void WorldThingSpawned(WorldEvent e)
+    {
+        if (e.Thing && e.Thing.player)
+        {
+            PlayerPawn p = PlayerPawn(e.Thing);
+            if (!p) return;
+
+            // 1. Forceful sweep: clear any old left-over orphaned lights linked to this exact player pawn pointer
+            ThinkerIterator it = ThinkerIterator.Create("camglow_Light");
+            camglow_Light hl;
+            while (hl = camglow_Light(it.Next())) 
+            {
+                // If a "ghost" light is floating around holding this player as master, kill it!
+                if (hl.master == p) 
+                {
+                    hl.Destroy();
+                }
+            }
+
+            // 2. Clear inventory holder internal pointers to prepare a clean slate for the new body
+            let holder = camglow_Holder(p.FindInventory("camglow_Holder"));
+            if (holder)
+            {
+                holder.on = false; 
+                holder.light1 = null;
+                holder.light2 = null;
+            }
+        }
+    }
+    // =================================================
+
 }

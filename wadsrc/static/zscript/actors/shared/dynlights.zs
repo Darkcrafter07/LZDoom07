@@ -15,7 +15,9 @@ class DynamicLight : Actor
 	flagdef noshadowmap: lightflags, 4;
 	flagdef dontlightactors: lightflags, 5;
 	flagdef spot: lightflags, 6;
-	flagdef camglowstraight: lightflags, 7;
+	flagdef dontlightothers: lightflags, 7;   // Bit 7 (Value: 128) - Don't light other actors
+	flagdef dontlightmap: lightflags, 8;      // Bit 8 (Value: 256) - Don't light walls and flats
+	flagdef camglowstraight: lightflags, 9;   // Bit 9 (Value: 512) - Software camglow simulator
 
 	enum EArgs
 	{
@@ -345,8 +347,9 @@ class SpotLightCamGlowStraight : DynamicLight
 {
 	Default
 	{
-		DynamicLight.Type "Point";
+		DynamicLight.Type "Point"; 
 		+DYNAMICLIGHT.SPOT
+		+DYNAMICLIGHT.DONTLIGHTOTHERS
 		+DYNAMICLIGHT.CAMGLOWSTRAIGHT
 	}
 }

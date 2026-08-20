@@ -58,7 +58,7 @@ CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)
 CVAR(Bool, gl_legacy_dynlight_compress_range, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Float, gl_legacy_dynlight_brightness, 1.8f, CVAR_ARCHIVE)
 CVAR(Int, gl_legacy_dynlight_saturation_thresh, 90, CVAR_ARCHIVE)     // Dark surface cutoff ceiling (Range: 32 to 192)
-CVAR(Float, gl_legacy_dynlight_saturation_dark, 0.2, CVAR_ARCHIVE)   // Color saturation modifier applied to dim/dark surfaces
+CVAR(Float, gl_legacy_dynlight_saturation_dark, 0.2, CVAR_ARCHIVE)    // Color saturation modifier applied to dim/dark surfaces
 CVAR(Float, gl_legacy_dynlight_saturation_bright, 0.5f, CVAR_ARCHIVE) // Color saturation modifier applied to bright surfaces
 CVAR(Float, gl_legacy_dynlight_hue_shift, 22.4f, CVAR_ARCHIVE) // Shift dynamic light hue (-180.0 to 180.0). 0 = Disabled.
 
@@ -66,9 +66,9 @@ CVAR(Bool, gl_legacy_dynlight_overbright, false, CVAR_ARCHIVE | CVAR_GLOBALCONFI
 CVAR(Float, gl_legacy_dynlight_overbright_flats, 0.125f, CVAR_ARCHIVE) // Intensity multiplier for flats
 CVAR(Float, gl_legacy_dynlight_overbright_walls, 0.125f, CVAR_ARCHIVE) // Intensity multiplier for walls
 
-FDynamicLight *g_CurrentProcessingLight = nullptr;
-// Runtime marker to distinguish between walls (false) and flats (true) inside texture setup
-bool g_IsProcessingFlat = false;
+// Need those so only current player can see the camglow dynlight
+extern int consoleplayer;
+extern player_t players[MAXPLAYERS];
 
 //==========================================================================
 //
@@ -600,6 +600,20 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// THE WALLS PART IMPLEMENTATION BELOW:
 	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 	{
+		//	// This network check is not necessary but why not?
+		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
+		//{
+		//	// EXTRACT THE OWNER VIA MASTER POINTER NATIVELY
+		//	AActor *rawPlayerOwner = light->target.pp->master.pp;
+		//
+		//	// NETWORK CLIENT-SIDE FILTER: If the rendering camera belongs to someone else,
+		//	// or the light has LF_DONTLIGHTMAP flag, completely wipe this light pass from the GPU!
+		//	if ((light->IsDontLightOthers() && rawPlayerOwner != nullptr && rawPlayerOwner != r_viewpoint.camera) || light->IsDontLightMap())
+		//	{
+		//		return false;
+		//	}
+		//}
+
 		// Force 'up' to be a pure, straight world-space vertical height axis vector.
 		// In GLWall fixed-function space, the Y axis handles floor-to-ceiling elevation.
 		up = { 0.0f, 1.0f, 0.0f };
@@ -811,6 +825,20 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// THE FLATS PART IMPLEMENTATION BELOW:
 	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 	{
+		//	// This network check is not necessary but why not?
+		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
+		//{
+		//	// EXTRACT THE OWNER VIA MASTER POINTER NATIVELY
+		//	AActor *rawPlayerOwner = light->target.pp->master.pp;
+		//
+		//	// NETWORK CLIENT-SIDE FILTER: If the rendering camera belongs to someone else,
+		//	// or the light has LF_DONTLIGHTMAP flag, completely wipe this light pass from the GPU!
+		//	if ((light->IsDontLightOthers() && rawPlayerOwner != nullptr && rawPlayerOwner != r_viewpoint.camera) || light->IsDontLightMap())
+		//	{
+		//		return false;
+		//	}
+		//}
+
 		// 1. Fetch current player camera horizontal viewport orientation matrices
 		float s = (float)r_viewpoint.Sin;
 		float c = (float)r_viewpoint.Cos;
@@ -1016,6 +1044,20 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	// THE WALLS PART IMPLEMENTATION BELOW:
 //	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 //	{
+//		//	// This network check is not necessary but why not?
+//		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
+//		//{
+//		//	// EXTRACT THE OWNER VIA MASTER POINTER NATIVELY
+//		//	AActor *rawPlayerOwner = light->target.pp->master.pp;
+//		//
+//		//	// NETWORK CLIENT-SIDE FILTER: If the rendering camera belongs to someone else,
+//		//	// or the light has LF_DONTLIGHTMAP flag, completely wipe this light pass from the GPU!
+//		//	if ((light->IsDontLightOthers() && rawPlayerOwner != nullptr && rawPlayerOwner != r_viewpoint.camera) || light->IsDontLightMap())
+//		//	{
+//		//		return false;
+//		//	}
+//		//}
+//
 //		// Force 'up' to be a pure, straight world-space vertical height axis vector.
 //		// In GLWall fixed-function space, the Y axis handles floor-to-ceiling elevation.
 //		up = { 0.0f, 1.0f, 0.0f };
@@ -1153,6 +1195,20 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	// THE FLATS PART IMPLEMENTATION BELOW:
 //	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 //	{
+//		//	// This network check is not necessary but why not?
+//		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
+//		//{
+//		//	// EXTRACT THE OWNER VIA MASTER POINTER NATIVELY
+//		//	AActor *rawPlayerOwner = light->target.pp->master.pp;
+//		//
+//		//	// NETWORK CLIENT-SIDE FILTER: If the rendering camera belongs to someone else,
+//		//	// or the light has LF_DONTLIGHTMAP flag, completely wipe this light pass from the GPU!
+//		//	if ((light->IsDontLightOthers() && rawPlayerOwner != nullptr && rawPlayerOwner != r_viewpoint.camera) || light->IsDontLightMap())
+//		//	{
+//		//		return false;
+//		//	}
+//		//}
+//
 //		// 1. Fetch current player camera horizontal viewport orientation matrices
 //		float s = (float)r_viewpoint.Sin;
 //		float c = (float)r_viewpoint.Cos;
