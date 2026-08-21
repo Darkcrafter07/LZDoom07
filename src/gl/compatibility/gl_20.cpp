@@ -42,7 +42,7 @@
 // but there must be some other better, yet undiscovered ways
 //
 //This file collects everything larger that is only needed for
-//OpenGL v1.1 is required (1997+ cards?), the same file for GL2x path.
+//OpenGL v1.3 is required (2001+ cards?), the same file for GL2x path.
 //The difference GL2 makes is no blurry textures thanks to NPOT support.
 
 #include "gl_20.h"
@@ -624,18 +624,28 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		right.Y = (up.Z * fn.X) - (up.X * fn.Z);
 		right.Z = (up.X * fn.Y) - (up.Y * fn.X);
 
-		// Shrink 2nd brighter small dynlight radius 
-		// so that it doesn't look like a too obvious light strip
-		if (radius <= 128.0f)
-		{
-			right *= 2.0f;  // Horizontal radius expansion (less is wider)
-		}
-		else
-		{
-			right *= 0.75f; // Horizontal radius expansion (less is wider)
-		}
-		// Massively expand the vertical layout (0.1f) to stretch it up the walls
-		up *= 0.1f;         // Vertical expansion
+		//             DYNAMIC ANAMORPHIC UV COMPRESSION TUNING LAYOUT
+		// Configured with explicit tuning floats to let you easily calibrate 
+		// horizontal width behaviors for frontal and angled surfaces on the fly.
+		// ADJUST THESE TWO VALUES TO CALIBRATE HOW LIGHT LAYS ON WALLS UNDER DIFFERENT ANGLES:
+		float inFrontWall = 0.55f;  // WIDTH FRONT: The look-straight multiplier (less is WIDER)
+		float inAngleWall = 1.25f;  // WIDTH ANGLE: The sharp edge multiplier (more is NARROWER)
+
+		// 1. Reconstruct camera horizontal look components matching engine layout space
+		float lookX = (float)r_viewpoint.Cos; float lookZ = (float)r_viewpoint.Sin;
+
+		// 2. Compute explicit 2D dot product (look . normal) to track wall orientation
+		float dotAngle = fabsf((lookX * fn.X) + (lookZ * fn.Z));
+		if (dotAngle > 1.0f) dotAngle = 1.0f; if (dotAngle < 0.0f) dotAngle = 0.0f;
+
+		// 3. Linear interpolation mapping:
+		// When dotAngle is 1.0 (frontal), scales smoothly down to inFrontWall.
+		// When dotAngle is 0.0 (angled), scales tightly up to inAngleWall.
+		float dynamicHorizontalScale = inAngleWall - (dotAngle * (inAngleWall - inFrontWall));
+
+		// 4. Dispatch final non-linear anamorphic power scale factor
+		right *= dynamicHorizontalScale;  // Apply adaptive width scaling
+		up *= 0.1f;                  // Vertical expansion - massive up the whole wall height
 	}
 	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 
@@ -1068,18 +1078,28 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //		right.Y = (up.Z * fn.X) - (up.X * fn.Z);
 //		right.Z = (up.X * fn.Y) - (up.Y * fn.X);
 //
-//		// Shrink 2nd brighter small dynlight radius 
-//		// so that it doesn't look like a too obvious light strip
-//		if (radius <= 128.0f)
-//		{
-//			right *= 2.0f;  // Horizontal radius expansion (less is wider)
-//		}
-//		else
-//		{
-//			right *= 0.75f; // Horizontal radius expansion (less is wider)
-//		}
-//		// Massively expand the vertical layout (0.1f) to stretch it up the walls
-//		up *= 0.1f;         // Vertical expansion
+//		//             DYNAMIC ANAMORPHIC UV COMPRESSION TUNING LAYOUT
+//		// Configured with explicit tuning floats to let you easily calibrate 
+//		// horizontal width behaviors for frontal and angled surfaces on the fly.
+//		// ADJUST THESE TWO VALUES TO CALIBRATE HOW LIGHT LAYS ON WALLS UNDER DIFFERENT ANGLES:
+//		float inFrontWall = 0.55f;  // WIDTH FRONT: The look-straight multiplier (less is WIDER)
+//		float inAngleWall = 1.25f;  // WIDTH ANGLE: The sharp edge multiplier (more is NARROWER)
+//
+//		// 1. Reconstruct camera horizontal look components matching engine layout space
+//		float lookX = (float)r_viewpoint.Cos; float lookZ = (float)r_viewpoint.Sin;
+//
+//		// 2. Compute explicit 2D dot product (look . normal) to track wall orientation
+//		float dotAngle = fabsf((lookX * fn.X) + (lookZ * fn.Z));
+//		if (dotAngle > 1.0f) dotAngle = 1.0f; if (dotAngle < 0.0f) dotAngle = 0.0f;
+//
+//		// 3. Linear interpolation mapping:
+//		// When dotAngle is 1.0 (frontal), scales smoothly down to inFrontWall.
+//		// When dotAngle is 0.0 (angled), scales tightly up to inAngleWall.
+//		float dynamicHorizontalScale = inAngleWall - (dotAngle * (inAngleWall - inFrontWall));
+//
+//		// 4. Dispatch final non-linear anamorphic power scale factor
+//		right *= dynamicHorizontalScale;  // Apply adaptive width scaling
+//		up *= 0.1f;                  // Vertical expansion - massive up the whole wall height
 //	}
 //	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 //
@@ -2137,14 +2157,16 @@ void GLSceneDrawer::RenderMultipassStuff()
 {
 	// First pass: empty background with sector light only
 
-	// Part 1: solid geometry
+	// Part 1: solid geometry. This is set up so that there are no transparent parts
+	// remove any remaining texture bindings and shaders whick may get in the way.
 	gl_RenderState.EnableTexture(false);
 	gl_RenderState.EnableBrightmap(false);
 	gl_RenderState.Apply();
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_PLAIN);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_PLAIN);
 
-	// Part 2: masked geometry
+	// Part 2: masked geometry. This is set up so that only pixels with alpha>0.5 will show
+	// This creates a blank surface that only fills the nontransparent parts of the texture
 	gl_RenderState.EnableTexture(true);
 	gl_RenderState.SetTextureMode(TM_MASK);
 	gl_RenderState.EnableBrightmap(true);
@@ -2214,21 +2236,13 @@ void GLSceneDrawer::RenderMultipassStuff()
 
 	// Fifth pass: apply fog overlay to foggy surfaces
 	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
-	{
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_PLAIN);
-	}
 	if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
-	{
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_PLAIN);
-	}
 	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].drawitems.Size() > 0)
-	{
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_PLAIN);
-	}
 	if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].drawitems.Size() > 0)
-	{
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_PLAIN);
-	}
 
 	// Sixth pass: there are still special dynamic lights that are SET to be ADDITIVE
 	// These lights must be rendered AFTER fog to remain bright and visible

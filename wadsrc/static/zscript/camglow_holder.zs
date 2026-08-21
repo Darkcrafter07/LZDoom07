@@ -23,8 +23,8 @@ class camglow_Holder : Inventory
 			light1 = camglow_Light( owner.Spawn( "camglow_Light" ) );
 			if (light1)
 			{
-				// Используем master вместо target, чтобы не активировать 
-				// внутреннюю блокировку LF_DONTLIGHTSELF
+				// Use "master" instead of "target",
+				// not to activate the inner block: "LF_DONTLIGHTSELF"
 				light1.master = owner; 
 				light1.Init( pp, false );
 			}
@@ -38,7 +38,7 @@ class camglow_Holder : Inventory
 				light2 = camglow_Light( owner.Spawn( "camglow_Light" ) );
 				if (light2)
 				{
-					light2.master = owner; // Исправление для второго луча
+					light2.master = owner;
 					light2.Init( pp, true );
 				}
 			}

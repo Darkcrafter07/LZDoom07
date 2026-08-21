@@ -42,7 +42,7 @@
 // but there must be some other better, yet undiscovered ways
 //
 //This file collects everything larger that is only needed for
-//OpenGL v1.1 is required (1997+ cards?), the same file for GL2x path.
+//OpenGL v1.3 is required (2001+ cards?), the same file for GL2x path.
 //The difference GL2 makes is no blurry textures thanks to NPOT support.
 
 #ifndef __GL_20_H__

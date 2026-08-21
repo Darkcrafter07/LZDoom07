@@ -1,41 +1,48 @@
 // Camglow dynlight by Darkcrafter07
-// Based on "Flashlight++" by SuaveSteve: https:// forum.zdoom.org/viewtopic.php?t=75585
+// Based on "Flashlight++" by SuaveSteve:
+// https:// forum.zdoom.org/viewtopic.php?t=75585
 
+// =======================================================================
+//    --- THE SOFTWARE RENDERER INSPIRED DYNLIGHT BASED CAMERA GLOW ---
+//   Having these variables (parameters) set as "user" serves REALLY WELL
+//   to the multiplayer game! THAT way the camglow dynlight is going to be
+//   visible ONLY to the player it was SPAWNED BY, e.g every player
+//   in the game will NOT see how other players light their way with it.
+//   Why spotlight and not point? It works a bit better as camglow light.
+//
+// *PS: INTENSITY is actually a light RADIUS! Needs to get fixed later.
+// =======================================================================
 
-// =====================================
-// Intensity is actually a light radius!
-// =====================================
-
-
-
-// Flashlight+
+// Regular Flashlight+ based parameters
 // Default - Software Camera Glow GL1x/GL2x
 
 
-//Instead of 128 128 128 write 80 80 80.
-//Instead of 255 255 255 write FF FF FF.
-user color cl_camglow_plus_color = "CC CC CC";
+// Instead of 128 128 128 write 80 80 80, instead of 255 255 255 write FF FF FF.
+user color cl_camglow_plus_color = "CC CC CC";  // 1st dynlight color (true INTENSITY)
 
-// the 1st light actual radius
-user int cl_camglow_plus_intensity = 82;
+// ---=== THE 1st light actual radius ===---
+user int cl_camglow_plus_intensity = 75;        // 1st dynlight RADIUS (NEAR-FIELD). Needs to be SHORT.
+                                                // to be like software renderer exponential light-peak.
+user float cl_camglow_plus_inner = 30.0;        // this works nice in GL1x/GL2x
+user float cl_camglow_plus_outer = 115.0;       // this works nice in GL1x/GL2x
+user bool cl_camglow_plus_second_beam = true;   // spawn 2nd dynlight - (FAR-FIELD). Needs to be LONG.
 
-user float cl_camglow_plus_inner = 30.0;
-user float cl_camglow_plus_outer = 115.0;
 
-user bool cl_camglow_plus_second_beam = true;
 
-// the 2nd light actual intensity multiplier
-user float cl_camglow_plus_color_2_mult = 0.44;
+// ---=== THE 2nd light settings ===---
+user float cl_camglow_plus_color_2_mult = 0.44; // 2nd dynlight color (true INTENSITY)
+user int cl_camglow_plus_intensity_2 = 190;     // 2nd light RADIUS (WHY IS IT called intensity in zdoom?)
+user float cl_camglow_plus_inner_2 = 30.0;      // this works nice in GL1x/GL2x
+user float cl_camglow_plus_outer_2 = 115.0;     // this works nice in GL1x/GL2x
+user int cl_camglow_plus_location = 0;          // where it's mounted at (placed) relative to player body.
 
-user int cl_camglow_plus_intensity_2 = 256;
 
-user float cl_camglow_plus_inner_2 = 30.0;
-user float cl_camglow_plus_outer_2 = 115.0;
 
-user int cl_camglow_plus_location = 0;
+
 
 
 // Flashlight++
+// The rest stuff that was not removed yet
 user int cl_camglow_sound = -1;
 
 user int cl_camglow_custpos_x = 0;

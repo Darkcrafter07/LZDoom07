@@ -65,7 +65,7 @@ class camglow_Light : SpotLightCamGlowStraight
 		shouldInterpolate = CVar.GetCVar("cl_camglow_interpolate", toFollow.player).GetBool();
 		
 		// 5. Location and Offset setup
-		double zBump = toFollow.height / 15.0;
+		double zBump = toFollow.height * 0.067;  // 1.0 / 15.0
 		int loc = CVar.GetCVar("cl_camglow_plus_location", toFollow.player).GetInt();
 
 		switch(loc) 
@@ -160,8 +160,7 @@ class camglow_Light : SpotLightCamGlowStraight
 		}
 
 		// 2. If light is off, stop processing
-		if (args[3] <= 0) 
-			return;
+		if (args[3] <= 0)  return;
 
 		// 3. Simple sync with player position (Sway removed)
 		Vector3 posToSet = toFollow.pos;
@@ -178,7 +177,8 @@ class camglow_Light : SpotLightCamGlowStraight
 		bATTENUATE = true; 
 
 		// Calculate view direction for offset math
-		Vector3 viewDir = (
+		Vector3 viewDir =
+		(
 			cos(angleToSet) * cos(pitchToSet),
 			sin(angleToSet) * cos(pitchToSet),
 			-sin(pitchToSet)
@@ -188,7 +188,8 @@ class camglow_Light : SpotLightCamGlowStraight
 		double curViewH = toFollow.ViewHeight + toFollow.player.crouchviewdelta;
 
 		// Base position at Helmet/Eye level
-		Vector3 basePos = posToSet + (
+		Vector3 basePos = posToSet + 
+		(
 			RotateVector((offset.x, offset.y * cos(toFollow.Pitch)), toFollow.angle - 90.0), 
 			curViewH + offset.z + (offset.y * -sin(toFollow.Pitch))
 		);
@@ -197,7 +198,8 @@ class camglow_Light : SpotLightCamGlowStraight
 		FLineTraceData trace;
 		double maxBackDist = 1.0; 
 		
-		toFollow.LineTrace(
+		toFollow.LineTrace
+		(
 			toFollow.angle + 180.0, 
 			maxBackDist, 
 			-toFollow.pitch, 
