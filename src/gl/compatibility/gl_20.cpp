@@ -49,7 +49,7 @@
 //TECHNICAL DOCUMENTATION: OPENGL 1.1 COMPATIBILITY FALLBACK BACKPORT
 //Author: Darkcrafter07
 //Date: August 22, 2026
-//UNTESTED ON REAL HARDWARE!
+// GL1.1 MODE IS UNTESTED ON REAL HARDWARE! ONLY GL1.3 IS TESTED!
 //================================================================================
 //
 //1. OVERVIEW
@@ -763,7 +763,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 		// 4. Dispatch final non-linear anamorphic power scale factor
 		right *= dynamicHorizontalScale;  // Apply adaptive width scaling
-		up *= 0.1f;                  // Vertical expansion - massive up the whole wall height
+		up *= 0.32f;                  // Vertical expansion - massive up the whole wall height
 	}
 	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 
