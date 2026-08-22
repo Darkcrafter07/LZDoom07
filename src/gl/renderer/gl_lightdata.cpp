@@ -155,6 +155,20 @@ void gl_GetRenderStyle(FRenderStyle style, bool drawopaque, bool allowcolorblend
 		srcblend = GL_SRC_COLOR;
 	}
 
+	// TRANSLUCENT CODES INTERCEPTION FOR OPENGL 1.1
+	if (gl.gl1path && gl.gl1_v1dot1)
+	{
+		// Hard fallback for blend equation to prevent crashes on unsupported ops
+		blendequation = GL_FUNC_ADD;
+
+		// EXACTLY TARGETING TRANSLUCENT STYLES (Particles, explosions, fire balls, translucent actors)
+		if (style.SrcAlpha == STYLEALPHA_Src && style.DestAlpha == STYLEALPHA_InvSrc)
+		{
+			// Flag this texture mode with a special index (99) to execute alpha clamping down the pipe
+			texturemode = 99; 
+		}
+	}
+
 	*tm = texturemode;
 	*be = blendequation;
 	*sb = srcblend;

@@ -70,6 +70,7 @@ struct RenderContext
 	char * vendorstring;
 	bool legacyMode;
 	bool gl1path;
+	bool gl1_v1dot1 = false;
 	bool glnpot = false;
 	bool es;
 

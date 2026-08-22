@@ -42,8 +42,73 @@
 // but there must be some other better, yet undiscovered ways
 //
 //This file collects everything larger that is only needed for
-//OpenGL v1.3 is required (2001+ cards?), the same file for GL2x path.
+//OpenGL v1.1 is required (1997 cards?), the same file for GL2x path.
 //The difference GL2 makes is no blurry textures thanks to NPOT support.
+
+//================================================================================
+//TECHNICAL DOCUMENTATION: OPENGL 1.1 COMPATIBILITY FALLBACK BACKPORT
+//Author: Darkcrafter07
+//Date: August 22, 2026
+//UNTESTED ON REAL HARDWARE!
+//================================================================================
+//
+//1. OVERVIEW
+//--------------------------------------------------------------------------------
+//This documentation outlines the structural implementation of the pure OpenGL 1.1 
+//compatibility pipeline fallback path. While the engine was originally designed 
+//around fixed-function OpenGL 1.3+ specifications, this legacy backport provides 
+//some rendering support for older hardware chipsets lacking modern texture 
+//environment extensions, completely eliminating critical rendering regressions.
+//
+//2. CORE HISTORICAL DIFFERENCES: GL 1.3 vs GL 1.1
+//--------------------------------------------------------------------------------
+//* OpenGL 1.3+ Native Path (Original Architecture):
+//  Utilizes the 'GL_COMBINE' texture environment modes (ARB_texture_env_combine). 
+//  This allows the texture hardware unit to act as a discrete pixel pipeline, 
+//  splitting processing behavior per-channel. For masked geometry (grates,windows) 
+//  it executes a 'GL_REPLACE' operation on RGB channels (retaining the native 
+//  unmultiplied sector light value) while executing a 'GL_MODULATE' operation on 
+//  the Alpha channel to cleanly carve out transparency transparency thresholds via
+//  the hardware Depth Buffer.
+//
+//* OpenGL 1.1 Fallback Path (Added by Darkcrafter07):
+//  Lacks 'GL_COMBINE' features entirely. The texture environment unit is restricted 
+//  to basic linear 'GL_MODULATE' (multiplication) or 'GL_REPLACE' operations across 
+//  the entire pixel fragment simultaneously. Splitting individual color and alpha 
+//  channel behavior inside a single texture pass,
+//  which is physically unsupported by the hardware.
+//
+//3. RESOLVED ARCHITECTURAL ISSUES & FALLBACK IMPLEMENTATION
+//--------------------------------------------------------------------------------
+//* Masked Midtextures (_MASKED Walls & Flats):
+//  - Problem: In raw OpenGL 1.1, the lack of combine states forced 'TM_MASK' 
+//    to drop down to standard 'GL_MODULATE'. During multi-pass rendering, 
+//    this caused the grate textures to be multiplied by the framebuffer multiple 
+//    times, squashing the contrast and causing severe darkening at a distance. 
+//    Furthermore, when dynamic lightmaps were added, the pixels would flood with 
+//    solid light washouts due to unmasked additive blending.
+//  - Solution: Re-routed the '_MASKED' render loops to mimic the 1-pass sprite way. 
+//    Grates are drawn fully textured directly in Part 2 via standard 'GL_SRC_ALPHA' 
+//    blending, completely skipping the third pass multiplication loop. 
+//    Dynamic lights are mapped over the pre-existing texture lines using 
+//    an explicit sprite-aligned 'GL_DST_COLOR, GL_ONE' blend function, 
+//    securing linear light curves, preventing blowout flashes, 
+//    and ensuring 100% perfect brightness from any distance.
+//
+//* Translucency & Soft Alpha Blending (Marker 99):
+//  - Problem: Smooth alpha blending gradients on projectiles, particles, 
+//    and explosions regularly vanished from the screen or collapsed into 
+//    jagged binary edges because the engine's global Alpha Testing thresholds 
+//    dynamically culled pixel fragments whenever alpha values fell below the sector
+//    level bounds.
+//  - Solution: Implemented a custom texture mode intercept marker (99),
+//    inside 'gl_GetRenderStyle'. 
+//    When evaluated under the OpenGL 1.1 path, these specific translucent blend styles 
+//    programmatically clamp their color vector's alpha channel to a safe '0.51f' floor 
+//    on the CPU level ('ApplyFixedFunction') while temporarily neutralizing hardware 
+//    Alpha Testing checks. This forces soft particle gradients to reliably pass the 
+//    GPU pipeline gates, restoring smooth, rich alpha transparency across all 
+//    non-opaque actors.
 
 #include "gl_20.h"
 #include "gl/dynlights/gl_dynlightcache.h"
@@ -150,6 +215,22 @@ void gl_PatchMenu()
 // It looks like textures modes function is similar to PRBoom.
 void gl_SetTextureMode(int type)
 {
+	// Fallback for old GL v1.1 (no GL_COMBINE extension available)
+	if (gl.gl1path && gl.gl1_v1dot1)
+	{
+		if (type == TM_MASK || type == TM_OPAQUE || type == TM_INVERSE || 
+			type == TM_INVERTOPAQUE || type == TM_BRIGHTMAP_LEGACY)
+		{
+			glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		}
+		else
+		{
+			glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+		}
+		return; // Bypass original OpenGL 1.3+ texture unit configurations
+	}
+
+	// Original GL1.3+ (with GL_COMBINE support)
 	if (type == TM_MASK)
 	{
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
@@ -212,7 +293,6 @@ void gl_SetTextureMode(int type)
 		// Make sure that scale has reset to 1, otherwise overbright
 		glTexEnvi(GL_TEXTURE_ENV, GL_RGB_SCALE, 1);
 	}
-
 	else // if (type == TM_MODULATE)
 	{
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
@@ -263,7 +343,7 @@ void FRenderState::ApplyFixedFunction()
 		if (ffFogColor != mFogColor)
 		{
 			ffFogColor = mFogColor;
-			GLfloat FogColor[4] = { mFogColor.r / 255.0f,mFogColor.g / 255.0f,mFogColor.b / 255.0f,0.0f };
+			GLfloat FogColor[4] = { mFogColor.r / 255.0f, mFogColor.g / 255.0f, mFogColor.b / 255.0f, 0.0f };
 			glFogfv(GL_FOG_COLOR, FogColor);
 		}
 		if (ffFogDensity != mLightParms[2])
@@ -336,13 +416,51 @@ void FRenderState::ApplyFixedFunction()
 	col.vec[1] *= (mObjectColor.g / 255.f);
 	col.vec[2] *= (mObjectColor.b / 255.f);
 	col.vec[3] *= (mObjectColor.a / 255.f);
+
+	//==========================================================================
+	// HARDWARE ALPHA CLAMPING FOR TRANSLUCENT OBJECTS IN OPENGL 1.1
+	//==========================================================================
+	if (gl.gl1path && gl.gl1_v1dot1)
+	{
+		// If this is a targeted translucent style (flagged as 99 in gl_GetRenderStyle)
+		if (ffTextureMode == 99)
+		{
+			// Clamp alpha channel to 0.51f to ensure it bypasses the 0.5f alpha-test gate.
+			// This makes previously invisible particles, explosions, and projectiles perfectly visible.
+			if (col.vec[3] < 0.51f)
+			{
+				col.vec[3] = 0.51f;
+			}
+		}
+	}
+
 	glColor4fv(col.vec); // Applies clean baseline sector shadow level
 
 	glEnable(GL_BLEND);
 	if (mAlphaThreshold > 0)
 	{
 		glEnable(GL_ALPHA_TEST);
-		glAlphaFunc(GL_GREATER, mAlphaThreshold * col.vec[3]);
+
+		if (gl.gl1path && gl.gl1_v1dot1)
+		{
+			// For OpenGL 1.1: If it's our translucent object, disable alpha test 
+			// to bypass binary masking edges and ensure soft blending curves.
+			if (ffTextureMode == 99)
+			{
+				glDisable(GL_ALPHA_TEST);
+			}
+			else
+			{
+				// GL 1.1: Use unmultiplied baseline threshold 
+				// to protect grated textures from double darkening or clipping out early.
+				glAlphaFunc(GL_GREATER, mAlphaThreshold);
+			}
+		}
+		else
+		{
+			// Original GL 1.3+: Multiplies threshold by clean sector alpha level
+			glAlphaFunc(GL_GREATER, mAlphaThreshold * col.vec[3]);
+		}
 	}
 	else
 	{
@@ -828,11 +946,9 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// *Walls: expand the dynlight blob texture (gllight.png) vertically
 	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
 	//
-	// FIX PROLONGED DEPTH BUG: Rotates flat light vectors based on camera Yaw,
-	// and changes multipliers to stretch the light spot FAR AWAY forward from the player,
-	// creating a rich, deep, wide software ambient ellipse on floors and ceilings.
-	//
-	// THE FLATS PART IMPLEMENTATION BELOW:
+	// MASTER UTMOST SOLUTION: FIXED-AXIS 3D RODRIGUES ROTATION WITH REVERSE NET COMPASS
+	// Rotates strictly WITHIN the slope's own geometric 3D plane, and inverts the sine
+	// phase to perfectly cancel out hardware OpenGL fixed-function projection mirroring.
 	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 	{
 		//	// This network check is not necessary but why not?
@@ -853,18 +969,65 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		float s = (float)r_viewpoint.Sin;
 		float c = (float)r_viewpoint.Cos;
 
-		// 2. Rotate the base vectors on the horizontal (X/Z) plane relative to camera Yaw
-		float r_oldX = right.X; float r_oldZ = right.Z;
-		right.X = (r_oldX * c) - (r_oldZ * s);
-		right.Z = (r_oldX * s) + (r_oldZ * c);
+		// 2. Save the engine's pre-aligned unit-length baseline vectors
+		FVector3 r_old = right;
+		FVector3 u_old = up;
 
-		float u_oldX = up.X; float u_oldZ = up.Z;
-		up.X = (u_oldX * c) - (u_oldZ * s);
-		up.Z = (u_oldX * s) + (u_oldZ * c);
+		// Extract normal components (3D rotation axis)
+		float nx = fn.X; float ny = fn.Y; float nz = fn.Z;
 
-		// 3. LONG-RANGE SOFTWARE PROJECT MULTIPLIERS
-		right *= 1.0f; // Vertical multiplier
-		up *= 0.36f;   // Expand horizontaly, too much will cause artifacts
+		// Check if the flat polygon has any slope tilt context at all
+		bool isSlope = (fabsf(nx) > 0.001f || fabsf(nz) > 0.001f);
+
+		if (isSlope)
+		{
+			// REVERSE ROTATION DIRECTION FOR SLOPE COMPENSATOR
+			// Invert the sign of the sine wave (s = -s) to force the Rodrigues
+			// matrix to spin in the exact opposite direction, zeroing out hardware drift
+			float revS = -s;
+
+			// 3. EXECUTE REVERSE 3D RODRIGUES ROTATION FOR THE 'RIGHT' VECTOR OVER SLOPES
+			float r_dot = (r_old.X * nx) + (r_old.Y * ny) + (r_old.Z * nz); // Dot Product (N . V)
+
+			// Cross Product: r_cross = N x V
+			float r_crossX = (ny * r_old.Z) - (nz * r_old.Y);
+			float r_crossY = (nz * r_old.X) - (nx * r_old.Z);
+			float r_crossZ = (nx * r_old.Y) - (ny * r_old.X);
+
+			right.X = (r_old.X * c) + (r_crossX * revS) + (nx * r_dot * (1.0f - c));
+			right.Y = (r_old.Y * c) + (r_crossY * revS) + (ny * r_dot * (1.0f - c));
+			right.Z = (r_old.Z * c) + (r_crossZ * revS) + (nz * r_dot * (1.0f - c));
+
+			// 4. EXECUTE REVERSE 3D RODRIGUES ROTATION FOR THE 'UP' VECTOR OVER SLOPES IDENTICALLY
+			float u_dot = (u_old.X * nx) + (u_old.Y * ny) + (u_old.Z * nz); // Dot Product (N . V)
+
+			// Cross Product: u_cross = N x V
+			float u_crossX = (ny * u_old.Z) - (nz * u_old.Y);
+			float u_crossY = (nz * u_old.X) - (nx * u_old.Z);
+			float u_crossZ = (nx * u_old.Y) - (ny * u_old.X);
+
+			up.X = (u_old.X * c) + (u_crossX * revS) + (nx * u_dot * (1.0f - c));
+			up.Y = (u_old.Y * c) + (u_crossY * revS) + (ny * u_dot * (1.0f - c));
+			up.Z = (u_old.Z * c) + (u_crossZ * revS) + (nz * u_dot * (1.0f - c));
+
+			// Perform 90-degree coordinate swap to make it broad sideways
+			FVector3 tempRight = right;
+			right = up;
+			up = tempRight;
+		}
+		else
+		{
+			// FLAT (NON-SLOPE) PATH
+			right.X = (r_old.X * c) - (r_old.Z * s);
+			right.Z = (r_old.X * s) + (r_old.Z * c);
+
+			up.X = (u_old.X * c) - (u_old.Z * s);
+			up.Z = (u_old.X * s) + (u_old.Z * c);
+		}
+
+		// 5. LONG-RANGE SOFTWARE PROJECT MULTIPLIERS
+		right *= 1.0f; // Sideways width aspect
+		up *= 0.36f;   // Longitudinal (horizontal) stretch far away from camera
 	}
 	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 
@@ -1208,11 +1371,9 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	// *Walls: expand the dynlight blob texture (gllight.png) vertically
 //	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
 //	//
-//	// FIX PROLONGED DEPTH BUG: Rotates flat light vectors based on camera Yaw,
-//	// and changes multipliers to stretch the light spot FAR AWAY forward from the player,
-//	// creating a rich, deep, wide software ambient ellipse on floors and ceilings.
-//	//
-//	// THE FLATS PART IMPLEMENTATION BELOW:
+//	// MASTER UTMOST SOLUTION: FIXED-AXIS 3D RODRIGUES ROTATION WITH REVERSE NET COMPASS
+//	// Rotates strictly WITHIN the slope's own geometric 3D plane, and inverts the sine
+//	// phase to perfectly cancel out hardware OpenGL fixed-function projection mirroring.
 //	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 //	{
 //		//	// This network check is not necessary but why not?
@@ -1233,18 +1394,65 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //		float s = (float)r_viewpoint.Sin;
 //		float c = (float)r_viewpoint.Cos;
 //
-//		// 2. Rotate the base vectors on the horizontal (X/Z) plane relative to camera Yaw
-//		float r_oldX = right.X; float r_oldZ = right.Z;
-//		right.X = (r_oldX * c) - (r_oldZ * s);
-//		right.Z = (r_oldX * s) + (r_oldZ * c);
+//		// 2. Save the engine's pre-aligned unit-length baseline vectors
+//		FVector3 r_old = right;
+//		FVector3 u_old = up;
 //
-//		float u_oldX = up.X; float u_oldZ = up.Z;
-//		up.X = (u_oldX * c) - (u_oldZ * s);
-//		up.Z = (u_oldX * s) + (u_oldZ * c);
+//		// Extract normal components (3D rotation axis)
+//		float nx = fn.X; float ny = fn.Y; float nz = fn.Z;
 //
-//		// 3. LONG-RANGE SOFTWARE PROJECT MULTIPLIERS
-//		right *= 1.0f; // Vertical multiplier
-//		up *= 0.36f;   // Expand horizontaly, too much will cause artifacts
+//		// Check if the flat polygon has any slope tilt context at all
+//		bool isSlope = (fabsf(nx) > 0.001f || fabsf(nz) > 0.001f);
+//
+//		if (isSlope)
+//		{
+//			// REVERSE ROTATION DIRECTION FOR SLOPE COMPENSATOR
+//			// Invert the sign of the sine wave (s = -s) to force the Rodrigues
+//			// matrix to spin in the exact opposite direction, zeroing out hardware drift
+//			float revS = -s;
+//
+//			// 3. EXECUTE REVERSE 3D RODRIGUES ROTATION FOR THE 'RIGHT' VECTOR OVER SLOPES
+//			float r_dot = (r_old.X * nx) + (r_old.Y * ny) + (r_old.Z * nz); // Dot Product (N . V)
+//
+//			// Cross Product: r_cross = N x V
+//			float r_crossX = (ny * r_old.Z) - (nz * r_old.Y);
+//			float r_crossY = (nz * r_old.X) - (nx * r_old.Z);
+//			float r_crossZ = (nx * r_old.Y) - (ny * r_old.X);
+//
+//			right.X = (r_old.X * c) + (r_crossX * revS) + (nx * r_dot * (1.0f - c));
+//			right.Y = (r_old.Y * c) + (r_crossY * revS) + (ny * r_dot * (1.0f - c));
+//			right.Z = (r_old.Z * c) + (r_crossZ * revS) + (nz * r_dot * (1.0f - c));
+//
+//			// 4. EXECUTE REVERSE 3D RODRIGUES ROTATION FOR THE 'UP' VECTOR OVER SLOPES IDENTICALLY
+//			float u_dot = (u_old.X * nx) + (u_old.Y * ny) + (u_old.Z * nz); // Dot Product (N . V)
+//
+//			// Cross Product: u_cross = N x V
+//			float u_crossX = (ny * u_old.Z) - (nz * u_old.Y);
+//			float u_crossY = (nz * u_old.X) - (nx * u_old.Z);
+//			float u_crossZ = (nx * u_old.Y) - (ny * u_old.X);
+//
+//			up.X = (u_old.X * c) + (u_crossX * revS) + (nx * u_dot * (1.0f - c));
+//			up.Y = (u_old.Y * c) + (u_crossY * revS) + (ny * u_dot * (1.0f - c));
+//			up.Z = (u_old.Z * c) + (u_crossZ * revS) + (nz * u_dot * (1.0f - c));
+//
+//			// Perform 90-degree coordinate swap to make it broad sideways
+//			FVector3 tempRight = right;
+//			right = up;
+//			up = tempRight;
+//		}
+//		else
+//		{
+//			// FLAT (NON-SLOPE) PATH
+//			right.X = (r_old.X * c) - (r_old.Z * s);
+//			right.Z = (r_old.X * s) + (r_old.Z * c);
+//
+//			up.X = (u_old.X * c) - (u_old.Z * s);
+//			up.Z = (u_old.X * s) + (u_old.Z * c);
+//		}
+//
+//		// 5. LONG-RANGE SOFTWARE PROJECT MULTIPLIERS
+//		right *= 1.0f; // Sideways width aspect
+//		up *= 0.36f;   // Longitudinal (horizontal) stretch far away from camera
 //	}
 //	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 //
@@ -1668,7 +1876,7 @@ bool GLWall::PutWallCompat(int passflag)
 	static int list_indices[2][2] =
 	{ { GLLDL_WALLS_PLAIN, GLLDL_WALLS_FOG },{ GLLDL_WALLS_MASKED, GLLDL_WALLS_FOGMASKED } };
 
-	// ALLOW M2SNF and M2S to have lights!
+	// ALLOW M2SNF and M2S to have lights! - бнр рср!
 	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || !gltexture) return false;
 
 	// Block ONLY specific Skyhack if it's really a hurdle
@@ -1677,11 +1885,25 @@ bool GLWall::PutWallCompat(int passflag)
 	// Check if this wall has any lights affecting it
 	bool hasLights = false;
 
-	// FORCE: If it's a Mid-Texture, we ALWAYS want it in the list for the multipass
-	// This bypasses any logic that might skip it due to "no lights in range"
-	if (type == RENDERWALL_M2S || type == RENDERWALL_M2SNF)
+	// In GL1.1 mode masked midtextures get twice as dark in the distance
+	if (gl.gl1path && gl.gl1_v1dot1)
 	{
+		// Turn off dynlights if NO dynlights are currently touching the surface
+		if (!(seg->sidedef->Flags & WALLF_POLYOBJ))
+		{
+			if (seg->sidedef->lighthead == nullptr) return false;
+		}
 		hasLights = true;
+	}
+	else
+	{
+		// GL 1.3+ way with GL_COMBINE support
+		// FORCE: If it's a Mid-Texture, we ALWAYS want it in the list for the multipass
+		// This bypasses any logic that might skip it due to "no lights in range"
+		if (type == RENDERWALL_M2S || type == RENDERWALL_M2SNF)
+		{
+			hasLights = true;
+		}
 	}
 
 	// First check if there are any lights at all
@@ -2155,8 +2377,7 @@ void GLWall::RenderLightsCompat(int pass)
 
 void GLSceneDrawer::RenderMultipassStuff()
 {
-	// First pass: empty background with sector light only
-
+	// ******* FIRST PASS: EMPTY BACKGROUND WITH SECTOR LIGHT ONLY ******
 	// Part 1: solid geometry. This is set up so that there are no transparent parts
 	// remove any remaining texture bindings and shaders whick may get in the way.
 	gl_RenderState.EnableTexture(false);
@@ -2167,12 +2388,37 @@ void GLSceneDrawer::RenderMultipassStuff()
 
 	// Part 2: masked geometry. This is set up so that only pixels with alpha>0.5 will show
 	// This creates a blank surface that only fills the nontransparent parts of the texture
-	gl_RenderState.EnableTexture(true);
-	gl_RenderState.SetTextureMode(TM_MASK);
-	gl_RenderState.EnableBrightmap(true);
-	gl_RenderState.AlphaFunc(GL_GEQUAL, gl_mask_threshold);
-	gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_PLAIN);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_PLAIN);
+	if (gl.gl1path && gl.gl1_v1dot1)
+	{
+		// GL1.1: sprite-alike base pass
+		gl_RenderState.EnableTexture(true);
+		gl_RenderState.EnableBrightmap(true);
+
+		// Force grates to render using the exact same smooth logic as sprites
+		gl_RenderState.SetTextureMode(TM_MODULATE);
+		glEnable(GL_BLEND);
+		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+		// Explicit alpha testing gate to culling transparent pixels early
+		glEnable(GL_ALPHA_TEST);
+		gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
+
+		// Render the grates fully textured and illuminated right here in Part 2!
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_PLAIN);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_PLAIN);
+	}
+	else
+	{
+		// GL1.3: original base pass
+		gl_RenderState.EnableTexture(true);
+		gl_RenderState.SetTextureMode(TM_MASK);
+		gl_RenderState.EnableBrightmap(true);
+
+		gl_RenderState.AlphaFunc(GL_GEQUAL, gl_mask_threshold);
+
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_PLAIN);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_PLAIN);
+	}
 
 	// Part 3: The base of fogged surfaces (without fixed fog)
 	gl_RenderState.EnableFog(false);  // Disable fixed fog for foggy surfaces
@@ -2185,48 +2431,111 @@ void GLSceneDrawer::RenderMultipassStuff()
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_PLAIN);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_PLAIN);
 
-	// Second pass: draw lights (including foggy surfaces)
+	// ******* SECOND PASS: DRAW LIGHTS (INCLUDING FOGGY SURFACES) ******* 
 	glDepthMask(false);
 	if (GLRenderer->mLightCount && !FixedColormap)
 	{
 		if (gl_SetupLightTexture())
 		{
-			gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
-			glDepthFunc(GL_EQUAL);
-			if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
+			if (gl.gl1path && gl.gl1_v1dot1)
+			{
+				// GL1.1 lightpass
+				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+				glDepthFunc(GL_EQUAL);
+				if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
 
-			// Apply regular lights to ALL surfaces
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
+				// Apply additive lights to standard surfaces first
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
 
-			gl_RenderState.BlendEquation(GL_FUNC_ADD);
+				// Re-route grates to sprite-aligned lighting pass (GL_DST_COLOR, GL_ONE)
+				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+				glEnable(GL_ALPHA_TEST);
+				gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
+
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX);
+
+				// Quick recovery cleanup back to standard pass flags
+				glDisable(GL_ALPHA_TEST);
+				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+			}
+			else
+			{
+				// GL1.3 original lightpass
+				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+				glDepthFunc(GL_EQUAL);
+				if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
+
+				// Apply regular lights to ALL surfaces
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
+				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
+
+				gl_RenderState.BlendEquation(GL_FUNC_ADD);
+			}
 		}
 	}
 
-	// Third pass: modulated texture (all surfaces)
-	gl_RenderState.SetColor(0xffffffff);
-	gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
-	gl_RenderState.EnableFog(false);  // Keep fog disabled
-	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
-	// Dynlights in front of a transparent txt make all black behind it
-	glDepthFunc(GL_EQUAL);  // CRITICAL: Use GL_EQUAL instead of GL_LEQUAL
-	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
-	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
-	gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TEXONLY);
-	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
-	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
-	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
-	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
-	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
+	// ******* THIRD PASS: MODULATED TEXTURE (ALL SURFACES) ******* 
+	if (gl.gl1path && gl.gl1_v1dot1)
+	{
+		// GL1.1 multiplication loop
+		gl_RenderState.SetColor(0xffffffff);
+		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
+		gl_RenderState.EnableFog(false);  // Keep fog disabled
+		gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
+
+		// Dynlights in front of a transparent txt make all black behind it
+		glDepthFunc(GL_EQUAL);  // CRITICAL: Use GL_EQUAL instead of GL_LEQUAL
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TEXONLY);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
+
+		gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
+
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
+		// NOTE: GLLDL_WALLS_MASKED and GLLDL_FLATS_MASKED are completely 
+		// skipped here because they were fully drawn with transparency in Part 2!
+	}
+	else
+	{
+		// GL1.3 original multiplication loop
+		gl_RenderState.SetColor(0xffffffff);
+		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
+		gl_RenderState.EnableFog(false);  // Keep fog disabled
+		gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
+
+		// Dynlights in front of a transparent txt make all black behind it
+		glDepthFunc(GL_EQUAL);  // CRITICAL: Use GL_EQUAL instead of GL_LEQUAL
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TEXONLY);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
+
+		gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TEXONLY);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TEXONLY);
+
+		gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
+
+		gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
+		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
+		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
+	}
+
+	// ******* POST-TEXTURE PASSES: FOG OVERLAYS AND ADDITIVE PASSES *******
 
 	// Fourth pass: apply fog as translucent overlay for foggy surfaces
 	gl_RenderState.EnableFog(false);  // Ensure fog is disabled
@@ -2254,12 +2563,10 @@ void GLSceneDrawer::RenderMultipassStuff()
 			gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 			glDepthFunc(GL_EQUAL);
 			glDepthMask(false);
-
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
-
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);

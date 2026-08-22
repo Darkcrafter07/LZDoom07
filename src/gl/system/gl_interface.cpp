@@ -20,7 +20,7 @@
 //--------------------------------------------------------------------------
 //
 /*
-** r_opengl.cpp
+** gl_interface.cpp
 **
 ** OpenGL system interface
 **
@@ -158,10 +158,8 @@ void gl_LoadExtensions()
 	const char *version = Args->CheckValue("-glversion");
 	realglversion = strtod(glversion, NULL);
 
-	//if (version == NULL)
-	//{
-	//	version = glversion;
-	//}
+	// command-line parameter to force GL1.1 instead of 1.3+
+	bool forceGL11Param = Args->CheckParm("-forcegl1dot1") != 0;
 
 	if (version == NULL)
 	{
@@ -224,19 +222,61 @@ void gl_LoadExtensions()
 			Printf("At least GL1.3 is needed - GPU made after year 2003 AD but I WARNED YOU");
 		}
 
+		//	// Check if OpenGL version is below 2.0 (OpenGL 1.x)
+		//if (gl_version < 2.0f)
+		//{
+		//	gl.gl1path = true;
+		//	gl.legacyMode = true;
+		//	gl.lightmethod = LM_LEGACY;  // Use fixed-function lighting
+		//	gl.buffermethod = BM_LEGACY; // Use immediate mode rendering
+		//	gl.glslversion = 0;          // No shaders in OpenGL 1.x
+		//	gl.flags |= RFL_NO_CLIP_PLANES; // Disable clip planes (not supported in GL1)
+		//	Printf("GL1 npot - to reduce blurriness, go vid-options -> txt hires upscale\n");
+		//}
+
 		// Check if OpenGL version is below 2.0 (OpenGL 1.x)
-		if (gl_version < 2.0f)
+		if (gl_version < 2.0f || forceGL11Param)
 		{
 			gl.gl1path = true;
 			gl.legacyMode = true;
-			gl.lightmethod = LM_LEGACY;  // Use fixed-function lighting
-			gl.buffermethod = BM_LEGACY; // Use immediate mode rendering
-			gl.glslversion = 0;          // No shaders in OpenGL 1.x
+			gl.lightmethod = LM_LEGACY;     // Use fixed-function lighting
+			gl.buffermethod = BM_LEGACY;    // Use immediate mode rendering
+			gl.glslversion = 0;             // No shaders in OpenGL 1.x
 			gl.flags |= RFL_NO_CLIP_PLANES; // Disable clip planes (not supported in GL1)
+
+			// Hard override via explicit command line user request
+			if (forceGL11Param)
+			{
+				gl_version = 1.1f; // Force baseline version profile to prevent 1.3+ leaks
+			}
+
+			// FLEXIBLE INTERFACE CHECK BETWEEN PURE GL 1.1 AND GL 1.3+
+			const char* extensions = (const char*)glGetString(GL_EXTENSIONS);
+
+			// Check hardware capabilities based on clamped version
+			bool hasCombineSupport = (gl_version >= 1.3f) ||
+				(extensions && strstr(extensions, "GL_ARB_texture_env_combine") != nullptr);
+
+			if (!hasCombineSupport || forceGL11Param)
+			{
+				gl.gl1_v1dot1 = true;  // Activate GL1.1 blending
+				if (forceGL11Param)
+					Printf("Forcing OpenGL 1.1 mode by user command-line request -forcegl1dot1\n");
+				else
+					Printf("Falling back to OpenGL 1.1 mode (NO GL1.3 support)\n");
+			}
+			else
+			{
+				gl.gl1_v1dot1 = false; // Hardware supports 1.3+ features
+				Printf("OpenGL 1.3+ texture combination extensions detected\n");
+			}
+
 			Printf("GL1 npot - to reduce blurriness, go vid-options -> txt hires upscale\n");
 		}
-		// Check if OpenGL version is below 3.0 (OpenGL 2.0)
 
+
+
+		// Check if OpenGL version is below 3.0 (OpenGL 2.0)
 		else
 		{
 			// Modern OpenGL path (unchanged)
@@ -253,39 +293,61 @@ void gl_LoadExtensions()
 			}
 
 			// The minimum requirement for the modern render path is GL 3.3.
-			float minmodernpath = 3.3f;
-			if (gl_riskymodernpath)
-				minmodernpath = 3.1f;
+			float                   minmodernpath = 3.3f;
+			if (gl_riskymodernpath) minmodernpath = 3.1f;
 
 			// 1. CHECK FOR GL 3.x MODERN PATH
-			if ((gl_version < minmodernpath && (currentrenderer == 1)) || gl_version < 3.0f)
+			if ((gl_version < minmodernpath && (currentrenderer == 1)) || gl_version < 3.0f || forceGL11Param)
 			{
 				// Logic flow:
-				// If gl_version is 2.0 -> this triggers.
+				// If gl_version is 2.0 -> this triggers
 				// If gl_version is 1.5 -> this triggers (but was caught by the outer if, unless -glversion 2 is forced).
 
 				// We need to distinguish between 2.0 and 1.5 here.
-				if (gl_version < 2.0f)
+				if (gl_version < 2.0f || forceGL11Param)
 				{
-					// --- GL 1.x ---
+					//-- GL 1.x --
 					gl.gl1path = true;
 					gl.legacyMode = true;
 					gl.lightmethod = LM_LEGACY;
 					gl.buffermethod = BM_LEGACY;
 					gl.glslversion = 0;
 					gl.flags |= RFL_NO_CLIP_PLANES;
-					Printf("No GL2 support, falling back to GL1");
+
+					// Force baseline profile version if explicit flag is passed
+					if (forceGL11Param)
+					{
+						gl_version = 1.1f;
+					}
+
+					// Verify if 1.3 features are exposed under this requested glversion context
+					const char* extensions = (const char*)glGetString(GL_EXTENSIONS);
+					bool hasCombineSupport = (gl_version >= 1.3f) ||
+						(extensions && strstr(extensions, "GL_ARB_texture_env_combine") != nullptr);
+
+					if (!hasCombineSupport || forceGL11Param)
+					{
+						gl.gl1_v1dot1 = true; // Securely force pure 1.1 pipeline path and keep our fixes active
+						Printf("No GL 1.3+ combination support available or forced pure 1.1 mode\n");
+					}
+					else
+					{
+						gl.gl1_v1dot1 = false; // Fallback to full native 1.3 logic if hardware permits
+						Printf("Forced GL 1.x runtime context initialized with active 1.3 capabilities\n");
+					}
+
+					Printf("No GL2 support, falling back to GL1\n");
 				}
 				else
 				{
-					// --- GL 2.x
+					//-- GL 2.x --
 					gl.gl1path = false;
 					gl.legacyMode = true;
 					gl.lightmethod = LM_LEGACY;
 					gl.buffermethod = BM_LEGACY;
 					gl.glslversion = 0;
 					gl.flags |= RFL_NO_CLIP_PLANES;
-					Printf("GL2.x detected");
+					Printf("GL2.x detected\n");
 				}
 			}
 			// 2. CHECK FOR GL 3.1+ MODERN PATH
