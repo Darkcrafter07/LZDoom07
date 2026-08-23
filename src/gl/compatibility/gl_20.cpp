@@ -21,48 +21,60 @@
 //--------------------------------------------------------------------------
 //
 
-//gl_20.cpp
-//Fallback code for ancient hardware
-//
-//LZDoom 3.88b (GZDoom 3.3 fork) required at least GL2 card
-//GL1 support was added in LZDoom07 mainly by editing gl_postprocessstate.cpp,
-//by writing a special conversion struct:
-//
-//	// Maps blend modes to a single (Src, Dest) pair required by glBlendFunc (GL1.x)
-//struct GL1BlendFuncEntry
-//{
-//	int blendSrcRgb;
-//	int blendDestRgb;
-//	int mapSrcRgb;    // The blendSrcRgb  we are looking up
-//	int mapDestRgb;   // The blendDestRgb we are looking up
-//};
-//
+// gl_20.cpp
+// *** Fallback code for ancient hardware.
+// This file collects everything larger that is only needed for
+// OpenGL v1.1 is required (1997 cards?), the same file for GL2x path.
+// The difference GL2 makes is no blurry textures thanks to NPOT support.
+// 
+// *** Initially, it's a GL1.3 implementation made by Graf Zahl (or somebody else),
+// that was wrapped around a GL2 (thus it required GL2 surprisingly).
+// That's why LZDoom 3.88b (GZDoom 3.3 fork) required at least GL2 card
+// GL1 support was added in LZDoom07 mainly by editing gl_postprocessstate.cpp,
+// by writing a special conversion struct:
+// 
+// 	// Maps blend modes to a single (Src, Dest) pair required by 
+//                                             glBlendFunc (GL1.x)
+// struct GL1BlendFuncEntry
+// {
+// 	int blendSrcRgb;
+// 	int blendDestRgb;
+// 	int mapSrcRgb;    // The blendSrcRgb  we are looking up
+// 	int mapDestRgb;   // The blendDestRgb we are looking up
+// };
+// 
 // ...then npot support was added by resizing all npot textures
 // to the square ones via bilinear interpolation
 // but there must be some other better, yet undiscovered ways
 //
-//This file collects everything larger that is only needed for
-//OpenGL v1.1 is required (1997 cards?), the same file for GL2x path.
-//The difference GL2 makes is no blurry textures thanks to NPOT support.
-
-//================================================================================
-//TECHNICAL DOCUMENTATION: OPENGL 1.1 COMPATIBILITY FALLBACK BACKPORT
-//Author: Darkcrafter07
-//Date: August 22, 2026
-// GL1.1 MODE IS UNTESTED ON REAL HARDWARE! ONLY GL1.3 IS TESTED!
-//================================================================================
 //
-//1. OVERVIEW
-//--------------------------------------------------------------------------------
-//This documentation outlines the structural implementation of the pure OpenGL 1.1 
-//compatibility pipeline fallback path. While the engine was originally designed 
-//around fixed-function OpenGL 1.3+ specifications, this legacy backport provides 
-//some rendering support for older hardware chipsets lacking modern texture 
-//environment extensions, completely eliminating critical rendering regressions.
 //
-//2. CORE HISTORICAL DIFFERENCES: GL 1.3 vs GL 1.1
-//--------------------------------------------------------------------------------
-//* OpenGL 1.3+ Native Path (Original Architecture):
+// *** LZDoom07 is a fork that took it way beyond original capabilites in 2026:
+// - dynlights are now rendered properly even to the foggy surfaces;
+// - dynlights rendered even on midtextures with binary transparency;
+// - TODO. Dynlights aren't rendered yet on transluscent surfaces
+//  (idea to render them just like sprites, that should work);
+//
+// The software renderer alike camera glow is rendered by spawning
+// a special dynlight handled by these files:
+// - zscript.zscamglow, camglow_handler.zs, 
+// - camglow_holder.zs, camglow_light.zs;
+// - 2 modes of light texture blob projection: standard (straight) and radial
+//   they're activated in display options -> fog mode (gl_fogmode);
+// - brightmaps that are first converted to colored brightmaps by
+//   multiplying bw brightmaps by parent textures in gl_material.cpp
+//   and also their alpha cut accordingly. The implementation is spread
+//   across gl_sprites.cpp, gl_scene.cpp, gl_models.cpp. TODO:
+//   A better idea should be just cut their alpha according to parent texture
+//   and according to the brightmap brightness, so the brighter pixel is
+//   less transparent it gets. Then draw it on top of parent sprites/surfaces.
+//   That should look better but a dynlight must also be taken into account.
+//
+//
+//
+// Then GL1.1 mode was added and a subject for improvements. HENCE:
+//         ---======= GL1.1 IMPLEMENTATION INFO =======---
+// *** OpenGL 1.3+ Native Path (Original Architecture):
 //  Utilizes the 'GL_COMBINE' texture environment modes (ARB_texture_env_combine). 
 //  This allows the texture hardware unit to act as a discrete pixel pipeline, 
 //  splitting processing behavior per-channel. For masked geometry (grates,windows) 
@@ -71,16 +83,15 @@
 //  the Alpha channel to cleanly carve out transparency transparency thresholds via
 //  the hardware Depth Buffer.
 //
-//* OpenGL 1.1 Fallback Path (Added by Darkcrafter07):
+// *** OpenGL 1.1 Fallback Path:
 //  Lacks 'GL_COMBINE' features entirely. The texture environment unit is restricted 
 //  to basic linear 'GL_MODULATE' (multiplication) or 'GL_REPLACE' operations across 
 //  the entire pixel fragment simultaneously. Splitting individual color and alpha 
 //  channel behavior inside a single texture pass,
 //  which is physically unsupported by the hardware.
 //
-//3. RESOLVED ARCHITECTURAL ISSUES & FALLBACK IMPLEMENTATION
-//--------------------------------------------------------------------------------
-//* Masked Midtextures (_MASKED Walls & Flats):
+// *** RESOLVED ARCHITECTURAL ISSUES & FALLBACK IMPLEMENTATION
+// * Masked Midtextures (_MASKED Walls & Flats):
 //  - Problem: In raw OpenGL 1.1, the lack of combine states forced 'TM_MASK' 
 //    to drop down to standard 'GL_MODULATE'. During multi-pass rendering, 
 //    this caused the grate textures to be multiplied by the framebuffer multiple 
@@ -95,7 +106,7 @@
 //    securing linear light curves, preventing blowout flashes, 
 //    and ensuring 100% perfect brightness from any distance.
 //
-//* Translucency & Soft Alpha Blending (Marker 99):
+// * Translucency & Soft Alpha Blending (Marker 99):
 //  - Problem: Smooth alpha blending gradients on projectiles, particles, 
 //    and explosions regularly vanished from the screen or collapsed into 
 //    jagged binary edges because the engine's global Alpha Testing thresholds 
@@ -708,7 +719,9 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// The whole thing is done with a zscript spawning a special dynlight on players
 	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
 	// *Walls: expand the dynlight blob texture (gllight.png) vertically
-	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
+	// *Flats: expand it horizontaly, fix anti-rotation bug on North-South slanted 
+	// slopes by fully syncing the inverted reverse sine phase across all sloped 
+	// rendering contexts. Maximizes perfect synchronized widescreen ellipse rotation
 	//
 	// ANTI-FLIP COMPASS BUGFIX : Reconstruct the 'up' vector to be a strict 
 	// world-space vertical axis {0, 1, 0}.
@@ -946,32 +959,21 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// *Walls: expand the dynlight blob texture (gllight.png) vertically
 	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
 	//
-	// MASTER UTMOST SOLUTION: FIXED-AXIS 3D RODRIGUES ROTATION WITH REVERSE NET COMPASS
-	// Rotates strictly WITHIN the slope's own geometric 3D plane, and inverts the sine
-	// phase to perfectly cancel out hardware OpenGL fixed-function projection mirroring.
+	// THE FLATS IMPLEMENTATION GOES BELOW:
+	//
+	// TWO-WAY SLOPE & CEILING ALIGNER
+	// FIX CEILING FLIP BUG: Automatically detect if we are rendering a sloped
+	// 3DFLOOR CEILING (fn.Y < 0) and invert the rotation axis vectors inside
+	// the Rodrigues formula.
+	// Makes software ellipse rotation on BOTH floors and ceilings synchronized.
+	// ==================================================================
 	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 	{
-		//	// This network check is not necessary but why not?
-		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
-		//{
-		//	// EXTRACT THE OWNER VIA MASTER POINTER NATIVELY
-		//	AActor *rawPlayerOwner = light->target.pp->master.pp;
-		//
-		//	// NETWORK CLIENT-SIDE FILTER: If the rendering camera belongs to someone else,
-		//	// or the light has LF_DONTLIGHTMAP flag, completely wipe this light pass from the GPU!
-		//	if ((light->IsDontLightOthers() && rawPlayerOwner != nullptr && rawPlayerOwner != r_viewpoint.camera) || light->IsDontLightMap())
-		//	{
-		//		return false;
-		//	}
-		//}
-
 		// 1. Fetch current player camera horizontal viewport orientation matrices
-		float s = (float)r_viewpoint.Sin;
-		float c = (float)r_viewpoint.Cos;
+		float s = (float)r_viewpoint.Sin; float c = (float)r_viewpoint.Cos;
 
 		// 2. Save the engine's pre-aligned unit-length baseline vectors
-		FVector3 r_old = right;
-		FVector3 u_old = up;
+		FVector3 r_old = right; FVector3 u_old = up;
 
 		// Extract normal components (3D rotation axis)
 		float nx = fn.X; float ny = fn.Y; float nz = fn.Z;
@@ -981,15 +983,30 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 		if (isSlope)
 		{
-			// REVERSE ROTATION DIRECTION FOR SLOPE COMPENSATOR
-			// Invert the sign of the sine wave (s = -s) to force the Rodrigues
-			// matrix to spin in the exact opposite direction, zeroing out hardware drift
+			// CEILING NORMAL INVERSION SECURITY LAYER
+			// If fn.Y is negative, it means the GPU is rendering a CEILING slope from below
+			// Invert the rotation axes registers (nx, ny, nz) to force the Rodrigues matrix 
+			// to spin in the exact correct direction, completely zeroing out ceiling mirror bugs
+			if (ny < 0.0f) { nx = -nx; ny = -ny; nz = -nz; }
+
+			// Both slope contexts inside the fixed-function pipeline require an inverted 
+			// rotation matrix phase (revS = -s) to seamlessly cancel out the hardware drift mirroring
 			float revS = -s;
+			bool needAxisSwap = false;
 
-			// 3. EXECUTE REVERSE 3D RODRIGUES ROTATION FOR THE 'RIGHT' VECTOR OVER SLOPES
-			float r_dot = (r_old.X * nx) + (r_old.Y * ny) + (r_old.Z * nz); // Dot Product (N . V)
+			if (fabsf(nx) > fabsf(nz))
+			{
+				// West-East slanted slopes
+				needAxisSwap = true; // Swap axes to force the spot broad sideways
+			}
+			else
+			{
+				// North-South slanted slopes
+				needAxisSwap = false; // Axes are already naturally aligned, keep standard layout
+			}
 
-			// Cross Product: r_cross = N x V
+			// 3. Execute reverse 3D Rodrigues rotation for the "right" vector over slopes
+			float r_dot = (r_old.X * nx) + (r_old.Y * ny) + (r_old.Z * nz);
 			float r_crossX = (ny * r_old.Z) - (nz * r_old.Y);
 			float r_crossY = (nz * r_old.X) - (nx * r_old.Z);
 			float r_crossZ = (nx * r_old.Y) - (ny * r_old.X);
@@ -998,10 +1015,8 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 			right.Y = (r_old.Y * c) + (r_crossY * revS) + (ny * r_dot * (1.0f - c));
 			right.Z = (r_old.Z * c) + (r_crossZ * revS) + (nz * r_dot * (1.0f - c));
 
-			// 4. EXECUTE REVERSE 3D RODRIGUES ROTATION FOR THE 'UP' VECTOR OVER SLOPES IDENTICALLY
-			float u_dot = (u_old.X * nx) + (u_old.Y * ny) + (u_old.Z * nz); // Dot Product (N . V)
-
-			// Cross Product: u_cross = N x V
+			// 3. Execute reverse 3D Rodrigues rotation for the "up" vector over slopes identically
+			float u_dot = (u_old.X * nx) + (u_old.Y * ny) + (u_old.Z * nz);
 			float u_crossX = (ny * u_old.Z) - (nz * u_old.Y);
 			float u_crossY = (nz * u_old.X) - (nx * u_old.Z);
 			float u_crossZ = (nx * u_old.Y) - (ny * u_old.X);
@@ -1010,14 +1025,17 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 			up.Y = (u_old.Y * c) + (u_crossY * revS) + (ny * u_dot * (1.0f - c));
 			up.Z = (u_old.Z * c) + (u_crossZ * revS) + (nz * u_dot * (1.0f - c));
 
-			// Perform 90-degree coordinate swap to make it broad sideways
-			FVector3 tempRight = right;
-			right = up;
-			up = tempRight;
+			// Apply the dynamic axis swap only when the West-East slope normal dictates it
+			if (needAxisSwap)
+			{
+				FVector3 tempRight = right;
+				right = up;
+				up = tempRight;
+			}
 		}
 		else
 		{
-			// FLAT (NON-SLOPE) PATH
+			// Flat non-slope flats path
 			right.X = (r_old.X * c) - (r_old.Z * s);
 			right.Z = (r_old.X * s) + (r_old.Z * c);
 
@@ -1025,9 +1043,17 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 			up.Z = (u_old.X * s) + (u_old.Z * c);
 		}
 
-		// 5. LONG-RANGE SOFTWARE PROJECT MULTIPLIERS
-		right *= 1.0f; // Sideways width aspect
-		up *= 0.36f;   // Longitudinal (horizontal) stretch far away from camera
+		// 5. Long-range software ligt blob texture projection
+		right *= 1.0f; // Sideways width aspect ratio stays original
+
+		// PERSPECTIVE SLOPE COMPENSATION (Your custom optimized multiplier set)
+		float slopePerspectiveCorrection = 0.75f;
+		if (isSlope && fabsf(ny) > 0.01f)
+		{
+			slopePerspectiveCorrection = 0.75f * fabsf(ny); // Use pre-inverted 'ny' register
+		}
+
+		up *= slopePerspectiveCorrection; // Deep longitudinal stretch far away from player eyes
 	}
 	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 
@@ -1163,7 +1189,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 }
 
 // Way less advanced code:
-//bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
+//bool gl_SetupLightWall_old(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
 //{
 //	FVector3 fn, pos;
 //
@@ -1207,7 +1233,9 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	// The whole thing is done with a zscript spawning a special dynlight on players
 //	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
 //	// *Walls: expand the dynlight blob texture (gllight.png) vertically
-//	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
+//	// *Flats: expand it horizontaly, fix anti-rotation bug on North-South slanted 
+//	// slopes by fully syncing the inverted reverse sine phase across all sloped 
+//	// rendering contexts. Maximizes perfect synchronized widescreen ellipse rotation
 //	//
 //	// ANTI-FLIP COMPASS BUGFIX : Reconstruct the 'up' vector to be a strict 
 //	// world-space vertical axis {0, 1, 0}.
@@ -1262,7 +1290,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //
 //		// 4. Dispatch final non-linear anamorphic power scale factor
 //		right *= dynamicHorizontalScale;  // Apply adaptive width scaling
-//		up *= 0.1f;                  // Vertical expansion - massive up the whole wall height
+//		up *= 0.32f;                  // Vertical expansion - massive up the whole wall height
 //	}
 //	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 //
@@ -1324,7 +1352,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	return true;
 //}
 //
-//bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
+//bool gl_SetupLightFlat_old(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
 //{
 //	// we need to get flats darker, that's why we have a separate gl_SetupLightFlat function
 //
@@ -1371,32 +1399,21 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	// *Walls: expand the dynlight blob texture (gllight.png) vertically
 //	// *Flats: expand it horizontaly, turn it 90d and spin along the view direction
 //	//
-//	// MASTER UTMOST SOLUTION: FIXED-AXIS 3D RODRIGUES ROTATION WITH REVERSE NET COMPASS
-//	// Rotates strictly WITHIN the slope's own geometric 3D plane, and inverts the sine
-//	// phase to perfectly cancel out hardware OpenGL fixed-function projection mirroring.
+//	// THE FLATS IMPLEMENTATION GOES BELOW:
+//	//
+//	// TWO-WAY SLOPE & CEILING ALIGNER
+//	// FIX CEILING FLIP BUG: Automatically detect if we are rendering a sloped
+//	// 3DFLOOR CEILING (fn.Y < 0) and invert the rotation axis vectors inside
+//	// the Rodrigues formula.
+//	// Makes software ellipse rotation on BOTH floors and ceilings synchronized.
+//	// ==================================================================
 //	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 //	{
-//		//	// This network check is not necessary but why not?
-//		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
-//		//{
-//		//	// EXTRACT THE OWNER VIA MASTER POINTER NATIVELY
-//		//	AActor *rawPlayerOwner = light->target.pp->master.pp;
-//		//
-//		//	// NETWORK CLIENT-SIDE FILTER: If the rendering camera belongs to someone else,
-//		//	// or the light has LF_DONTLIGHTMAP flag, completely wipe this light pass from the GPU!
-//		//	if ((light->IsDontLightOthers() && rawPlayerOwner != nullptr && rawPlayerOwner != r_viewpoint.camera) || light->IsDontLightMap())
-//		//	{
-//		//		return false;
-//		//	}
-//		//}
-//
 //		// 1. Fetch current player camera horizontal viewport orientation matrices
-//		float s = (float)r_viewpoint.Sin;
-//		float c = (float)r_viewpoint.Cos;
+//		float s = (float)r_viewpoint.Sin; float c = (float)r_viewpoint.Cos;
 //
 //		// 2. Save the engine's pre-aligned unit-length baseline vectors
-//		FVector3 r_old = right;
-//		FVector3 u_old = up;
+//		FVector3 r_old = right; FVector3 u_old = up;
 //
 //		// Extract normal components (3D rotation axis)
 //		float nx = fn.X; float ny = fn.Y; float nz = fn.Z;
@@ -1406,15 +1423,30 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //
 //		if (isSlope)
 //		{
-//			// REVERSE ROTATION DIRECTION FOR SLOPE COMPENSATOR
-//			// Invert the sign of the sine wave (s = -s) to force the Rodrigues
-//			// matrix to spin in the exact opposite direction, zeroing out hardware drift
+//			// CEILING NORMAL INVERSION SECURITY LAYER
+//			// If fn.Y is negative, it means the GPU is rendering a CEILING slope from below
+//			// Invert the rotation axes registers (nx, ny, nz) to force the Rodrigues matrix 
+//			// to spin in the exact correct direction, completely zeroing out ceiling mirror bugs
+//			if (ny < 0.0f) { nx = -nx; ny = -ny; nz = -nz; }
+//
+//			// Both slope contexts inside the fixed-function pipeline require an inverted 
+//			// rotation matrix phase (revS = -s) to seamlessly cancel out the hardware drift mirroring
 //			float revS = -s;
+//			bool needAxisSwap = false;
 //
-//			// 3. EXECUTE REVERSE 3D RODRIGUES ROTATION FOR THE 'RIGHT' VECTOR OVER SLOPES
-//			float r_dot = (r_old.X * nx) + (r_old.Y * ny) + (r_old.Z * nz); // Dot Product (N . V)
+//			if (fabsf(nx) > fabsf(nz))
+//			{
+//				// West-East slanted slopes
+//				needAxisSwap = true; // Swap axes to force the spot broad sideways
+//			}
+//			else
+//			{
+//				// North-South slanted slopes
+//				needAxisSwap = false; // Axes are already naturally aligned, keep standard layout
+//			}
 //
-//			// Cross Product: r_cross = N x V
+//			// 3. Execute reverse 3D Rodrigues rotation for the "right" vector over slopes
+//			float r_dot = (r_old.X * nx) + (r_old.Y * ny) + (r_old.Z * nz);
 //			float r_crossX = (ny * r_old.Z) - (nz * r_old.Y);
 //			float r_crossY = (nz * r_old.X) - (nx * r_old.Z);
 //			float r_crossZ = (nx * r_old.Y) - (ny * r_old.X);
@@ -1423,10 +1455,8 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //			right.Y = (r_old.Y * c) + (r_crossY * revS) + (ny * r_dot * (1.0f - c));
 //			right.Z = (r_old.Z * c) + (r_crossZ * revS) + (nz * r_dot * (1.0f - c));
 //
-//			// 4. EXECUTE REVERSE 3D RODRIGUES ROTATION FOR THE 'UP' VECTOR OVER SLOPES IDENTICALLY
-//			float u_dot = (u_old.X * nx) + (u_old.Y * ny) + (u_old.Z * nz); // Dot Product (N . V)
-//
-//			// Cross Product: u_cross = N x V
+//			// 3. Execute reverse 3D Rodrigues rotation for the "up" vector over slopes identically
+//			float u_dot = (u_old.X * nx) + (u_old.Y * ny) + (u_old.Z * nz);
 //			float u_crossX = (ny * u_old.Z) - (nz * u_old.Y);
 //			float u_crossY = (nz * u_old.X) - (nx * u_old.Z);
 //			float u_crossZ = (nx * u_old.Y) - (ny * u_old.X);
@@ -1435,14 +1465,17 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //			up.Y = (u_old.Y * c) + (u_crossY * revS) + (ny * u_dot * (1.0f - c));
 //			up.Z = (u_old.Z * c) + (u_crossZ * revS) + (nz * u_dot * (1.0f - c));
 //
-//			// Perform 90-degree coordinate swap to make it broad sideways
-//			FVector3 tempRight = right;
-//			right = up;
-//			up = tempRight;
+//			// Apply the dynamic axis swap only when the West-East slope normal dictates it
+//			if (needAxisSwap)
+//			{
+//				FVector3 tempRight = right;
+//				right = up;
+//				up = tempRight;
+//			}
 //		}
 //		else
 //		{
-//			// FLAT (NON-SLOPE) PATH
+//			// Flat non-slope flats path
 //			right.X = (r_old.X * c) - (r_old.Z * s);
 //			right.Z = (r_old.X * s) + (r_old.Z * c);
 //
@@ -1450,9 +1483,17 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //			up.Z = (u_old.X * s) + (u_old.Z * c);
 //		}
 //
-//		// 5. LONG-RANGE SOFTWARE PROJECT MULTIPLIERS
-//		right *= 1.0f; // Sideways width aspect
-//		up *= 0.36f;   // Longitudinal (horizontal) stretch far away from camera
+//		// 5. Long-range software ligt blob texture projection
+//		right *= 1.0f; // Sideways width aspect ratio stays original
+//
+//		// PERSPECTIVE SLOPE COMPENSATION (Your custom optimized multiplier set)
+//		float slopePerspectiveCorrection = 0.75f;
+//		if (isSlope && fabsf(ny) > 0.01f)
+//		{
+//			slopePerspectiveCorrection = 0.75f * fabsf(ny); // Use pre-inverted 'ny' register
+//		}
+//
+//		up *= slopePerspectiveCorrection; // Deep longitudinal stretch far away from player eyes
 //	}
 //	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 //
