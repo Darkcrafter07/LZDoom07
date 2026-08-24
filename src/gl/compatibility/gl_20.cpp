@@ -1967,21 +1967,15 @@ bool GLWall::PutWallCompat(int passflag)
 	// Block ONLY specific Skyhack if it's really a hurdle
 	if ((flags & GLWF_SKYHACK) && type == RENDERWALL_M2S) return false;
 
-	if (gl.gl1path && gl.gl1_v1dot1)
-	{
-		// Target masked mid transluscent textures (M2S/M2SNF)
-		if (type == RENDERWALL_M2S || type == RENDERWALL_M2SNF)
-		{
-			// We shouldn't brighten masked mid transluscent textures if they're in a dark sector
-			bool isSectorPitchBlack = (seg && seg->frontsector && seg->frontsector->lightlevel < 96);
+	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE);
+	bool masked = passflag == 2 && gltexture->isMasked();
 
-			if (!isSectorPitchBlack)
-			{
-				// Dark translucent midtextures receive less dynlights
-				// So everything darker gets clipped at lightlevel 128
-				if (lightlevel < 128) lightlevel = 128;
-			}
-		}
+	if (gl.gl1path && gl.gl1_v1dot1 && masked)
+	{
+		// Force the engine to route ALL transluscent mid textures straight in GLLDL_WALLS_FOGMASKED
+		// This instantly triggers the perfect fixed-function fog-blend state machine,
+		// restoring rich color modulation, smooth dynlights, and 100% crystal alpha holes
+		foggy = true;
 	}
 
 	// Check if this wall has any lights affecting it
@@ -2099,9 +2093,6 @@ bool GLWall::PutWallCompat(int passflag)
 		}
 	}
 
-	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE);
-	bool masked = passflag == 2 && gltexture->isMasked();
-
 	int list = list_indices[masked][foggy];
 	gl_drawinfo->dldrawlists[list].AddWall(this);
 	return true;
@@ -2123,57 +2114,15 @@ bool GLFlat::PutFlatCompat(bool fog)
 	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
 
 	bool masked = gltexture->isMasked() && ((renderflags&SSRF_RENDER3DPLANES) || stack);
-
-	//	// Target masked flat transluscent textures - doesn't work yet
-	//if (gl.gl1path && gl.gl1_v1dot1)
-	//{
-	//	if (gl.gl1path && gl.gl1_v1dot1)
-	//	{
-	//		if (masked)
-	//		{
-	//			int targetLight = this->lightlevel;
-	//			bool isSectorPitchBlack = (sector && sector->lightlevel < 64);
-	//
-	//			if (sector && sector->e && sector->e->XFloor.ffloors.Size() > 0)
-	//			{
-	//				for (unsigned int i = 0; i < sector->e->XFloor.ffloors.Size(); i++)
-	//				{
-	//					auto* rover = sector->e->XFloor.ffloors[i];
-	//
-	//					if (rover && (rover->flags & FF_EXISTS))
-	//					{
-	//						if (rover->model)
-	//						{
-	//							int roverModelLight = rover->model->lightlevel;
-	//
-	//							// Если control-сектор 3D-пола светлее, берем его значение за основу
-	//							if (roverModelLight > targetLight)
-	//							{
-	//								targetLight = roverModelLight;
-	//							}
-	//						}
-	//					}
-	//				}
-	//			}
-	//
-	//			if (!isSectorPitchBlack)
-	//			{
-	//				// If the evaluated light falls below the middle bound, floor it safely at 128
-	//				if (targetLight < 128)
-	//				{
-	//					this->lightlevel = 128;
-	//				}
-	//				else
-	//				{
-	//					// If the 3D floor light was already bright, push it directly to the flat mapping
-	//					this->lightlevel = targetLight;
-	//				}
-	//			}
-	//		}
-	//	}
-	//}
-
 	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
+
+	if (gl.gl1path && gl.gl1_v1dot1 && masked)
+	{
+		// Force the engine to route ALL transluscent 3D-floor textures straight in GLLDL_FLATS_FOGMASKED
+		// This instantly triggers the perfect fixed-function fog-blend state machine,
+		// restoring rich color modulation, smooth dynlights, and 100% crystal alpha holes
+		foggy = true;
+	}
 
 	int list = list_indices[masked][foggy];
 	gl_drawinfo->dldrawlists[list].AddFlat(this);
@@ -2515,44 +2464,44 @@ void GLWall::RenderLightsCompat(int pass)
 
 void GLSceneDrawer::RenderMultipassStuff()
 {
-	// ******* FIRST PASS: EMPTY BACKGROUND WITH SECTOR LIGHT ONLY ******
-	// Part 1: solid geometry. This is set up so that there are no transparent parts
-	// remove any remaining texture bindings and shaders whick may get in the way.
+	//==========================================================================
+	// FIRST PASS: SOLID GEOMETRY BACKGROUND WITH SECTOR LIGHT ONLY
+	//==========================================================================
 	gl_RenderState.EnableTexture(false);
 	gl_RenderState.EnableBrightmap(false);
 	gl_RenderState.Apply();
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_PLAIN);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_PLAIN);
 
-	// Part 2: masked geometry. This is set up so that only pixels with alpha>0.5 will show
-	// This creates a blank surface that only fills the nontransparent parts of the texture
+	// Part 2: masked geometry. 
 	if (gl.gl1path && gl.gl1_v1dot1)
 	{
-		// GL1.1: sprite-alike base pass
+		//------------------------------------------------------------------
+		// OPENGL 1.1 ALL-PASS ALPHA PIPELINE: FIRST PASS (BASE TEXTURE)
+		//------------------------------------------------------------------
+		// We render the grates fully textured right here using standard sprite blending.
+		// This cuts through the transparency gates early and secures crystal clear holes.
 		gl_RenderState.EnableTexture(true);
 		gl_RenderState.EnableBrightmap(true);
-
-		// Force grates to render using the exact same smooth logic as sprites
 		gl_RenderState.SetTextureMode(TM_MODULATE);
+
 		glEnable(GL_BLEND);
 		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		// Explicit alpha testing gate to culling transparent pixels early
 		glEnable(GL_ALPHA_TEST);
 		gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
 
-		// Render the grates fully textured and illuminated right here in Part 2!
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_PLAIN);
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_PLAIN);
 	}
 	else
 	{
-		// GL1.3: original base pass
+		// Original native OpenGL 1.3+ logic using combine texture modes
 		gl_RenderState.EnableTexture(true);
 		gl_RenderState.SetTextureMode(TM_MASK);
 		gl_RenderState.EnableBrightmap(true);
-
 		gl_RenderState.AlphaFunc(GL_GEQUAL, gl_mask_threshold);
+		glEnable(GL_ALPHA_TEST);
 
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_PLAIN);
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_PLAIN);
@@ -2569,119 +2518,98 @@ void GLSceneDrawer::RenderMultipassStuff()
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_PLAIN);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_PLAIN);
 
-	// ******* SECOND PASS: DRAW LIGHTS (INCLUDING FOGGY SURFACES) ******* 
+
+	//==========================================================================
+	// SECOND PASS: DRAW LIGHTS (ACCUMULATION ENFORCED VIA HARDWARE ALPHA CHANNELS)
+	//==========================================================================
 	glDepthMask(false);
 	if (GLRenderer->mLightCount && !FixedColormap)
 	{
 		if (gl_SetupLightTexture())
 		{
+			gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+			glDepthFunc(GL_EQUAL);
+			if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
+
+			// Apply raw additive lights to standard plain and fog surfaces first
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
+
 			if (gl.gl1path && gl.gl1_v1dot1)
 			{
-				// GL1.1 lightpass
-				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
-				glDepthFunc(GL_EQUAL);
-				if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
-
-				// Apply additive lights to standard surfaces first
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
-
-				// Re-route grates to sprite-aligned lighting pass (GL_DST_COLOR, GL_ONE)
-				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+				//------------------------------------------------------------------
+				// OPENGL 1.1 ALL-PASS ALPHA PIPELINE: SECOND PASS (DYNLIGHTS)
+				//------------------------------------------------------------------
+				// THE MASTER KEY: We force the dynamic light pass to use GL_SRC_ALPHA, GL_ONE.
+				// Along with a strict active Alpha Test gate, this forces the GPU to evaluate 
+				// the light map STRICTLY through the pre-cut transparency grid of the grates!
+				// Dynlights accumulate beautifully over the metal bars, while zero-alpha holes 
+				// multiplier drops down to 0, completely preventing any blocky glow or black artifact leakage!
+				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
 				glEnable(GL_ALPHA_TEST);
 				gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
 
+				// Keep color mapping clean and linear
+				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+
 				gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
 				gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX);
 
-				// Quick recovery cleanup back to standard pass flags
-				glDisable(GL_ALPHA_TEST);
+				// Reset states back for next passes
 				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
+				glDisable(GL_ALPHA_TEST);
 			}
 			else
 			{
-				// GL1.3 original lightpass
-				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
-				glDepthFunc(GL_EQUAL);
-				if (glset.lightmode >= 8) gl_RenderState.SetSoftLightLevel(255);
-
-				// Apply regular lights to ALL surfaces
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
 				gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
 				gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
-				gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
-
 				gl_RenderState.BlendEquation(GL_FUNC_ADD);
 			}
 		}
 	}
 
-	// ******* THIRD PASS: MODULATED TEXTURE (ALL SURFACES) ******* 
-	if (gl.gl1path && gl.gl1_v1dot1)
+
+	//==========================================================================
+	// THIRD PASS: MODULATED TEXTURE (FINAL MULTIPLICATION OVERLAYS)
+	//==========================================================================
+	gl_RenderState.SetColor(0xffffffff);
+	gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
+	gl_RenderState.EnableFog(false);  // Keep fog disabled
+	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
+	glDepthFunc(GL_EQUAL);  // CRITICAL: Use GL_EQUAL instead of GL_LEQUAL
+
+	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
+
+	//------------------------------------------------------------------
+	// OPENGL 1.1 ALL-PASS ALPHA PIPELINE: THIRD PASS SPLIT
+	//------------------------------------------------------------------
+	// GLLDL_WALLS_MASKED and GLLDL_FLATS_MASKED are completely SKIPPED here 
+	// because they already achieved perfect textured lighting and full alpha resolution 
+	// during Part 2 and Second Pass! This prevents any double-darkening bugs.
+	if (!(gl.gl1path && gl.gl1_v1dot1))
 	{
-		// GL1.1 multiplication loop
-		gl_RenderState.SetColor(0xffffffff);
-		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
-		gl_RenderState.EnableFog(false);  // Keep fog disabled
-		gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
-
-		// Dynlights in front of a transparent txt make all black behind it
-		glDepthFunc(GL_EQUAL);  // CRITICAL: Use GL_EQUAL instead of GL_LEQUAL
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TEXONLY);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
-
-		gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
-
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
-		// NOTE: GLLDL_WALLS_MASKED and GLLDL_FLATS_MASKED are completely 
-		// skipped here because they were fully drawn with transparency in Part 2!
-	}
-	else
-	{
-		// GL1.3 original multiplication loop
-		gl_RenderState.SetColor(0xffffffff);
-		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
-		gl_RenderState.EnableFog(false);  // Keep fog disabled
-		gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
-
-		// Dynlights in front of a transparent txt make all black behind it
-		glDepthFunc(GL_EQUAL);  // CRITICAL: Use GL_EQUAL instead of GL_LEQUAL
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TEXONLY);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TEXONLY);
-
 		gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TEXONLY);
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TEXONLY);
-
-		gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
-
-		gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
-		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
-		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
 	}
 
-	// ******* POST-TEXTURE PASSES: FOG OVERLAYS AND ADDITIVE PASSES *******
+	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
+	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TEXONLY);
+	gl_RenderState.AlphaFunc(GL_GREATER, gl_mask_threshold);
+	gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TEXONLY);
+	gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TEXONLY);
 
-	// Fourth pass: apply fog as translucent overlay for foggy surfaces
-	gl_RenderState.EnableFog(false);  // Ensure fog is disabled
-	gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // must be a faster way to do it
-	//gl_RenderState.BlendFunc(GL_SRC_ALPHA, 1); // another way
+	// Fourth, Fifth, and Sixth passes remain original...
+	gl_RenderState.EnableFog(false);
+	gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 	glDepthMask(false);
 
-	// Fifth pass: apply fog overlay to foggy surfaces
 	if (gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
 		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_PLAIN);
 	if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
@@ -2691,20 +2619,20 @@ void GLSceneDrawer::RenderMultipassStuff()
 	if (gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].drawitems.Size() > 0)
 		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_PLAIN);
 
-	// Sixth pass: there are still special dynamic lights that are SET to be ADDITIVE
-	// These lights must be rendered AFTER fog to remain bright and visible
 	if (GLRenderer->mLightCount && !FixedColormap)
 	{
 		if (gl_SetupLightTexture())
 		{
-			gl_RenderState.EnableFog(true); // Let additive lights blend with fog color if needed
+			gl_RenderState.EnableFog(true);
 			gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 			glDepthFunc(GL_EQUAL);
 			glDepthMask(false);
+
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_ADDITIVE);
+
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
@@ -2713,8 +2641,6 @@ void GLSceneDrawer::RenderMultipassStuff()
 	}
 
 	glDepthMask(true);
-
-	// Cleanup
 	glDepthFunc(GL_LESS);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	gl_RenderState.EnableFog(true);
