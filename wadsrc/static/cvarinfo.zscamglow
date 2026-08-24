@@ -21,7 +21,7 @@
 user color cl_camglow_plus_color = "CC CC CC";  // 1st dynlight color (true INTENSITY)
 
 // ---=== THE 1st light actual radius ===---
-user int cl_camglow_plus_intensity = 75;        // 1st dynlight RADIUS (NEAR-FIELD). Needs to be SHORT.
+user int cl_camglow_plus_intensity = 150;        // 1st dynlight RADIUS (NEAR-FIELD). Needs to be SHORT.
                                                 // to be like software renderer exponential light-peak.
 user float cl_camglow_plus_inner = 30.0;        // this works nice in GL1x/GL2x
 user float cl_camglow_plus_outer = 115.0;       // this works nice in GL1x/GL2x
@@ -31,7 +31,7 @@ user bool cl_camglow_plus_second_beam = true;   // spawn 2nd dynlight - (FAR-FIE
 
 // ---=== THE 2nd light settings ===---
 user float cl_camglow_plus_color_2_mult = 0.44; // 2nd dynlight color (true INTENSITY)
-user int cl_camglow_plus_intensity_2 = 190;     // 2nd light RADIUS (WHY IS IT called intensity in zdoom?)
+user int cl_camglow_plus_intensity_2 = 380;     // 2nd light RADIUS (WHY IS IT called intensity in zdoom?)
 user float cl_camglow_plus_inner_2 = 30.0;      // this works nice in GL1x/GL2x
 user float cl_camglow_plus_outer_2 = 115.0;     // this works nice in GL1x/GL2x
 user int cl_camglow_plus_location = 0;          // where it's mounted at (placed) relative to player body.

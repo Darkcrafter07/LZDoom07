@@ -22,14 +22,13 @@
 //
 
 // gl_20.cpp
-// *** Fallback code for ancient hardware.
-// This file collects everything larger that is only needed for
+// *** Fallback OpenGL rendering code for ancient hardware.
 // OpenGL v1.1 is required (1997 cards?), the same file for GL2x path.
 // The difference GL2 makes is no blurry textures thanks to NPOT support.
 // 
-// *** Initially, it's a GL1.3 implementation made by Graf Zahl (or somebody else),
+// *** Initially, it's a GL1.3 implement. made by Graf Zahl (or somebody else),
 // that was wrapped around a GL2 (thus it required GL2 surprisingly).
-// That's why LZDoom 3.88b (GZDoom 3.3 fork) required at least GL2 card
+// That's why LZDoom 3.88b (GZDoom 3.3 fork) required at least GL2 card.
 // GL1 support was added in LZDoom07 mainly by editing gl_postprocessstate.cpp,
 // by writing a special conversion struct:
 // 
@@ -57,8 +56,8 @@
 //
 // The software renderer alike camera glow is rendered by spawning
 // a special dynlight handled by these files:
-// - zscript.zscamglow, camglow_handler.zs, 
-// - camglow_holder.zs, camglow_light.zs;
+// - cvarinfo.zscamglow, zscript.zscamglow, zmapinfo.zscamglow,
+//   camglow_handler.zs, camglow_holder.zs, camglow_light.zs;
 // - 2 modes of light texture blob projection: standard (straight) and radial
 //   they're activated in display options -> fog mode (gl_fogmode);
 // - brightmaps that are first converted to colored brightmaps by
@@ -141,6 +140,9 @@ CVAR(Float, gl_legacy_dynlight_hue_shift, 22.4f, CVAR_ARCHIVE) // Shift dynamic 
 CVAR(Bool, gl_legacy_dynlight_overbright, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) // Dynlight overbright global switch used in gl_scene.cpp
 CVAR(Float, gl_legacy_dynlight_overbright_flats, 0.125f, CVAR_ARCHIVE) // Intensity multiplier for flats
 CVAR(Float, gl_legacy_dynlight_overbright_walls, 0.125f, CVAR_ARCHIVE) // Intensity multiplier for walls
+
+// Enables the zscript camglow dynlight spawn (why not to keep it for all renderers GL1,2,3,4, Software, Polyrenderer?)
+CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 // Need those so only current player can see the camglow dynlight
 extern int consoleplayer;
@@ -428,9 +430,7 @@ void FRenderState::ApplyFixedFunction()
 	col.vec[2] *= (mObjectColor.b / 255.f);
 	col.vec[3] *= (mObjectColor.a / 255.f);
 
-	//==========================================================================
 	// HARDWARE ALPHA CLAMPING FOR TRANSLUCENT OBJECTS IN OPENGL 1.1
-	//==========================================================================
 	if (gl.gl1path && gl.gl1_v1dot1)
 	{
 		// If this is a targeted translucent style (flagged as 99 in gl_GetRenderStyle)
@@ -438,7 +438,7 @@ void FRenderState::ApplyFixedFunction()
 		{
 			// Clamp alpha channel to 0.51f to ensure it bypasses the 0.5f alpha-test gate.
 			// This makes previously invisible particles, explosions, and projectiles perfectly visible.
-			if (col.vec[3] < 0.51f)
+			if (col.vec[3] <= 0.51f)
 			{
 				col.vec[3] = 0.51f;
 			}
@@ -686,6 +686,9 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 	float radius = light->GetRadius();
 
+	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+
 	if (radius <= 0.f) return false;
 	if (dist > radius) return false;
 	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y))
@@ -759,7 +762,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		// Configured with explicit tuning floats to let you easily calibrate 
 		// horizontal width behaviors for frontal and angled surfaces on the fly.
 		// ADJUST THESE TWO VALUES TO CALIBRATE HOW LIGHT LAYS ON WALLS UNDER DIFFERENT ANGLES:
-		float inFrontWall = 0.55f;  // WIDTH FRONT: The look-straight multiplier (less is WIDER)
+		float inFrontWall = 0.4f;   // WIDTH FRONT: The look-straight multiplier (less is WIDER)
 		float inAngleWall = 1.25f;  // WIDTH ANGLE: The sharp edge multiplier (more is NARROWER)
 
 		// 1. Reconstruct camera horizontal look components matching engine layout space
@@ -924,6 +927,9 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 	float radius = light->GetRadius();
 
+	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+
 	if (radius <= 0.f) return false;
 	if (dist > radius) return false;
 	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y))
@@ -969,6 +975,20 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// ==================================================================
 	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 	{
+		//	// This network check is not necessary but why not?
+		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
+		//{
+		//	// EXTRACT THE OWNER VIA MASTER POINTER NATIVELY
+		//	AActor *rawPlayerOwner = light->target.pp->master.pp;
+		//
+		//	// NETWORK CLIENT-SIDE FILTER: If the rendering camera belongs to someone else,
+		//	// or the light has LF_DONTLIGHTMAP flag, completely wipe this light pass from the GPU!
+		//	if ((light->IsDontLightOthers() && rawPlayerOwner != nullptr && rawPlayerOwner != r_viewpoint.camera) || light->IsDontLightMap())
+		//	{
+		//		return false;
+		//	}
+		//}
+
 		// 1. Fetch current player camera horizontal viewport orientation matrices
 		float s = (float)r_viewpoint.Sin; float c = (float)r_viewpoint.Cos;
 
@@ -1015,7 +1035,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 			right.Y = (r_old.Y * c) + (r_crossY * revS) + (ny * r_dot * (1.0f - c));
 			right.Z = (r_old.Z * c) + (r_crossZ * revS) + (nz * r_dot * (1.0f - c));
 
-			// 3. Execute reverse 3D Rodrigues rotation for the "up" vector over slopes identically
+			// 4. Execute reverse 3D Rodrigues rotation for the "up" vector over slopes identically
 			float u_dot = (u_old.X * nx) + (u_old.Y * ny) + (u_old.Z * nz);
 			float u_crossX = (ny * u_old.Z) - (nz * u_old.Y);
 			float u_crossY = (nz * u_old.X) - (nx * u_old.Z);
@@ -1044,16 +1064,17 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		}
 
 		// 5. Long-range software ligt blob texture projection
-		right *= 1.0f; // Sideways width aspect ratio stays original
+		right *= 1.0f; // How far away from the player it lights (less is farther)
 
-		// PERSPECTIVE SLOPE COMPENSATION (Your custom optimized multiplier set)
-		float slopePerspectiveCorrection = 0.75f;
+		// 6. Compensate tilted slopes projection
+		float slopePerspectiveCorrection = 0.25f;
 		if (isSlope && fabsf(ny) > 0.01f)
 		{
-			slopePerspectiveCorrection = 0.75f * fabsf(ny); // Use pre-inverted 'ny' register
+			slopePerspectiveCorrection = 0.25f * fabsf(ny); // Use pre-inverted 'ny' register
 		}
 
-		up *= slopePerspectiveCorrection; // Deep longitudinal stretch far away from player eyes
+		// How far it stretches aside (left-right) from camera (less is farther)
+		up *= slopePerspectiveCorrection;
 	}
 	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 
@@ -1197,6 +1218,10 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //
 //	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 //	float radius = light->GetRadius();
+//
+//	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+//	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+//
 //	const float invMul255 = 1.0f / 255.0f;
 //	const float invMul286 = 1.0f / 286.0f;
 //	const float invMul322 = 1.0f / 322.0f;
@@ -1273,7 +1298,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //		// Configured with explicit tuning floats to let you easily calibrate 
 //		// horizontal width behaviors for frontal and angled surfaces on the fly.
 //		// ADJUST THESE TWO VALUES TO CALIBRATE HOW LIGHT LAYS ON WALLS UNDER DIFFERENT ANGLES:
-//		float inFrontWall = 0.55f;  // WIDTH FRONT: The look-straight multiplier (less is WIDER)
+//		float inFrontWall = 0.4f;   // WIDTH FRONT: The look-straight multiplier (less is WIDER)
 //		float inAngleWall = 1.25f;  // WIDTH ANGLE: The sharp edge multiplier (more is NARROWER)
 //
 //		// 1. Reconstruct camera horizontal look components matching engine layout space
@@ -1362,6 +1387,10 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //
 //	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 //	float radius = light->GetRadius();
+//
+//	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+//	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+//
 //	const float invMul255 = 1.0f / 255.0f;
 //	const float invMul284 = 1.0f / 284.0f;
 //	const float invMul322 = 1.0f / 322.0f;
@@ -1409,6 +1438,20 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	// ==================================================================
 //	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
 //	{
+//		//	// This network check is not necessary but why not?
+//		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
+//		//{
+//		//	// EXTRACT THE OWNER VIA MASTER POINTER NATIVELY
+//		//	AActor *rawPlayerOwner = light->target.pp->master.pp;
+//		//
+//		//	// NETWORK CLIENT-SIDE FILTER: If the rendering camera belongs to someone else,
+//		//	// or the light has LF_DONTLIGHTMAP flag, completely wipe this light pass from the GPU!
+//		//	if ((light->IsDontLightOthers() && rawPlayerOwner != nullptr && rawPlayerOwner != r_viewpoint.camera) || light->IsDontLightMap())
+//		//	{
+//		//		return false;
+//		//	}
+//		//}
+//
 //		// 1. Fetch current player camera horizontal viewport orientation matrices
 //		float s = (float)r_viewpoint.Sin; float c = (float)r_viewpoint.Cos;
 //
@@ -1455,7 +1498,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //			right.Y = (r_old.Y * c) + (r_crossY * revS) + (ny * r_dot * (1.0f - c));
 //			right.Z = (r_old.Z * c) + (r_crossZ * revS) + (nz * r_dot * (1.0f - c));
 //
-//			// 3. Execute reverse 3D Rodrigues rotation for the "up" vector over slopes identically
+//			// 4. Execute reverse 3D Rodrigues rotation for the "up" vector over slopes identically
 //			float u_dot = (u_old.X * nx) + (u_old.Y * ny) + (u_old.Z * nz);
 //			float u_crossX = (ny * u_old.Z) - (nz * u_old.Y);
 //			float u_crossY = (nz * u_old.X) - (nx * u_old.Z);
@@ -1484,16 +1527,17 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //		}
 //
 //		// 5. Long-range software ligt blob texture projection
-//		right *= 1.0f; // Sideways width aspect ratio stays original
+//		right *= 1.0f; // How far away from the player it lights (less is farther)
 //
-//		// PERSPECTIVE SLOPE COMPENSATION (Your custom optimized multiplier set)
-//		float slopePerspectiveCorrection = 0.75f;
+//		// 6. Compensate tilted slopes projection
+//		float slopePerspectiveCorrection = 0.25f;
 //		if (isSlope && fabsf(ny) > 0.01f)
 //		{
-//			slopePerspectiveCorrection = 0.75f * fabsf(ny); // Use pre-inverted 'ny' register
+//			slopePerspectiveCorrection = 0.25f * fabsf(ny); // Use pre-inverted 'ny' register
 //		}
 //
-//		up *= slopePerspectiveCorrection; // Deep longitudinal stretch far away from player eyes
+//		// How far it stretches aside (left-right) from camera (less is farther)
+//		up *= slopePerspectiveCorrection;
 //	}
 //	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 //
@@ -1923,28 +1967,31 @@ bool GLWall::PutWallCompat(int passflag)
 	// Block ONLY specific Skyhack if it's really a hurdle
 	if ((flags & GLWF_SKYHACK) && type == RENDERWALL_M2S) return false;
 
+	if (gl.gl1path && gl.gl1_v1dot1)
+	{
+		// Target masked mid transluscent textures (M2S/M2SNF)
+		if (type == RENDERWALL_M2S || type == RENDERWALL_M2SNF)
+		{
+			// We shouldn't brighten masked mid transluscent textures if they're in a dark sector
+			bool isSectorPitchBlack = (seg && seg->frontsector && seg->frontsector->lightlevel < 96);
+
+			if (!isSectorPitchBlack)
+			{
+				// Dark translucent midtextures receive less dynlights
+				// So everything darker gets clipped at lightlevel 128
+				if (lightlevel < 128) lightlevel = 128;
+			}
+		}
+	}
+
 	// Check if this wall has any lights affecting it
 	bool hasLights = false;
 
-	// In GL1.1 mode masked midtextures get twice as dark in the distance
-	if (gl.gl1path && gl.gl1_v1dot1)
+	// FORCE: If it's a Mid-Texture, we ALWAYS want it in the list for the multipass
+	// This bypasses any logic that might skip it due to "no lights in range"
+	if (type == RENDERWALL_M2S || type == RENDERWALL_M2SNF)
 	{
-		// Turn off dynlights if NO dynlights are currently touching the surface
-		if (!(seg->sidedef->Flags & WALLF_POLYOBJ))
-		{
-			if (seg->sidedef->lighthead == nullptr) return false;
-		}
 		hasLights = true;
-	}
-	else
-	{
-		// GL 1.3+ way with GL_COMBINE support
-		// FORCE: If it's a Mid-Texture, we ALWAYS want it in the list for the multipass
-		// This bypasses any logic that might skip it due to "no lights in range"
-		if (type == RENDERWALL_M2S || type == RENDERWALL_M2SNF)
-		{
-			hasLights = true;
-		}
 	}
 
 	// First check if there are any lights at all
@@ -2076,6 +2123,56 @@ bool GLFlat::PutFlatCompat(bool fog)
 	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
 
 	bool masked = gltexture->isMasked() && ((renderflags&SSRF_RENDER3DPLANES) || stack);
+
+	//	// Target masked flat transluscent textures - doesn't work yet
+	//if (gl.gl1path && gl.gl1_v1dot1)
+	//{
+	//	if (gl.gl1path && gl.gl1_v1dot1)
+	//	{
+	//		if (masked)
+	//		{
+	//			int targetLight = this->lightlevel;
+	//			bool isSectorPitchBlack = (sector && sector->lightlevel < 64);
+	//
+	//			if (sector && sector->e && sector->e->XFloor.ffloors.Size() > 0)
+	//			{
+	//				for (unsigned int i = 0; i < sector->e->XFloor.ffloors.Size(); i++)
+	//				{
+	//					auto* rover = sector->e->XFloor.ffloors[i];
+	//
+	//					if (rover && (rover->flags & FF_EXISTS))
+	//					{
+	//						if (rover->model)
+	//						{
+	//							int roverModelLight = rover->model->lightlevel;
+	//
+	//							// Если control-сектор 3D-пола светлее, берем его значение за основу
+	//							if (roverModelLight > targetLight)
+	//							{
+	//								targetLight = roverModelLight;
+	//							}
+	//						}
+	//					}
+	//				}
+	//			}
+	//
+	//			if (!isSectorPitchBlack)
+	//			{
+	//				// If the evaluated light falls below the middle bound, floor it safely at 128
+	//				if (targetLight < 128)
+	//				{
+	//					this->lightlevel = 128;
+	//				}
+	//				else
+	//				{
+	//					// If the 3D floor light was already bright, push it directly to the flat mapping
+	//					this->lightlevel = targetLight;
+	//				}
+	//			}
+	//		}
+	//	}
+	//}
+
 	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
 
 	int list = list_indices[masked][foggy];

@@ -22,8 +22,7 @@
 //
 
 // gl_20.h - added later in LZDoom07 to include in other rendering files.
-// *** Fallback code for ancient hardware.
-// This file collects everything larger that is only needed for
+// *** Fallback OpenGL rendering code for ancient hardware.
 // OpenGL v1.1 is required (1997 cards?), the same file for GL2x path.
 // The difference GL2 makes is no blurry textures thanks to NPOT support.
 

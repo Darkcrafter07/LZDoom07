@@ -109,6 +109,9 @@ void gl_SetDynSpriteLight(AActor *self, float x, float y, float z, subsector_t *
 			dist = (float)L.LengthSquared();
 			radius = light->GetRadius();
 
+			//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+			if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+
 			if (dist < radius * radius)
 			{
 				dist = sqrtf(dist);	// only calculate the square root if we really need it.
@@ -583,6 +586,9 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 						DVector3 absdynlightpos = light->PosAbsolute(group);
 						float radius = light->GetRadius();
 
+						//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+						if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+
 						if (radius > 0.0f)
 						{
 							float dx = reldynlightpos.X - (float)modelX;
@@ -742,6 +748,10 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 						DVector3 reldynlightpos = light->PosRelative(group);
 						float radius = light->GetRadius();
 
+						//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+						//It's also available in GL3+ mode as well as in other renderers, so include it here too
+						if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+
 						if (radius > 0.0f)
 						{
 							float dx = reldynlightpos.X - (float)modelX;
@@ -834,9 +844,15 @@ int gl_Set3DmdlDynLightSimpleVisBounds(AActor *self, int dynlightindex)
 					int group = subsector->sector->PortalGroup;
 					DVector3 pos = light->PosRelative(group);
 					float radius = light->GetRadius() + actorradius;
+
+					//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+					//It's also available in GL3+ mode as well as in other renderers, so include it here too
+					if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+
+					float radAndActorRad = radius + actorradius;
 					float dx = pos.X - x; float dy = pos.Y - y; float dz = pos.Z - z;
 					float distSquared = dx * dx + dy * dy + dz * dz;
-					if (distSquared < radius * radius) // Light and actor touches
+					if (distSquared < radAndActorRad * radAndActorRad) // Light and actor touches
 					{
 						// Check if we already added this light from a different subsector
 						if (std::find(addedLights.begin(), addedLights.end(), light) == addedLights.end())

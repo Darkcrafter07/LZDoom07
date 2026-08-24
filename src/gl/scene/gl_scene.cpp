@@ -72,10 +72,6 @@
 #include "vm.h"
 #include "gl/dynlights/gl_dynlightcache.h"
 
-// GL1x/GL2x legacy includes, externs and vars - START
-bool gl_IsLegacyModelLightingPass;
-// GL1x/GL2x legacy includes, externs and vars - FINISH
-
 //==========================================================================
 //
 // CVARs
@@ -86,13 +82,6 @@ CVAR(Bool, gl_no_skyclear, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Float, gl_mask_threshold, 0.5f,CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Float, gl_mask_sprite_threshold, 0.5f,CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_sort_textures, false, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
-
-// It deemed impossible to have software-renderer alike camera glow
-// in fixed-pipeline old OpenGL1 or OpenGL2 without using shader. Well, here we go.
-// The CVAR is unused in this file but declared here, and later gets the job done
-// by spawning a special dynlight with a zscript flashlight alike mod.
-// Search for it in lzdoom.pk3 by "camglow" keyword.
-CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 EXTERN_CVAR (Bool, cl_capfps)
 EXTERN_CVAR (Bool, r_deathcamera)
