@@ -741,35 +741,35 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
 	switch (drawitems[i].rendertype)
 	{
-		case GLDIT_FLAT:
-		{
-			GLFlat * f = &flats[drawitems[i].index];
-			RenderFlat.Clock();
-			f->Draw(pass, trans);
-			RenderFlat.Unclock();
-			break;
-		}
-		case GLDIT_WALL:
-		{
-			GLWall * w = &walls[drawitems[i].index];
-			RenderWall.Clock();
-			w->Draw(pass);
-			RenderWall.Unclock();
-			break;
-		}
-		case GLDIT_SPRITE:
-		{
-			GLSprite * s = &sprites[drawitems[i].index];
-			RenderSprite.Clock();
-			s->Draw(pass);
-			RenderSprite.Unclock();
-			break;
-		}
+	case GLDIT_FLAT:
+	{
+		GLFlat * f = &flats[drawitems[i].index];
+		RenderFlat.Clock();
+		f->Draw(pass, trans);
+		RenderFlat.Unclock();
+		break;
+	}
+	case GLDIT_WALL:
+	{
+		GLWall * w = &walls[drawitems[i].index];
+		RenderWall.Clock();
+		w->Draw(pass);
+		RenderWall.Unclock();
+		break;
+	}
+	case GLDIT_SPRITE:
+	{
+		GLSprite * s = &sprites[drawitems[i].index];
+		RenderSprite.Clock();
+		s->Draw(pass);
+		RenderSprite.Unclock();
+		break;
+	}
 	}
 
-	//-------------------------------------------------------------------------
-	// STEP 2:         THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
-	//-------------------------------------------------------------------------
+	//--------------------------------------------------------------------------
+	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
+	//--------------------------------------------------------------------------
 	if (pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
 	{
 		int currentRenderType = drawitems[i].rendertype;
@@ -777,18 +777,15 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
 		{
-			if (currentRenderType == GLDIT_WALL)
+			// TOTAL DISTANCE FOG BOUNDARY GEOMETRY CULLING FILTER
+			// If this wall primitive is a fake fog boundary line,
+			// SKIP skip lightmap projections over it on ANY distance.
+			// Since fake fog lines share identical 3D coordinates with solid room seams,
+			// culling them here permanently cures the legacy 16-bit Z-buffer depth fighting,
+			// completely extinguishing far-away flickering and sector side alternating artifacts
+			if (currentRenderType == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
 			{
-				GLWall* checkWall = &walls[index];
-				if (checkWall && checkWall->type == RENDERWALL_FOGBOUNDARY)
-				{
-					float fCheckDist1 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, checkWall->glseg.x1, checkWall->glseg.y1);
-					float fCheckDist2 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, checkWall->glseg.x2, checkWall->glseg.y2);
-					if (fCheckDist1 < 576.0f || fCheckDist2 < 576.0f)
-					{
-						return;
-					}
-				}
+				return; // Safe and clean bypass on any distance before changing registers
 			}
 
 			if (gl_SetupLightTexture())
@@ -839,11 +836,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 					gl_RenderState.ApplyColorMask();
 				}
 
-				//--------------------------------------------------------------------------
-				// THREE-PASS HARDWARE ISOLATED CASCADE CONVEYOR
-				//--------------------------------------------------------------------------
-
-				// --- PASS 1: STANDARD MODULATED DYNAMIC LIGHTS CHANNEL ---
+				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_DST_COLOR, GL_ONE);
 				glColor4f(currentAlphaDamp, currentAlphaDamp, currentAlphaDamp, 1.0f);
@@ -851,7 +844,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX, trans);
 
-				// --- PASS 2: NATIVE ADDITIVE SNIPER SPECIAL LIGHTS CHANNEL ---
+				// --- PASS 2: SPECIAL ADDITIVE LIGHTS PLACED ON PURPOSE CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 				glColor4f(0.12f, 0.12f, 0.12f, currentAlphaDamp);
@@ -859,17 +852,15 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
 
-				// --- PASS 3: NATIVE SUBTRACTIVE ANTI-ILLUMINATION BLACKHOLE CHANNEL ---
+				// --- PASS 3: SPECIAL SUBTRACTIVE LIGHTS ANTI-ILLUMINATION CHANNEL ---
 				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 				glColor4f(0.40f, 0.40f, 0.40f, currentAlphaDamp);
 
-				// Toss GLPASS_TRANSLUCENT_LIGHTTEX in Draw()
-				// so low-level generators understood that it's time to subtract pixels
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 
-				// RECOVERY AND CLEANUP GATEWAY
+				// RECOVERY AND CLEANUP
 				if (maskColorChannelsOut)
 				{
 					gl_RenderState.ResetColorMask();
