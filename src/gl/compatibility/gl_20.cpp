@@ -2974,6 +2974,10 @@ void GLSceneDrawer::RenderMultipassStuff()
 	}
 
 	// Seventh pass: subtractive lights for regular geometry (not transluscent, even though the lists are)
+	// We are NOT doing surfaces dynlights here because they live really short and won't get here.
+	// Instead we are DOING it in gl_drawinfo.cpp, DoDraw function. Why transluscent lists are here?
+	// Because we need them to allow lghting all OTHER surfaces with SUBTRACTIVE lights ...
+	// ... SIMULTANEOUSLY with the transluscent surfaces
 	if (GLRenderer->mLightCount && !FixedColormap)
 	{
 		if (gl_SetupLightTexture())
