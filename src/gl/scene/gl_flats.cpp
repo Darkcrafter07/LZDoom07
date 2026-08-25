@@ -410,22 +410,20 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 	case GLPASS_TRANSLUCENT:
 	{
-		//==========================================================================
-		// [Darkcrafter07] - PURE CPU DYNAMIC LIGHT INJECTOR FOR LEGACY 3D-WATER
-		//==========================================================================
+		// [Darkcrafter07] - GL1x/GL2x CPU transluscent walls dynlights
 		int adjustedLightLevel = lightlevel;
 
-		// Сбор света работает глобально для ВСЕХ легаси режимов (GL 1.1, GL 1.3, GL 2.x)
+		// Light gather works for all legacy modes (GL 1.1, GL 1.3, GL 2.x)
 		if (gl.legacyMode && sector && sector->lighthead)
 		{
 			float totalFlatCpuIntensity = 0.0f;
 			float baseFactor = 0.15f; // Safe baseline fallback scaling factor
 			float flatZ = (float)this->z;
 
-			// Напрямую читаем активные источники света из живого секторного буфера!
+			// Read active dynlights from the alive sector buffer
 			FLightNode *node = sector->lighthead;
 
-			// Сканируем расстояния от взрывов/плазмы до центра флата воды на процессоре
+			// Scan distances from dynlights to flat center on a CPU
 			while (node)
 			{
 				FDynamicLight *light = node->lightsource;
@@ -433,7 +431,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 				{
 					float radius = light->GetRadius();
 
-					// Вычисляем дистанцию до плоскости воды по осям X, Y, Z
+					// Cacl distance to flat surface by X, Y, Z axes
 					float dx = (float)sector->centerspot.X - (float)light->X();
 					float dy = (float)sector->centerspot.Y - (float)light->Y();
 					float dz = flatZ - (float)light->Z();
@@ -442,8 +440,8 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 					if (dist2 < (radius * radius))
 					{
 						float dist = sqrtf(dist2);
-						// Мягкая софтверная кривая затухания света
-						totalFlatCpuIntensity += (1.0f - (dist / radius)) * baseFactor * 5.0f; // Сочный пунш для воды
+						// Soft CPU light fade curve
+						totalFlatCpuIntensity += (1.0f - (dist / radius)) * baseFactor * 5.0f;
 					}
 				}
 				node = node->nextLight;
@@ -451,9 +449,10 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 			if (totalFlatCpuIntensity > 0.0f)
 			{
-				if (totalFlatCpuIntensity > 0.75f) totalFlatCpuIntensity = 0.75f; // Защитное плато пересвета
+				// Protective plateu from overexposure
+				if (totalFlatCpuIntensity > 0.75f) totalFlatCpuIntensity = 0.75f;
 
-				// Переводим софтверную интенсивность в байтовый lightlevel движка (0-255)
+				// Convert software intensity to byte based engine lightlevel (0-255)
 				adjustedLightLevel += (int)(totalFlatCpuIntensity * 255.0f);
 				if (adjustedLightLevel > 255) adjustedLightLevel = 255;
 			}
@@ -461,7 +460,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 		if (renderstyle == STYLE_Add) gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-		// Скармливаем наш динамически подсвеченный на ЦП lightlevel в кэшер движка!
+		// Feed the dynamically lit CPU based lightlevel to the engine cache
 		mDrawer->SetColor(adjustedLightLevel, rel, Colormap, alpha);
 		mDrawer->SetFog(adjustedLightLevel, rel, &Colormap, false);
 
@@ -491,6 +490,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 	case GLPASS_LIGHTTEX:
 	case GLPASS_LIGHTTEX_ADDITIVE:
 	case GLPASS_LIGHTTEX_FOGGY:
+	case GLPASS_TRANSLUCENT_LIGHTTEX:
 		DrawLightsCompat(pass);
 		break;
 

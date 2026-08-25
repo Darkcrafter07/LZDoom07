@@ -739,47 +739,44 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 void GLDrawList::DoDraw(int pass, int i, bool trans)
 {
 	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
-	// Draws the base translucent water or glass plane with its authentic transparency
 	switch (drawitems[i].rendertype)
 	{
-	case GLDIT_FLAT:
-	{
-		GLFlat * f = &flats[drawitems[i].index];
-		RenderFlat.Clock();
-		f->Draw(pass, trans);
-		RenderFlat.Unclock();
-		break;
+		case GLDIT_FLAT:
+		{
+			GLFlat * f = &flats[drawitems[i].index];
+			RenderFlat.Clock();
+			f->Draw(pass, trans);
+			RenderFlat.Unclock();
+			break;
+		}
+		case GLDIT_WALL:
+		{
+			GLWall * w = &walls[drawitems[i].index];
+			RenderWall.Clock();
+			w->Draw(pass);
+			RenderWall.Unclock();
+			break;
+		}
+		case GLDIT_SPRITE:
+		{
+			GLSprite * s = &sprites[drawitems[i].index];
+			RenderSprite.Clock();
+			s->Draw(pass);
+			RenderSprite.Unclock();
+			break;
+		}
 	}
 
-	case GLDIT_WALL:
-	{
-		GLWall * w = &walls[drawitems[i].index];
-		RenderWall.Clock();
-		w->Draw(pass);
-		RenderWall.Unclock();
-		break;
-	}
-
-	case GLDIT_SPRITE:
-	{
-		GLSprite * s = &sprites[drawitems[i].index];
-		RenderSprite.Clock();
-		s->Draw(pass);
-		RenderSprite.Unclock();
-		break;
-	}
-	}
-
-	// STAGE 2: [Darkcrafter07] - HARDWARE COLOR OVERDRAW LOCK PIPELINE
+	//-------------------------------------------------------------------------
+	// STEP 2:         THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
+	//-------------------------------------------------------------------------
 	if (pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
 	{
 		int currentRenderType = drawitems[i].rendertype;
 		int index = drawitems[i].index;
 
-		// MASTER FILTER: Strictly isolate monster sprites from lightmap registers
 		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
 		{
-			// Near-clip frustum protection gateway against fog boundary screen flashes
 			if (currentRenderType == GLDIT_WALL)
 			{
 				GLWall* checkWall = &walls[index];
@@ -794,80 +791,98 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				}
 			}
 
-			// Securely bind the monochrome dynamic light maps from the cacher
 			if (gl_SetupLightTexture())
 			{
-				// Clear cached fog flags to eliminate boundary blowout flashes
+				// Common baseline registers hardware isolation setup
 				gl_RenderState.EnableFog(false);
-				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
-				gl_RenderState.Apply(); // Flush cached layers
+				gl_RenderState.Apply();
 
 				glDisable(GL_FOG);
-				glDepthFunc(GL_LEQUAL); // Rigid lock to secure inverted depth vectors
+				glDepthFunc(GL_LEQUAL);
 				glDepthMask(false);
-				glBlendFunc(GL_DST_COLOR, GL_ONE);
 
-				// Keep base vertex color register perfectly pure and white to unlock full RGB channels
-				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+				float currentAlphaDamp = 1.0f;
+				if (currentRenderType == GLDIT_WALL)
+				{
+					GLWall* w = &walls[index];
+					if (w) currentAlphaDamp = fabsf(w->alpha);
+				}
+				else if (currentRenderType == GLDIT_FLAT)
+				{
+					GLFlat* f = &flats[index];
+					if (f) currentAlphaDamp = fabsf(f->alpha);
+				}
+				if (currentAlphaDamp > 1.0f) currentAlphaDamp = 1.0f;
+				if (currentAlphaDamp < 0.1f) currentAlphaDamp = 0.1f;
 
-				// HARDWARE COLOR MASK FILTRATION GATWAY (SELECT CUMULATIVE LAYERS)
-				// We traverse the compiled flats array using backfalls heights.
-				// If this flat belongs to a deep stacked 3D-floor hole,
-				// shut down the hardware color channels (SetColorMask false)
-				// This guarantees 100% rich color mapping on top lake primitives,
-				// while completely killing dynamic overburn glows inside the deep hole
 				bool maskColorChannelsOut = false;
-
 				if (currentRenderType == GLDIT_FLAT)
 				{
 					GLFlat* f = &flats[index];
 					if (f && f->sector && ((float)r_viewpoint.Pos.Z - (float)f->z) > 0.0f)
 					{
 						float currentFlatZ = (float)f->z;
-						// Scan all active flats inside the same sector chunk
 						for (unsigned int j = 0; j < flats.Size(); j++)
 						{
 							if (flats[j].sector == f->sector && (float)flats[j].z > currentFlatZ)
 							{
-								maskColorChannelsOut = true; // Found top-layer floor, current item is hidden
+								maskColorChannelsOut = true;
 								break;
 							}
 						}
 					}
 				}
 
-				// If it's a hidden layer in the abyss, trigger the hardware color lock shield
 				if (maskColorChannelsOut)
 				{
 					gl_RenderState.SetColorMask(false, false, false, false);
-					gl_RenderState.ApplyColorMask(); // Tell the GPU to completely stop writing pixels
+					gl_RenderState.ApplyColorMask();
 				}
 
-				// STEP 3: OVERLAY HARDWARE LIGHT MAP CHANNELS
-				if (currentRenderType == GLDIT_WALL)
-				{
-					GLWall * w = &walls[index];
-					if (w) w->Draw(GLPASS_LIGHTTEX); // Native legacy walls light builders
-				}
-				else if (currentRenderType == GLDIT_FLAT)
-				{
-					GLFlat * f = &flats[index];
-					if (f) f->Draw(GLPASS_LIGHTTEX, trans); // Native legacy flats light builders
-				}
+				//--------------------------------------------------------------------------
+				// THREE-PASS HARDWARE ISOLATED CASCADE CONVEYOR
+				//--------------------------------------------------------------------------
 
-				// HARDWARE REGISTERS RESTORATION GATEWAY: Reset pipeline back to factory defaults
+				// --- PASS 1: STANDARD MODULATED DYNAMIC LIGHTS CHANNEL ---
+				glBlendEquation(GL_FUNC_ADD);
+				glBlendFunc(GL_DST_COLOR, GL_ONE);
+				glColor4f(currentAlphaDamp, currentAlphaDamp, currentAlphaDamp, 1.0f);
+
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX);
+				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX, trans);
+
+				// --- PASS 2: NATIVE ADDITIVE SNIPER SPECIAL LIGHTS CHANNEL ---
+				glBlendEquation(GL_FUNC_ADD);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+				glColor4f(0.12f, 0.12f, 0.12f, currentAlphaDamp);
+
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
+				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
+
+				// --- PASS 3: NATIVE SUBTRACTIVE ANTI-ILLUMINATION BLACKHOLE CHANNEL ---
+				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+				glColor4f(0.40f, 0.40f, 0.40f, currentAlphaDamp);
+
+				// Toss GLPASS_TRANSLUCENT_LIGHTTEX in Draw()
+				// so low-level generators understood that it's time to subtract pixels
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
+				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
+
+				// RECOVERY AND CLEANUP GATEWAY
 				if (maskColorChannelsOut)
 				{
 					gl_RenderState.ResetColorMask();
-					gl_RenderState.ApplyColorMask(); // Unblock hardware color channels
+					gl_RenderState.ApplyColorMask();
 				}
+
+				glBlendEquation(GL_FUNC_ADD); // Hard reset blending equations
 
 				glEnable(GL_FOG);
 				glDepthMask(true);
 				glDepthFunc(GL_LESS);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-				// Re-synchronize cached layer for subsequent sprite pipelines
 				gl_RenderState.EnableFog(true);
 				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 				gl_RenderState.Apply();

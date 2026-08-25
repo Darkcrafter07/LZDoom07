@@ -225,7 +225,6 @@ void gl_FillScreen();
 //-------------------------------------------------------------------------
 //               THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
 //-------------------------------------------------------------------------
-//
 // CORE ARCHITECTURE & FIXED-FUNCTION BLINDSPOTS:
 // 1. Translucent planes (3D-floors and glass windows) are never baked 
 //    into geometric VBO arrays ("dldrawlists") during BSP traversal.
@@ -240,8 +239,8 @@ void gl_FillScreen();
 //    This traps the primitive in the exact microsecond of its true 
 //    existence—immediately after the CPU pushes the translucent base.
 //    It preserves pristine OpenGL 1.1 blend states, enforces the rigid 
-//    GL_LEQUAL depth function, and executes a clean secondary light map 
-//    layer pass (GLPASS_LIGHTTEX) directly over the hot vertices.
+//    GL_LEQUAL depth function, and executes a clean multi-pass cascade 
+//    directly over the hot geometry, completely isolating light flags.
 // 4. Multi-Layer Overdraw Attenuation Matrix (Anti-Hole Blowouts):
 //    To prevent cumulative light stacking spikes (where multi-level 3D 
 //    floors overlap inside deep floor holes, multiplying blending 
@@ -255,6 +254,18 @@ void gl_FillScreen();
 //    shafts into natural matte darkness while keeping rich RGB color 
 //    channels fully open on the upper visible lake surfaces!
 //
+// THREE-PASS CASCADE HARDWARE CONVEYOR:
+// * Pass 1 (Modulated Lights): Enforces GL_DST_COLOR, GL_ONE blending 
+//   to map standard dynamic projectiles smoothly over visible surfaces.
+// * Pass 2 (Additive Lights): Enforces GL_SRC_ALPHA, GL_ONE blending 
+//   with soft vertex tinting to project muzzle flares and BFG bursts.
+// * Pass 3 (Subtractive Lights): Enforces GL_FUNC_REVERSE_SUBTRACT 
+//   equation directly into GPU registers to render deep blackholes.
+// * Hardware Registry Recovery: At the very end of traversal, the loop 
+//   triggers an explicit glBlendEquation(GL_FUNC_ADD) hardware reset. 
+//   This permanently shields plain walls, HUD elements, and monster 
+//   sprites from experiencing color corruption or brightness leakage.
+//
 // FIXED-FUNCTION PIPELINE RULES:
 // * WHAT WE MUST NEVER DO (CRITICAL STATE CORRUPTION TRAPS):
 //   - NEVER duplicate translucent pointers inside "PutWall/PutFlat" 
@@ -263,8 +274,7 @@ void gl_FillScreen();
 //     shuttling fixed states per-each separate node forces the state 
 //     cacher to drift, wiping out monster sprites sorting arrays.
 //   - NEVER invoke modelview resets like "glLoadIdentity()" or push 
-//     attrib matrix loops: this breaks the viewport culling matrix, 
-//     pinning lights to screen center space and painting HUD white.
+//     attrib matrix loops: this breaks the viewport culling matrix.
 //   - NEVER alter global vertex shading registers using cached 
 //     "SetColor" during flat passes: the cacher explicitly strips 
 //     vertex alpha layers, instantly culling the background skybox.
@@ -352,11 +362,29 @@ void gl_FillScreen();
 //					gl_RenderState.ApplyColorMask();
 //				}
 //
-//				// Overlay light maps
+//				// --- PIPELINE CASCADE PASS 1: MODULATED LIGHTS ---
 //				if(type == GLDIT_WALL)
 //					walls[idx].Draw(GLPASS_LIGHTTEX);
 //				else if(type == GLDIT_FLAT)
 //					flats[idx].Draw(GLPASS_LIGHTTEX, trans);
+//
+//				// --- PIPELINE CASCADE PASS 2: ADDITIVE LIGHTS ---
+//				glBlendEquation(GL_FUNC_ADD);
+//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+//				glColor4f(0.12f, 0.12f, 0.12f, maskOut ? 0.25f : 1.0f);
+//				if(type == GLDIT_WALL)
+//					walls[idx].Draw(GLPASS_LIGHTTEX_ADDITIVE);
+//				else if(type == GLDIT_FLAT)
+//					flats[idx].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
+//
+//				// --- PIPELINE CASCADE PASS 3: SUBTRACTIVE LIGHTS ---
+//				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+//				glColor4f(0.40f, 0.40f, 0.40f, maskOut ? 0.25f : 1.0f);
+//				if(type == GLDIT_WALL)
+//					walls[idx].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
+//				else if(type == GLDIT_FLAT)
+//					flats[idx].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 //
 //				// Restore state
 //				if(maskOut)
@@ -364,6 +392,8 @@ void gl_FillScreen();
 //					gl_RenderState.ResetColorMask();
 //					gl_RenderState.ApplyColorMask();
 //				}
+//
+//				glBlendEquation(GL_FUNC_ADD); // Critical hardware fallback reset
 //
 //				glEnable(GL_FOG);
 //				glDepthMask(true);
@@ -376,6 +406,7 @@ void gl_FillScreen();
 //	}
 //}
 //
+//
 // RELATED FILES:
 // gl_20.cpp, gl_walls_draw.cpp, gl_flats_draw.cpp, gl_walls.cpp, gl_scene.cpp
 //
@@ -383,8 +414,6 @@ void gl_FillScreen();
 // glEnable(GL_POLYGON_OFFSET_FILL);
 // glPolygonOffset(-0.5f, -0.5f);
 //
-// Must be kept in clean factory baseline state - no experimental changes.
-// All custom passes, queues, and matrix modifications have been removed.
 //-------------------------------------------------------------------------
 
 

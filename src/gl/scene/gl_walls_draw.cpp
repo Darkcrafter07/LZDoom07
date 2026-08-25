@@ -567,6 +567,7 @@ void GLWall::Draw(int pass)
 	case GLPASS_LIGHTTEX:
 	case GLPASS_LIGHTTEX_ADDITIVE:
 	case GLPASS_LIGHTTEX_FOGGY:
+	case GLPASS_TRANSLUCENT_LIGHTTEX:
 		RenderLightsCompat(pass);
 		break;
 

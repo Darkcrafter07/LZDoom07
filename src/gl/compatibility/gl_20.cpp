@@ -168,7 +168,6 @@
 //-------------------------------------------------------------------------
 //               THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
 //-------------------------------------------------------------------------
-//
 // CORE ARCHITECTURE & FIXED-FUNCTION BLINDSPOTS:
 // 1. Translucent planes (3D-floors and glass windows) are never baked 
 //    into geometric VBO arrays ("dldrawlists") during BSP traversal.
@@ -183,8 +182,8 @@
 //    This traps the primitive in the exact microsecond of its true 
 //    existence—immediately after the CPU pushes the translucent base.
 //    It preserves pristine OpenGL 1.1 blend states, enforces the rigid 
-//    GL_LEQUAL depth function, and executes a clean secondary light map 
-//    layer pass (GLPASS_LIGHTTEX) directly over the hot vertices.
+//    GL_LEQUAL depth function, and executes a clean multi-pass cascade 
+//    directly over the hot geometry, completely isolating light flags.
 // 4. Multi-Layer Overdraw Attenuation Matrix (Anti-Hole Blowouts):
 //    To prevent cumulative light stacking spikes (where multi-level 3D 
 //    floors overlap inside deep floor holes, multiplying blending 
@@ -198,6 +197,18 @@
 //    shafts into natural matte darkness while keeping rich RGB color 
 //    channels fully open on the upper visible lake surfaces!
 //
+// THREE-PASS CASCADE HARDWARE CONVEYOR:
+// * Pass 1 (Modulated Lights): Enforces GL_DST_COLOR, GL_ONE blending 
+//   to map standard dynamic projectiles smoothly over visible surfaces.
+// * Pass 2 (Additive Lights): Enforces GL_SRC_ALPHA, GL_ONE blending 
+//   with soft vertex tinting to project muzzle flares and BFG bursts.
+// * Pass 3 (Subtractive Lights): Enforces GL_FUNC_REVERSE_SUBTRACT 
+//   equation directly into GPU registers to render deep blackholes.
+// * Hardware Registry Recovery: At the very end of traversal, the loop 
+//   triggers an explicit glBlendEquation(GL_FUNC_ADD) hardware reset. 
+//   This permanently shields plain walls, HUD elements, and monster 
+//   sprites from experiencing color corruption or brightness leakage.
+//
 // FIXED-FUNCTION PIPELINE RULES:
 // * WHAT WE MUST NEVER DO (CRITICAL STATE CORRUPTION TRAPS):
 //   - NEVER duplicate translucent pointers inside "PutWall/PutFlat" 
@@ -206,8 +217,7 @@
 //     shuttling fixed states per-each separate node forces the state 
 //     cacher to drift, wiping out monster sprites sorting arrays.
 //   - NEVER invoke modelview resets like "glLoadIdentity()" or push 
-//     attrib matrix loops: this breaks the viewport culling matrix, 
-//     pinning lights to screen center space and painting HUD white.
+//     attrib matrix loops: this breaks the viewport culling matrix.
 //   - NEVER alter global vertex shading registers using cached 
 //     "SetColor" during flat passes: the cacher explicitly strips 
 //     vertex alpha layers, instantly culling the background skybox.
@@ -295,11 +305,29 @@
 //					gl_RenderState.ApplyColorMask();
 //				}
 //
-//				// Overlay light maps
+//				// --- PIPELINE CASCADE PASS 1: MODULATED LIGHTS ---
 //				if(type == GLDIT_WALL)
 //					walls[idx].Draw(GLPASS_LIGHTTEX);
 //				else if(type == GLDIT_FLAT)
 //					flats[idx].Draw(GLPASS_LIGHTTEX, trans);
+//
+//				// --- PIPELINE CASCADE PASS 2: ADDITIVE LIGHTS ---
+//				glBlendEquation(GL_FUNC_ADD);
+//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+//				glColor4f(0.12f, 0.12f, 0.12f, maskOut ? 0.25f : 1.0f);
+//				if(type == GLDIT_WALL)
+//					walls[idx].Draw(GLPASS_LIGHTTEX_ADDITIVE);
+//				else if(type == GLDIT_FLAT)
+//					flats[idx].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
+//
+//				// --- PIPELINE CASCADE PASS 3: SUBTRACTIVE LIGHTS ---
+//				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+//				glColor4f(0.40f, 0.40f, 0.40f, maskOut ? 0.25f : 1.0f);
+//				if(type == GLDIT_WALL)
+//					walls[idx].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
+//				else if(type == GLDIT_FLAT)
+//					flats[idx].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 //
 //				// Restore state
 //				if(maskOut)
@@ -307,6 +335,8 @@
 //					gl_RenderState.ResetColorMask();
 //					gl_RenderState.ApplyColorMask();
 //				}
+//
+//				glBlendEquation(GL_FUNC_ADD); // Critical hardware fallback reset
 //
 //				glEnable(GL_FOG);
 //				glDepthMask(true);
@@ -319,6 +349,7 @@
 //	}
 //}
 //
+//
 // RELATED FILES:
 // gl_20.cpp, gl_walls_draw.cpp, gl_flats_draw.cpp, gl_walls.cpp, gl_scene.cpp
 //
@@ -326,8 +357,6 @@
 // glEnable(GL_POLYGON_OFFSET_FILL);
 // glPolygonOffset(-0.5f, -0.5f);
 //
-// Must be kept in clean factory baseline state - no experimental changes.
-// All custom passes, queues, and matrix modifications have been removed.
 //-------------------------------------------------------------------------
 
 #include "gl_20.h"
@@ -2168,8 +2197,8 @@ static bool gl_CheckFog(FColormap *cm, int lightlevel)
 
 bool GLWall::PutWallCompat(int passflag)
 {
-	static int list_indices[2][3] =
-	{ { GLLDL_WALLS_PLAIN, GLLDL_WALLS_FOG },{ GLLDL_WALLS_MASKED, GLLDL_WALLS_FOGMASKED, GLLDL_WALLS_TRANSL} };
+	static int list_indices[2][2] =
+	{ { GLLDL_WALLS_PLAIN, GLLDL_WALLS_FOG },{ GLLDL_WALLS_MASKED, GLLDL_WALLS_FOGMASKED } };
 
 	// ALLOW M2SNF and M2S to have lights!
 	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || !gltexture) return false;
@@ -2408,16 +2437,44 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	{
 		FDynamicLight * light = node->lightsource;
 
-		if (!(light->IsActive()) ||
-			(pass == GLPASS_LIGHTTEX && light->IsAdditive()) ||
-			(pass == GLPASS_LIGHTTEX_ADDITIVE && !light->IsAdditive()))
+		// [Darkcrafter07] - THREE-PASS GEOMETRY FILTER GATES FOR FLATS
+		// Each branch of the cascade culls other dynlight types only passes their own kind!
+		if (!light->IsActive())
 		{
 			node = node->nextLight;
 			continue;
 		}
 
-		// We must do the side check here because gl_SetupLight needs the correct plane orientation
-		// which we don't have for Legacy-style 3D-floors
+		if (pass == GLPASS_LIGHTTEX)
+		{
+			// Pass 1: Regular modulated dynlights (non-additive)
+			if (light->IsAdditive() || light->IsSubtractive())
+			{
+				node = node->nextLight;
+				continue;
+			}
+		}
+		else if (pass == GLPASS_LIGHTTEX_ADDITIVE)
+		{
+			// Pass 2: Specific additive dynlights (chosen additive in the map editor on purpose)
+			if (!light->IsAdditive())
+			{
+				node = node->nextLight;
+				continue;
+			}
+		}
+		else if (pass == GLPASS_TRANSLUCENT_LIGHTTEX)
+		{
+			// Pass 3: Subtractive dynlights
+			if (!light->IsSubtractive())
+			{
+				node = node->nextLight;
+				continue;
+			}
+		}
+
+		int executionPass = (pass == GLPASS_TRANSLUCENT_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE) ? GLPASS_LIGHTTEX : pass;
+
 		float planeh = plane.plane.ZatPoint(light->Pos);
 		if (gl_lights_checkside && ((planeh < light->Z() && ceiling) || (planeh > light->Z() && !ceiling)))
 		{
@@ -2426,21 +2483,18 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		}
 
 		p.Set(plane.plane);
-		if (!gl_SetupLightFlat(sub->sector->PortalGroup, p, light, nearPt, up, right, scale, false, pass != GLPASS_LIGHTTEX))
+		if (!gl_SetupLightFlat(sub->sector->PortalGroup, p, light, nearPt, up, right, scale, false, executionPass != GLPASS_LIGHTTEX))
 		{
 			node = node->nextLight;
 			continue;
 		}
 
-		// --- FIX: OVERRIDE FORCED DARKNESS WITH CVAR INTENSITY CONTROL FOR BRIGHTEN PASS ---
 		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
 		{
-			// Safe bounds check for the external overbright intensity CVAR
 			float overbrightFactor = clamp((float)gl_legacy_dynlight_overbright_flats, 0.0f, 0.2f);
 			if (overbrightFactor > 1.0f) overbrightFactor = 1.0f;
 			if (overbrightFactor < 0.0f) overbrightFactor = 0.0f;
 
-			// Force standard additive blending and inject your custom brightness scale factor
 			gl_RenderState.BlendEquation(GL_FUNC_ADD);
 			gl_RenderState.SetColor(overbrightFactor, overbrightFactor, overbrightFactor, 1.0f);
 			gl_RenderState.SetObjectColor(0xffffffff);
@@ -2449,7 +2503,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		gl_RenderState.Apply();
 
 		FFlatVertex *ptr = GLRenderer->mVBO->GetBuffer();
-		FFlatVertex *startPtr = ptr; // Keep a pointer to the start of the fan polygon for the second pass
+		FFlatVertex *startPtr = ptr;
 
 		for (unsigned int k = 0; k < sub->numlines; k++)
 		{
@@ -2460,14 +2514,11 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			t1 = { ptr->x, ptr->z, ptr->y };
 			FVector3 nearToVert = t1 - nearPt;
 
-			// --- FIX: LINEAR COMPENSATED TEXTURE PROJECTION FOR GLPASS_BRIGHTEN_LEGACY_LIGHTTEX ---
 			if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
 			{
 				float radius = light->GetRadius();
 				if (radius <= 0.0f) radius = 1.0f;
 
-				// Core embedded float constants (Scale = 2.0f, Offset = 0.0f)
-				// Hardcoded directly inside the function to completely replace old CVARs
 				const float staticScaleX = 2.0f;
 				const float staticScaleY = 2.0f;
 				const float staticOffsetX = 0.0f;
@@ -2476,25 +2527,19 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 				float customScaleX = 1.0f / (radius * staticScaleX);
 				float customScaleY = 1.0f / (radius * staticScaleY);
 
-				// Map vertices pixel-to-pixel relative to PivotPoint nearPt using perfect 0.5f base layout centring
 				ptr->u = ((nearToVert | right) * customScaleX) + 0.5f + staticOffsetX;
 				ptr->v = ((nearToVert | up) * customScaleY) + 0.5f + staticOffsetY;
 			}
 			else
 			{
-				// Keep native Graf Zahl texture space projection mapping for standard passes
 				ptr->u = ((nearToVert | right) * scale) + 0.5f;
 				ptr->v = ((nearToVert | up) * scale) + 0.5f;
 			}
 			ptr++;
 		}
 
-		// FIRST PASS: Multiplies existing floor texture by the projected light mask shape
 		GLRenderer->mVBO->RenderCurrent(ptr, GL_TRIANGLE_FAN);
 
-		// FIXED OVERBRIGHT MULTI-PASS BOOSTER: If we are in the brightening pass, 
-		// we immediately push the exact same VBO fan buffer onto the GPU a SECOND time!
-		// This guarantees that the overbright intensity stacks per-each-light, perfectly matching the walls!
 		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
 		{
 			GLRenderer->mVBO->RenderCurrent(startPtr, GL_TRIANGLE_FAN);
@@ -2618,25 +2663,22 @@ bool GLWall::PrepareLight(FDynamicLight * light, int pass)
 
 void GLWall::RenderLightsCompat(int pass)
 {
-
 	FLightNode * node;
 
 	// black fog is diminishing light and should affect lights less than the rest!
 	if (pass == GLPASS_LIGHTTEX) mDrawer->SetFog((255 + lightlevel) >> 1, 0, NULL, false);
 	else mDrawer->SetFog(lightlevel, 0, &Colormap, true);
 
-	if (seg->sidedef == NULL)
+	if (seg == NULL || seg->sidedef == NULL)
 	{
 		return;
 	}
 	else if (!(seg->sidedef->Flags & WALLF_POLYOBJ))
 	{
-		// Iterate through all dynamic lights which touch this wall and render them
 		node = seg->sidedef->lighthead;
 	}
 	else if (sub)
 	{
-		// To avoid constant rechecking for polyobjects use the subsector's lightlist instead
 		node = sub->lighthead;
 	}
 	else
@@ -2650,14 +2692,46 @@ void GLWall::RenderLightsCompat(int pass)
 	{
 		FDynamicLight * light = node->lightsource;
 
-		if (!(light->IsActive()) ||
-			(pass == GLPASS_LIGHTTEX && light->IsAdditive()) ||
-			(pass == GLPASS_LIGHTTEX_ADDITIVE && !light->IsAdditive()))
+		// [Darkcrafter07] - THREE-PASS GEOMETRY FILTER GATES FOR WALLS
+		// Each branch of the cascade culls other dynlight types only passes their own kind!
+		if (!light->IsActive())
 		{
 			node = node->nextLight;
 			continue;
 		}
-		if (PrepareLight(light, pass))
+
+		if (pass == GLPASS_LIGHTTEX)
+		{
+			// Pass 1: Pass only regular (non-additive and non-subtractive) lights
+			if (light->IsAdditive() || light->IsSubtractive())
+			{
+				node = node->nextLight;
+				continue;
+			}
+		}
+		else if (pass == GLPASS_LIGHTTEX_ADDITIVE)
+		{
+			// Pass 2: Pass addictive actors only (placed in the map editor on purpose)
+			if (!light->IsAdditive())
+			{
+				node = node->nextLight;
+				continue;
+			}
+		}
+		else if (pass == GLPASS_TRANSLUCENT_LIGHTTEX)
+		{
+			// Pass 3: Pass only subractive dynlights
+			if (!light->IsSubtractive())
+			{
+				node = node->nextLight;
+				continue;
+			}
+		}
+
+		// Substitue a pass locally to GLPASS_LIGHTTEX for correct VBO mapping
+		int executionPass = (pass == GLPASS_TRANSLUCENT_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE) ? GLPASS_LIGHTTEX : pass;
+
+		if (PrepareLight(light, executionPass))
 		{
 			vertcount = 0;
 			RenderWall(RWF_TEXTURED);
@@ -2899,9 +2973,42 @@ void GLSceneDrawer::RenderMultipassStuff()
 		}
 	}
 
-	// Seventh pass: transluscent surfaces dynlights.
-	// Do NOT do transluscent surfaces dynlights here because they live really short and won't get here.
-	// To do it, modify gl_drawinfo.cpp, DoDraw function as it's done. Also care about fogboundaries.
+	// Seventh pass: subtractive lights for regular geometry (not transluscent, even though the lists are)
+	if (GLRenderer->mLightCount && !FixedColormap)
+	{
+		if (gl_SetupLightTexture())
+		{
+			gl_RenderState.EnableTexture(true);
+			gl_RenderState.EnableBrightmap(false);
+			gl_RenderState.EnableFog(false);
+
+			glDepthFunc(GL_EQUAL);
+			glDepthMask(false);
+
+			// Hard lock hardware blending registers into inverse subtraction mode
+			glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+			glColor4f(0.40f, 0.40f, 0.40f, 1.0f);
+
+			// Dynamic lights subsector loop filters out everything except IsSubtractive()!
+			// We pass GLPASS_TRANSLUCENT_LIGHTTEX to trigger the filtered low-level gates!
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
+
+			// Multi-pass restoration recovery
+			glBlendEquation(GL_FUNC_ADD);
+			glDepthMask(true);
+			glDepthFunc(GL_LESS);
+			gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			gl_RenderState.Apply();
+		}
+	}
 
 	glDepthMask(true);
 
