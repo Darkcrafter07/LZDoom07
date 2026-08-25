@@ -149,6 +149,186 @@
 //    Alpha Testing checks. This forces soft particle gradients to reliably pass the 
 //    GPU pipeline gates, restoring smooth, rich alpha transparency across all 
 //    non-opaque actors.
+//
+// Put this block in both, otherwise transparent 3D floors won't render in GL1.1
+// gl_walls.cpp, in PutWall, before "if (mDrawer->FixedColormap)":
+// and in gl_flats.cpp in PutFlat, before "if (renderstyle!=STYLE_Translucent || 
+//                        alpha < 1.f - FLT_EPSILON || fog || gltexture == NULL)
+//
+// 	if (gl.gl1path && gl.gl1_v1dot1)
+//{
+//	// GL1.1 limitations, GL1.3 does NOT need this
+//	// GL1.1 limitation, can't be more transparent than this
+//if (alpha <= 0.51f) alpha = 0.51f;
+//	// I reckon, if it's super transparent, make it disappear at all
+//else if (alpha <= 0.1f)  alpha = 0.01f;
+//}
+//
+//
+//-------------------------------------------------------------------------
+//               THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
+//-------------------------------------------------------------------------
+//
+// CORE ARCHITECTURE & FIXED-FUNCTION BLINDSPOTS:
+// 1. Translucent planes (3D-floors and glass windows) are never baked 
+//    into geometric VBO arrays ("dldrawlists") during BSP traversal.
+//    Instead, they are compiled dynamically inside the back-to-front 
+//    SortNode runtime tree loop at the very end of the scene.
+// 2. Forcing these transparent primitives through static multipass 
+//    arrays (_MASKED/_FOGMASKED) causes the culling "ss_renderflags" 
+//    buffers to return a blind zero. The engine drops texture unit 
+//    states completely, clips lights upon camera orbits, or throws 
+//    null pointer read crashes (Access Violation inside SetMaterial).
+// 3. Solution: Wrap the execution in GLDrawList::DoDraw (gl_drawinfo.cpp).
+//    This traps the primitive in the exact microsecond of its true 
+//    existence—immediately after the CPU pushes the translucent base.
+//    It preserves pristine OpenGL 1.1 blend states, enforces the rigid 
+//    GL_LEQUAL depth function, and executes a clean secondary light map 
+//    layer pass (GLPASS_LIGHTTEX) directly over the hot vertices.
+// 4. Multi-Layer Overdraw Attenuation Matrix (Anti-Hole Blowouts):
+//    To prevent cumulative light stacking spikes (where multi-level 3D 
+//    floors overlap inside deep floor holes, multiplying blending 
+//    values into radioactive sunset glares), we deploy a CPU-driven 
+//    Top-Layer Detector. Since tree traversal renders elements 
+//    Back-to-Front (from deep abyss to top lakes), the engine scans 
+//    height bounds in real-time. If it finds a higher flat inside the 
+//    same sector chunk, it clamps the hardware color channels via 
+//    gl_RenderState.SetColorMask(false). The GPU evaluates depth 
+//    values cleanly but halts writing color pixels, burying deep 
+//    shafts into natural matte darkness while keeping rich RGB color 
+//    channels fully open on the upper visible lake surfaces!
+//
+// FIXED-FUNCTION PIPELINE RULES:
+// * WHAT WE MUST NEVER DO (CRITICAL STATE CORRUPTION TRAPS):
+//   - NEVER duplicate translucent pointers inside "PutWall/PutFlat" 
+//     list collectors: this fatally breaks VBO index memory bounds.
+//   - NEVER cascade separate "DoDraw" passes inside "DoDrawSorted" loop: 
+//     shuttling fixed states per-each separate node forces the state 
+//     cacher to drift, wiping out monster sprites sorting arrays.
+//   - NEVER invoke modelview resets like "glLoadIdentity()" or push 
+//     attrib matrix loops: this breaks the viewport culling matrix, 
+//     pinning lights to screen center space and painting HUD white.
+//   - NEVER alter global vertex shading registers using cached 
+//     "SetColor" during flat passes: the cacher explicitly strips 
+//     vertex alpha layers, instantly culling the background skybox.
+//
+// FILE: gl_drawinfo.cpp
+// METHOD: void GLDrawList::DoDraw(int pass, int i, bool trans)
+//
+//void GLDrawList::DoDraw(int pass, int i, bool trans)
+//{
+//	// STEP 1: Render base translucent surface
+//	switch(drawitems[i].rendertype)
+//	{
+//	case GLDIT_FLAT:
+//		RenderFlat.Clock();
+//		flats[drawitems[i].index].Draw(pass, trans);
+//		RenderFlat.Unclock();
+//		break;
+//	case GLDIT_WALL:
+//		RenderWall.Clock();
+//		walls[drawitems[i].index].Draw(pass);
+//		RenderWall.Unclock();
+//		break;
+//	case GLDIT_SPRITE:
+//		RenderSprite.Clock();
+//		sprites[drawitems[i].index].Draw(pass);
+//		RenderSprite.Unclock();
+//		break;
+//	}
+//
+//	// STEP 2: Hardware color mask filtration
+//	if(pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
+//	{
+//		int type = drawitems[i].rendertype;
+//		int idx = drawitems[i].index;
+//
+//		if(type == GLDIT_FLAT || type == GLDIT_WALL)
+//		{
+//			// Fog boundary protection
+//			if(type == GLDIT_WALL && walls[idx].type == RENDERWALL_FOGBOUNDARY)
+//			{
+//				float d1 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y,
+//							   walls[idx].glseg.x1, walls[idx].glseg.y1);
+//				float d2 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y,
+//							   walls[idx].glseg.x2, walls[idx].glseg.y2);
+//				if(d1 < 576.0f || d2 < 576.0f) return;
+//			}
+//
+//			// Setup light texture
+//			if(gl_SetupLightTexture())
+//			{
+//				// Disable fog and set blend mode
+//				gl_RenderState.EnableFog(false);
+//				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+//				gl_RenderState.Apply();
+//
+//				glDisable(GL_FOG);
+//				glDepthFunc(GL_LEQUAL);
+//				glDepthMask(false);
+//				glBlendFunc(GL_DST_COLOR, GL_ONE);
+//				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+//
+//				// Anti-overdraw engine
+//				bool maskOut = false;
+//				if(type == GLDIT_FLAT)
+//				{
+//					GLFlat* f = &flats[idx];
+//					if(f && f->sector && (r_viewpoint.Pos.Z - f->z) > 0.0f)
+//					{
+//						float cz = f->z;
+//						for(unsigned j = 0; j < flats.Size(); j++)
+//						{
+//							if(flats[j].sector == f->sector && flats[j].z > cz)
+//							{
+//								maskOut = true;
+//								break;
+//							}
+//						}
+//					}
+//				}
+//
+//				// Apply color mask if needed
+//				if(maskOut)
+//				{
+//					gl_RenderState.SetColorMask(false, false, false, false);
+//					gl_RenderState.ApplyColorMask();
+//				}
+//
+//				// Overlay light maps
+//				if(type == GLDIT_WALL)
+//					walls[idx].Draw(GLPASS_LIGHTTEX);
+//				else if(type == GLDIT_FLAT)
+//					flats[idx].Draw(GLPASS_LIGHTTEX, trans);
+//
+//				// Restore state
+//				if(maskOut)
+//				{
+//					gl_RenderState.ResetColorMask();
+//					gl_RenderState.ApplyColorMask();
+//				}
+//
+//				glEnable(GL_FOG);
+//				glDepthMask(true);
+//				glDepthFunc(GL_LESS);
+//				gl_RenderState.EnableFog(true);
+//				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+//				gl_RenderState.Apply();
+//			}
+//		}
+//	}
+//}
+//
+// RELATED FILES:
+// gl_20.cpp, gl_walls_draw.cpp, gl_flats_draw.cpp, gl_walls.cpp, gl_scene.cpp
+//
+// gl_sprites.cpp, gl_scene.cpp, gl_models.cpp in brightmaps:
+// glEnable(GL_POLYGON_OFFSET_FILL);
+// glPolygonOffset(-0.5f, -0.5f);
+//
+// Must be kept in clean factory baseline state - no experimental changes.
+// All custom passes, queues, and matrix modifications have been removed.
+//-------------------------------------------------------------------------
 
 #include "gl_20.h"
 #include "gl/dynlights/gl_dynlightcache.h"
@@ -1988,8 +2168,8 @@ static bool gl_CheckFog(FColormap *cm, int lightlevel)
 
 bool GLWall::PutWallCompat(int passflag)
 {
-	static int list_indices[2][2] =
-	{ { GLLDL_WALLS_PLAIN, GLLDL_WALLS_FOG },{ GLLDL_WALLS_MASKED, GLLDL_WALLS_FOGMASKED } };
+	static int list_indices[2][3] =
+	{ { GLLDL_WALLS_PLAIN, GLLDL_WALLS_FOG },{ GLLDL_WALLS_MASKED, GLLDL_WALLS_FOGMASKED, GLLDL_WALLS_TRANSL} };
 
 	// ALLOW M2SNF and M2S to have lights!
 	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || seg->sidedef == nullptr || !gltexture) return false;
@@ -2718,6 +2898,10 @@ void GLSceneDrawer::RenderMultipassStuff()
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX_ADDITIVE);
 		}
 	}
+
+	// Seventh pass: transluscent surfaces dynlights.
+	// Do NOT do transluscent surfaces dynlights here because they live really short and won't get here.
+	// To do it, modify gl_drawinfo.cpp, DoDraw function as it's done. Also care about fogboundaries.
 
 	glDepthMask(true);
 

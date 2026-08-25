@@ -409,9 +409,62 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		break;
 
 	case GLPASS_TRANSLUCENT:
-		if (renderstyle==STYLE_Add) gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
-		mDrawer->SetColor(lightlevel, rel, Colormap, alpha);
-		mDrawer->SetFog(lightlevel, rel, &Colormap, false);
+	{
+		//==========================================================================
+		// [Darkcrafter07] - PURE CPU DYNAMIC LIGHT INJECTOR FOR LEGACY 3D-WATER
+		//==========================================================================
+		int adjustedLightLevel = lightlevel;
+
+		// Сбор света работает глобально для ВСЕХ легаси режимов (GL 1.1, GL 1.3, GL 2.x)
+		if (gl.legacyMode && sector && sector->lighthead)
+		{
+			float totalFlatCpuIntensity = 0.0f;
+			float baseFactor = 0.15f; // Safe baseline fallback scaling factor
+			float flatZ = (float)this->z;
+
+			// Напрямую читаем активные источники света из живого секторного буфера!
+			FLightNode *node = sector->lighthead;
+
+			// Сканируем расстояния от взрывов/плазмы до центра флата воды на процессоре
+			while (node)
+			{
+				FDynamicLight *light = node->lightsource;
+				if (light && light->IsActive() && light->GetRadius() > 0.0f)
+				{
+					float radius = light->GetRadius();
+
+					// Вычисляем дистанцию до плоскости воды по осям X, Y, Z
+					float dx = (float)sector->centerspot.X - (float)light->X();
+					float dy = (float)sector->centerspot.Y - (float)light->Y();
+					float dz = flatZ - (float)light->Z();
+					float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
+
+					if (dist2 < (radius * radius))
+					{
+						float dist = sqrtf(dist2);
+						// Мягкая софтверная кривая затухания света
+						totalFlatCpuIntensity += (1.0f - (dist / radius)) * baseFactor * 5.0f; // Сочный пунш для воды
+					}
+				}
+				node = node->nextLight;
+			}
+
+			if (totalFlatCpuIntensity > 0.0f)
+			{
+				if (totalFlatCpuIntensity > 0.75f) totalFlatCpuIntensity = 0.75f; // Защитное плато пересвета
+
+				// Переводим софтверную интенсивность в байтовый lightlevel движка (0-255)
+				adjustedLightLevel += (int)(totalFlatCpuIntensity * 255.0f);
+				if (adjustedLightLevel > 255) adjustedLightLevel = 255;
+			}
+		}
+
+		if (renderstyle == STYLE_Add) gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
+
+		// Скармливаем наш динамически подсвеченный на ЦП lightlevel в кэшер движка!
+		mDrawer->SetColor(adjustedLightLevel, rel, Colormap, alpha);
+		mDrawer->SetFog(adjustedLightLevel, rel, &Colormap, false);
+
 		if (!gltexture || !gltexture->tex->isFullbright())
 			gl_RenderState.SetObjectColor(FlatColor | 0xff000000);
 		if (!gltexture)
@@ -421,7 +474,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 			DrawSubsectors(pass, false, true);
 			gl_RenderState.EnableTexture(true);
 		}
-		else 
+		else
 		{
 			if (!gltexture->GetTransparent()) gl_RenderState.AlphaFunc(GL_GEQUAL, gl_mask_threshold);
 			else gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
@@ -430,9 +483,10 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 			DrawSubsectors(pass, !gl.legacyMode && (gl.lightmethod == LM_DIRECT || dynlightindex > -1), true);
 			gl_RenderState.EnableTextureMatrix(false);
 		}
-		if (renderstyle==STYLE_Add) gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		if (renderstyle == STYLE_Add) gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		gl_RenderState.SetObjectColor(0xffffffff);
 		break;
+	}
 
 	case GLPASS_LIGHTTEX:
 	case GLPASS_LIGHTTEX_ADDITIVE:
@@ -738,6 +792,12 @@ inline void GLFlat::PutFlat(bool fog)
 	if (gl.legacyMode)
 	{
 		if (PutFlatCompat(fog)) return;
+	}
+	if (gl.gl1path && gl.gl1_v1dot1)
+	{
+		// GL1.1 limitations, GL1.3 does NOT need this
+		if      (alpha <= 0.51f) alpha = 0.51f; // GL1.1 limitation, can't be more transparent than this
+		else if (alpha <= 0.1f)  alpha = 0.01f; // I reckon, if it's super transparent, make it disappear at all
 	}
 	if (renderstyle!=STYLE_Translucent || alpha < 1.f - FLT_EPSILON || fog || gltexture == NULL)
 	{

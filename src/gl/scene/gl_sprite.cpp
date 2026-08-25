@@ -491,6 +491,9 @@ void GLSprite::Draw(int pass)
 				{
 					// 1. Setup brigtmaps state
 					gl_RenderState.EnableFog(false);
+					glEnable(GL_POLYGON_OFFSET_FILL);
+					// Pull it a bit closer to the camera to counteract transluscent surfaces
+					glPolygonOffset(-0.5f, -0.5f);
 					gl_RenderState.BlendFunc(GL_ONE, GL_ONE); // Additive
 					//gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE); // Multiplicative
 					gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
@@ -540,6 +543,7 @@ void GLSprite::Draw(int pass)
 					gl_RenderState.EnableFog(!foglayer);
 					// Return the base material not to break the logic below
 					gl_RenderState.SetMaterial(gltexture, CLAMP_XY, translation, OverrideShader, !!(RenderStyle.Flags & STYLEF_RedIsAlpha));
+					glDisable(GL_POLYGON_OFFSET_FILL);
 				}
 			}
 			// --- Legacy GL1x/GL2x sprites brightmaps block finish ---

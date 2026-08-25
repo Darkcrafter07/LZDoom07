@@ -95,6 +95,13 @@ void GLWall::PutWall(bool translucent)
 		}
 	}
 
+	if (gl.gl1path && gl.gl1_v1dot1)
+	{
+		// GL1.1 limitations, GL1.3 does NOT need this
+		if      (alpha <= 0.51f) alpha = 0.51f; // GL1.1 limitation, can't be more transparent than this
+		else if (alpha <= 0.1f)  alpha = 0.01f; // I reckon, if it's super transparent, make it disappear at all
+	}
+
 	if (mDrawer->FixedColormap)
 	{
 		// light planes don't get drawn with fullbright rendering

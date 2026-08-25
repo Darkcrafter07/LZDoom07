@@ -370,6 +370,10 @@ void GLSceneDrawer::RenderScene(int recursion)
 				glDepthMask(false);       // Lock Z-Buffer writing to eliminate depth-fighting seams
 				glDepthFunc(GL_EQUAL);    // Only draw pixels that perfectly match existing coordinates
 
+				glEnable(GL_POLYGON_OFFSET_FILL);
+				// Pull it a bit closer to the camera to counteract transluscent surfaces
+				glPolygonOffset(-0.5f, -0.5f);
+
 				glEnable(GL_BLEND);
 				glBlendFunc(GL_DST_COLOR, GL_ONE); // Multiplicative overbright blending window
 
@@ -412,6 +416,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 				// FIXED-FUNCTION SYMMETRIC CONTEXT RESET
 				// Always pop the matrix target back to GL_MODELVIEW immediately to secure the sky rendering pipe!
 				glMatrixMode(GL_MODELVIEW);
+				glDisable(GL_POLYGON_OFFSET_FILL);
 
 				// Restore raw OpenGL hardware states back cleanly immediately!
 				glEnable(GL_FOG);

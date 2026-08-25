@@ -50,7 +50,25 @@
 #include "gl/stereo3d/scoped_color_mask.h"
 #include "gl/renderer/gl_quaddrawer.h"
 
+#include "gl/compatibility/gl_20.h"
+
 FDrawInfo * gl_drawinfo;
+
+//==========================================================================
+//
+//
+//
+//==========================================================================
+// Custom hardware data-prefetch wrapper for multi-compiler support (MSVC / GCC / Clang)
+#if defined(_MSC_VER)
+	#include <xmmintrin.h>
+	#define GL_PREFETCH_DATA(addr) _mm_prefetch((const char*)(addr), _MM_HINT_T0)
+#elif defined(__GNUC__) || defined(__clang__)
+	// __builtin_prefetch(addr, rw, locality) -> rw=0 (read), locality=3 (heavy spatial persistence L1)
+	#define GL_PREFETCH_DATA(addr) __builtin_prefetch((const void*)(addr), 0, 3)
+#else
+	#define GL_PREFETCH_DATA(addr) ((void)0) // Fallback for unknown compilers
+#endif
 
 //==========================================================================
 //
@@ -717,36 +735,144 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 //
 //
 //==========================================================================
+
 void GLDrawList::DoDraw(int pass, int i, bool trans)
 {
-	switch(drawitems[i].rendertype)
+	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
+	// Draws the base translucent water or glass plane with its authentic transparency
+	switch (drawitems[i].rendertype)
 	{
 	case GLDIT_FLAT:
-		{
-			GLFlat * f=&flats[drawitems[i].index];
-			RenderFlat.Clock();
-			f->Draw(pass, trans);
-			RenderFlat.Unclock();
-		}
+	{
+		GLFlat * f = &flats[drawitems[i].index];
+		RenderFlat.Clock();
+		f->Draw(pass, trans);
+		RenderFlat.Unclock();
 		break;
+	}
 
 	case GLDIT_WALL:
-		{
-			GLWall * w=&walls[drawitems[i].index];
-			RenderWall.Clock();
-			w->Draw(pass);
-			RenderWall.Unclock();
-		}
+	{
+		GLWall * w = &walls[drawitems[i].index];
+		RenderWall.Clock();
+		w->Draw(pass);
+		RenderWall.Unclock();
 		break;
+	}
 
 	case GLDIT_SPRITE:
-		{
-			GLSprite * s=&sprites[drawitems[i].index];
-			RenderSprite.Clock();
-			s->Draw(pass);
-			RenderSprite.Unclock();
-		}
+	{
+		GLSprite * s = &sprites[drawitems[i].index];
+		RenderSprite.Clock();
+		s->Draw(pass);
+		RenderSprite.Unclock();
 		break;
+	}
+	}
+
+	// STAGE 2: [Darkcrafter07] - HARDWARE COLOR OVERDRAW LOCK PIPELINE
+	if (pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
+	{
+		int currentRenderType = drawitems[i].rendertype;
+		int index = drawitems[i].index;
+
+		// MASTER FILTER: Strictly isolate monster sprites from lightmap registers
+		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
+		{
+			// Near-clip frustum protection gateway against fog boundary screen flashes
+			if (currentRenderType == GLDIT_WALL)
+			{
+				GLWall* checkWall = &walls[index];
+				if (checkWall && checkWall->type == RENDERWALL_FOGBOUNDARY)
+				{
+					float fCheckDist1 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, checkWall->glseg.x1, checkWall->glseg.y1);
+					float fCheckDist2 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, checkWall->glseg.x2, checkWall->glseg.y2);
+					if (fCheckDist1 < 576.0f || fCheckDist2 < 576.0f)
+					{
+						return;
+					}
+				}
+			}
+
+			// Securely bind the monochrome dynamic light maps from the cacher
+			if (gl_SetupLightTexture())
+			{
+				// Clear cached fog flags to eliminate boundary blowout flashes
+				gl_RenderState.EnableFog(false);
+				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+				gl_RenderState.Apply(); // Flush cached layers
+
+				glDisable(GL_FOG);
+				glDepthFunc(GL_LEQUAL); // Rigid lock to secure inverted depth vectors
+				glDepthMask(false);
+				glBlendFunc(GL_DST_COLOR, GL_ONE);
+
+				// Keep base vertex color register perfectly pure and white to unlock full RGB channels
+				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+
+				// HARDWARE COLOR MASK FILTRATION GATWAY (SELECT CUMULATIVE LAYERS)
+				// We traverse the compiled flats array using backfalls heights.
+				// If this flat belongs to a deep stacked 3D-floor hole,
+				// shut down the hardware color channels (SetColorMask false)
+				// This guarantees 100% rich color mapping on top lake primitives,
+				// while completely killing dynamic overburn glows inside the deep hole
+				bool maskColorChannelsOut = false;
+
+				if (currentRenderType == GLDIT_FLAT)
+				{
+					GLFlat* f = &flats[index];
+					if (f && f->sector && ((float)r_viewpoint.Pos.Z - (float)f->z) > 0.0f)
+					{
+						float currentFlatZ = (float)f->z;
+						// Scan all active flats inside the same sector chunk
+						for (unsigned int j = 0; j < flats.Size(); j++)
+						{
+							if (flats[j].sector == f->sector && (float)flats[j].z > currentFlatZ)
+							{
+								maskColorChannelsOut = true; // Found top-layer floor, current item is hidden
+								break;
+							}
+						}
+					}
+				}
+
+				// If it's a hidden layer in the abyss, trigger the hardware color lock shield
+				if (maskColorChannelsOut)
+				{
+					gl_RenderState.SetColorMask(false, false, false, false);
+					gl_RenderState.ApplyColorMask(); // Tell the GPU to completely stop writing pixels
+				}
+
+				// STEP 3: OVERLAY HARDWARE LIGHT MAP CHANNELS
+				if (currentRenderType == GLDIT_WALL)
+				{
+					GLWall * w = &walls[index];
+					if (w) w->Draw(GLPASS_LIGHTTEX); // Native legacy walls light builders
+				}
+				else if (currentRenderType == GLDIT_FLAT)
+				{
+					GLFlat * f = &flats[index];
+					if (f) f->Draw(GLPASS_LIGHTTEX, trans); // Native legacy flats light builders
+				}
+
+				// HARDWARE REGISTERS RESTORATION GATEWAY: Reset pipeline back to factory defaults
+				if (maskColorChannelsOut)
+				{
+					gl_RenderState.ResetColorMask();
+					gl_RenderState.ApplyColorMask(); // Unblock hardware color channels
+				}
+
+				glEnable(GL_FOG);
+				glDepthMask(true);
+				glDepthFunc(GL_LESS);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+				// Re-synchronize cached layer for subsequent sprite pipelines
+				gl_RenderState.EnableFog(true);
+				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				gl_RenderState.Apply();
+			}
+		}
 	}
 }
 
@@ -839,6 +965,68 @@ void GLDrawList::DrawSorted()
 		glDisable(GL_CLIP_DISTANCE2);
 	}
 	gl_RenderState.ClearClipSplit();
+}
+
+//==========================================================================
+//
+// [Darkcrafter07] - HARDWARE BATCH TREE WALKER FOR MULTIPASS LIGHTING
+// UNUSED
+//
+//==========================================================================
+// This functions traverses the pre-compiled Back-to-Front Sorted tree,
+// but executes strictly the dynamic lightmap pass for geometry walls and flats!
+void GLDrawList::DoTranslucentBatchLights(SortNode * head)
+{
+	if (!head) return;
+
+	// 1. Traverse left tree branch (further away)
+	if (head->left)
+	{
+		DoTranslucentBatchLights(head->left);
+	}
+
+	// 2. THE ULTIMATE HARDWARE INJECTION: Evaluate the current hot sorted primitive
+	int renderType = drawitems[head->itemindex].rendertype;
+
+	// Strictly process 3D-water flats and glass walls, completely bypassing sprites!
+	// This mirrors your perfect culling protection, making for freeze-free monster sorting!
+	if (renderType == GLDIT_FLAT || renderType == GLDIT_WALL)
+	{
+		// Force execute low-level Draw loop in raw dynamic lightmap channel!
+		// This generates flawless 3D texture projection paths for plasma guns and flashlights!
+		DoDraw(GLPASS_LIGHTTEX, head->itemindex, true);
+	}
+
+	// 3. Traverse identical overlapping sub-slabs layers (like multilayered 3D-water floors)
+	if (head->equal)
+	{
+		SortNode * ehead = head->equal;
+		while (ehead)
+		{
+			int dupType = drawitems[ehead->itemindex].rendertype;
+			if (dupType == GLDIT_FLAT || dupType == GLDIT_WALL)
+			{
+				DoDraw(GLPASS_LIGHTTEX, ehead->itemindex, true);
+			}
+			ehead = ehead->equal;
+		}
+	}
+
+	// 4. Traverse right tree branch (closer to viewer)
+	if (head->right)
+	{
+		DoTranslucentBatchLights(head->right);
+	}
+}
+
+// Global entry gate called directly from the core multipass engine loop
+void GLDrawList::DrawTranslucentBatchLights()
+{
+	// If the sorted tree doesn't exist yet in memory or list is empty, skip execution safely
+	if (drawitems.Size() == 0 || !sorted) return;
+
+	// Directly pass the compiled root node into our strict geometry light mapping conveyor
+	DoTranslucentBatchLights(sorted);
 }
 
 //==========================================================================
