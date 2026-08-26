@@ -109,8 +109,8 @@ void gl_FillScreen();
 // - dynlights are now rendered to all surfaces (remove faulty normals check);
 // - dynlights are now rendered properly even to the foggy surfaces;
 // - dynlights rendered even on midtextures with binary transparency;
-// - TODO. Dynlights aren't rendered yet on transluscent surfaces
-//  (idea to render them just like sprites, that should work);
+// - dynlights are now rendered on transluscent map geometry surfaces like
+//   3D floors (walls and flats) and also reflective flats;
 //
 // The software renderer alike camera glow is rendered by spawning
 // a special dynlight handled by these files:
