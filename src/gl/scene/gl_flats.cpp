@@ -1,4 +1,4 @@
-// 
+﻿// 
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2000-2016 Christoph Oelckers
@@ -410,21 +410,95 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 	case GLPASS_TRANSLUCENT:
 	{
-
-		int safeTranslucentLight = lightlevel;
 		if (gl.legacyMode && sector && sector->special != GLSector_Skybox)
 		{
-			// in GL1x/GL2x very dark transcluscent surfaces disappear, 
+			// In GL1x/GL2x very dark translucent surfaces disappear, 
 			// ... thus we can't make them darker than this
 			if (lightlevel < 100) lightlevel = 100;
-			if (safeTranslucentLight < 100) safeTranslucentLight = 100;
+		}
+
+		int adjustedLightLevel = lightlevel;
+		const float brightnessBoost = 0.55f;
+		const int darkSurfLightlevelThresh = 150;
+		float reduceBoostOnDarkSurf = 0.75f;
+
+		if (gl.legacyMode && lightlevel < darkSurfLightlevelThresh)
+		{
+			// Linear decay multiplier: maps safely from 1.0f down to 0.45f inside deep shadows
+			reduceBoostOnDarkSurf = 0.45f + ((float)(lightlevel - 100) / ((float)darkSurfLightlevelThresh - 100.0f)) * 0.55f;
+		}
+
+		if (gl.legacyMode && sector && sector->lighthead && sector->special != GLSector_Skybox)
+		{
+			// 1. Detect a mirrored - reflected surface by an overlay style
+			bool isTrueMirrorOverlay = (renderstyle == STYLE_Add);
+
+			// 2. Detect a mirrored - reflected surface by "reflect" array on map sector
+			int realSectorIndex = sector->sectornum;
+			if (!isTrueMirrorOverlay && realSectorIndex >= 0 && realSectorIndex < (int)level.sectors.Size())
+			{
+				sector_t* realSector = &level.sectors[realSectorIndex];
+				if (realSector && realSector->reflect[0] > 0.0f) // 0 == sector_t::floor
+				{
+					isTrueMirrorOverlay = true;
+				}
+			}
+
+			// So far, this is for transluscent 3D floors.
+			// Do NOT use boost or turn it OFF for mirrored - reflected surface or a skybox
+			// Handle mirrored surfaces brightness in gl_20.cpp, "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy"
+			if (!isTrueMirrorOverlay)
+			{
+				float totalFlatCpuIntensity = 0.0f;
+
+				// Inject the secure reduceBoostOnDarkSurf factor straight into base CPU calculation
+				float baseFactor = 0.15f * brightnessBoost * reduceBoostOnDarkSurf;
+				float flatZ = (float)this->z;
+
+				// Read active dynlights from the alive sector buffer
+				FLightNode *node = sector->lighthead;
+
+				// Scan distances from dynlights to flat surface center on a CPU
+				while (node)
+				{
+					FDynamicLight *light = node->lightsource;
+					if (light && light->IsActive() && light->GetRadius() > 0.0f)
+					{
+						float radius = light->GetRadius();
+
+						// Calc distance to flat surface by X, Y, Z axes
+						float dx = (float)sector->centerspot.X - (float)light->X();
+						float dy = (float)sector->centerspot.Y - (float)light->Y();
+						float dz = flatZ - (float)light->Z();
+						float flatDist2 = (dx * dx) + (dy * dy) + (dz * dz);
+
+						if (flatDist2 < (radius * radius))
+						{
+							float dist = sqrtf(flatDist2);
+							// Soft light CPU fade curve
+							totalFlatCpuIntensity += (1.0f - (dist / radius)) * baseFactor * 5.0f;
+						}
+					}
+					node = node->nextLight;
+				}
+
+				if (totalFlatCpuIntensity > 0.0f)
+				{
+					// Protective plateau
+					if (totalFlatCpuIntensity > 0.75f) totalFlatCpuIntensity = 0.75f;
+
+					// Convert software intensity to byte based engine lightlevel (0-255)
+					adjustedLightLevel += (int)(totalFlatCpuIntensity * 255.0f);
+					if (adjustedLightLevel > 255) adjustedLightLevel = 255;
+				}
+			}
 		}
 
 		if (renderstyle == STYLE_Add) gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-		// Pass our dynamically stabilized safeTranslucentLight instead of raw crushed lightlevel!
-		mDrawer->SetColor(safeTranslucentLight, rel, Colormap, alpha);
-		mDrawer->SetFog(safeTranslucentLight, rel, &Colormap, false);
+		// Feed the resulting light to the engine cache
+		mDrawer->SetColor(adjustedLightLevel, rel, Colormap, alpha);
+		mDrawer->SetFog(adjustedLightLevel, rel, &Colormap, false);
 
 		if (!gltexture || !gltexture->tex->isFullbright())
 			gl_RenderState.SetObjectColor(FlatColor | 0xff000000);

@@ -173,18 +173,13 @@
 //    into geometric VBO arrays ("dldrawlists") during BSP traversal.
 //    Instead, they are compiled dynamically inside the back-to-front 
 //    SortNode runtime tree loop at the very end of the scene.
-// 2. Forcing these transparent primitives through static multipass 
-//    arrays (_MASKED/_FOGMASKED) causes the culling "ss_renderflags" 
-//    buffers to return a blind zero. The engine drops texture unit 
-//    states completely, clips lights upon camera orbits, or throws 
-//    null pointer read crashes (Access Violation inside SetMaterial).
-// 3. Solution: Wrap the execution in GLDrawList::DoDraw (gl_drawinfo.cpp).
+// 2. Multi-Pass Cascade State Protection: Forcing transparent primitives 
+//    through static arrays causes the state cacher to drift, throwing 
+//    null pointer read crashes or completely culling the background skybox.
+//    Solution: Wrap the execution in GLDrawList::DoDraw (gl_drawinfo.cpp).
 //    This traps the primitive in the exact microsecond of its true 
 //    existence—immediately after the CPU pushes the translucent base.
-//    It preserves pristine OpenGL 1.1 blend states, enforces the rigid 
-//    GL_LEQUAL depth function, and executes a clean multi-pass cascade 
-//    directly over the hot geometry, completely isolating light flags.
-// 4. Multi-Layer Overdraw Attenuation Matrix (Anti-Hole Blowouts):
+// 3. The 3D-Floor Overdraw Attenuation Matrix (Anti-Hole Blowouts):
 //    To prevent cumulative light stacking spikes (where multi-level 3D 
 //    floors overlap inside deep floor holes, multiplying blending 
 //    values into radioactive sunset glares), we deploy a CPU-driven 
@@ -196,6 +191,32 @@
 //    values cleanly but halts writing color pixels, burying deep 
 //    shafts into natural matte darkness while keeping rich RGB color 
 //    channels fully open on the upper visible lake surfaces!
+//
+// THE UDMF MIRROR SURFACE EXTRACTION SHIELD:
+// 1. Fixed-function hardware registers completely collapse when regular 
+//    or additive dynamic lights are forced to blend directly over active 
+//    planar mirror reflections or specular river overlays, generating a 
+//    permanent white-out blowout, and ugly yellow slime streaks.
+// 2. The gl_fakeflat.cpp Memory Leak Trap: During runtime sector cloning, 
+//    the factory "gl_FakeFlat" routine completely drops and breaks the 
+//    "reflect" array pointer inside temporary "dest" structs. Calling 
+//    a raw pointer check natively fails, bypassing reflectivity filters.
+// 3. Solution: Deploy standalone Thread-Local Context State Links 
+//    (g_CurrentSetupFlatContext / g_CurrentSetupWallContext) inside 
+//    gl_20.cpp, securely bridged with a logic gate invert negation operator 
+//    (!isTrueTranslucentFlat) right before calling Setup light systems!
+// 4. Symmetrical Sanitizer & Taming: The setup engine calls your custom 
+//    standalone "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy" filter 
+//    (using correct 0.22f intensity thresholds for monochrome lamps).
+//    The flat loop reads uncorrupted master array color signatures directly 
+//    inside "level.sectors[sector->sectornum].reflect" (0 == floor). 
+//    If any UDMF reflection value or a secondary (renderstyle == STYLE_Add) 
+//    mirror pass is detected on the hot sector, the CPU-side dynamic 
+//    light brightness injector is forcefully shut down to 0.0f power!
+// 5. This shields the mirror buffer registers from experiencing color 
+//    overflows, smoothly separating 2x tamed dynamic light level boosts 
+//    on true 3D-floors (brightnessBoost = 0.55f / darkSurfLightlevelThresh = 150) 
+//    from pristine, deep analog mirror specular reflections on the river!
 //
 // THREE-PASS CASCADE HARDWARE CONVEYOR:
 // * Pass 1 (Modulated Lights): Enforces GL_DST_COLOR, GL_ONE blending 
@@ -222,136 +243,6 @@
 //   - NEVER alter global vertex shading registers using cached 
 //     "SetColor" during flat passes: the cacher explicitly strips 
 //     vertex alpha layers, instantly culling the background skybox.
-//
-// FILE: gl_drawinfo.cpp
-// METHOD: void GLDrawList::DoDraw(int pass, int i, bool trans)
-//
-//void GLDrawList::DoDraw(int pass, int i, bool trans)
-//{
-//	// STEP 1: Render base translucent surface
-//	switch(drawitems[i].rendertype)
-//	{
-//	case GLDIT_FLAT:
-//		RenderFlat.Clock();
-//		flats[drawitems[i].index].Draw(pass, trans);
-//		RenderFlat.Unclock();
-//		break;
-//	case GLDIT_WALL:
-//		RenderWall.Clock();
-//		walls[drawitems[i].index].Draw(pass);
-//		RenderWall.Unclock();
-//		break;
-//	case GLDIT_SPRITE:
-//		RenderSprite.Clock();
-//		sprites[drawitems[i].index].Draw(pass);
-//		RenderSprite.Unclock();
-//		break;
-//	}
-//
-//	// STEP 2: Hardware color mask filtration
-//	if(pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
-//	{
-//		int currentRenderType = drawitems[i].rendertype;
-//		int index = drawitems[i].index;
-//
-//		if(type == GLDIT_FLAT || type == GLDIT_WALL)
-//		{
-//			// Fog boundary protection
-//			if(type == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
-//			{
-//				float d1 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y,
-//							   walls[index].glseg.x1, walls[index].glseg.y1);
-//				float d2 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y,
-//							   walls[index].glseg.x2, walls[index].glseg.y2);
-//				if(d1 < 576.0f || d2 < 576.0f) return;
-//			}
-//
-//			// Setup light texture
-//			if(gl_SetupLightTexture())
-//			{
-//				// Disable fog and set blend mode
-//				gl_RenderState.EnableFog(false);
-//				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
-//				gl_RenderState.Apply();
-//
-//				glDisable(GL_FOG);
-//				glDepthFunc(GL_LEQUAL);
-//				glDepthMask(false);
-//				glBlendFunc(GL_DST_COLOR, GL_ONE);
-//				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-//
-//				// Anti-overdraw engine
-//				bool maskOut = false;
-//				if(type == GLDIT_FLAT)
-//				{
-//					GLFlat* f = &flats[index];
-//					if(f && f->sector && (r_viewpoint.Pos.Z - f->z) > 0.0f)
-//					{
-//						float cz = f->z;
-//						for(unsigned j = 0; j < flats.Size(); j++)
-//						{
-//							if(flats[j].sector == f->sector && flats[j].z > cz)
-//							{
-//								maskOut = true;
-//								break;
-//							}
-//						}
-//					}
-//				}
-//
-//				// Apply color mask if needed
-//				if(maskOut)
-//				{
-//					gl_RenderState.SetColorMask(false, false, false, false);
-//					gl_RenderState.ApplyColorMask();
-//				}
-//
-//				// --- PIPELINE CASCADE PASS 1: REGULAR MODULATED ---
-//				glBlendEquation(GL_FUNC_ADD);
-//				glBlendFunc(GL_DST_COLOR, GL_ONE);
-//				glColor4f(currentAlphaDamp, currentAlphaDamp, currentAlphaDamp, 1.0f);
-//				if(type == GLDIT_WALL)
-//					walls[index].Draw(GLPASS_LIGHTTEX);
-//				else if(type == GLDIT_FLAT)
-//					flats[index].Draw(GLPASS_LIGHTTEX, trans);
-//
-//				// --- PIPELINE CASCADE PASS 2: SPECIAL ADDITIVE ---
-//				glBlendEquation(GL_FUNC_ADD);
-//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-//				glColor4f(0.12f, 0.12f, 0.12f, currentAlphaDamp);
-//				if(type == GLDIT_WALL)
-//					walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
-//				else if(type == GLDIT_FLAT)
-//					flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
-//
-//				// --- PIPELINE CASCADE PASS 3: SPECIAL SUBTRACTIVE ---
-//				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-//				glColor4f(0.05f, 0.05f, 0.05f, currentAlphaDamp);
-//				if(type == GLDIT_WALL)
-//					walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
-//				else if(type == GLDIT_FLAT)
-//					flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
-//
-//				// Restore state
-//				if(maskOut)
-//				{
-//					gl_RenderState.ResetColorMask();
-//					gl_RenderState.ApplyColorMask();
-//				}
-//
-//				glBlendEquation(GL_FUNC_ADD); // Hard reset fallback
-//
-//				glEnable(GL_FOG);
-//				glDepthMask(true);
-//				glDepthFunc(GL_LESS);
-//				gl_RenderState.EnableFog(true);
-//				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-//				gl_RenderState.Apply();
-//			}
-//		}
-//	}
-//}
 //
 // RELATED FILES:
 // gl_20.cpp, gl_walls_draw.cpp, gl_flats_draw.cpp, gl_walls.cpp, gl_scene.cpp
@@ -823,20 +714,23 @@ struct FLightColorContext
 	float maxColor;
 	float minColor;
 	float chroma;
+	float localChroma;
+	const float invMul255 = 1.0f / 255.0f;
 
 	FLightColorContext(FDynamicLight* light)
 	{
-		r = light->GetRed() / 255.0f;
-		g = light->GetGreen() / 255.0f;
-		b = light->GetBlue() / 255.0f;
+		r = light->GetRed()   * invMul255;
+		g = light->GetGreen() * invMul255;
+		b = light->GetBlue()  * invMul255;
 
 		maxColor = r; if (g > maxColor) maxColor = g; if (b > maxColor) maxColor = b;
 		minColor = r; if (g < minColor) minColor = g; if (b < minColor) minColor = b;
 		chroma = maxColor - minColor;
+		localChroma = chroma; // Default baseline initial sync
 	}
 };
 
-void gl_dynlightSaturateLegacy(float &r, float &g, float &b, float current_boost, float radius, const FLightColorContext &ctx)
+void gl_dynlightSaturateLegacy(float &r, float &g, float &b, float current_boost, float radius, FLightColorContext &ctx)
 {
 	// Prevent logic executions on zero/dead light nodes
 	if (ctx.maxColor > 0.001f)
@@ -851,10 +745,10 @@ void gl_dynlightSaturateLegacy(float &r, float &g, float &b, float current_boost
 		// Re-evaluate limits after saturation boost locally
 		float localMax = r; if (g > localMax) localMax = g; if (b > localMax) localMax = b;
 		float localMin = r; if (g < localMin) localMin = g; if (b < localMin) localMin = b;
-		float localChroma = localMax - localMin;
+		ctx.localChroma = localMax - localMin;
 
 		// HARD CRITERIA: Execute hue shifting ONLY on colored lights larger than 768 units radius
-		if (ctx.chroma >= 0.10f && localChroma > 0.05f && radius >= 768.0f)
+		if (ctx.chroma >= 0.10f && ctx.localChroma > 0.05f && radius >= 768.0f)
 		{
 			// --- STEP-BY-STEP CASCADE HUE SHIFT CALCULATION (+5 per size tier) ---
 			float                                             sizeShiftModifier = 0.0f; // Base level
@@ -882,24 +776,24 @@ void gl_dynlightSaturateLegacy(float &r, float &g, float &b, float current_boost
 			if (final_shift > 0.001f)
 			{
 				float h = 0.0f;
-				if (localMax == r) { h = (g - b) / localChroma; if (h < 0.0f) h += 6.0f; }
-				else if (localMax == g) { h = (b - r) / localChroma + 2.0f; }
-				else { h = (r - g) / localChroma + 4.0f; }
+				if (localMax == r) { h = (g - b) / ctx.localChroma; if (h < 0.0f) h += 6.0f; }
+				else if (localMax == g) { h = (b - r) / ctx.localChroma + 2.0f; }
+				else { h = (r - g) / ctx.localChroma + 4.0f; }
 				h *= 60.0f;
 
 				h += final_shift;
 				if (h >= 360.0f) h -= 360.0f;
 
 				float hPrime = h / 60.0f;
-				float x = localChroma * (1.0f - fabsf(fmodf(hPrime, 2.0f) - 1.0f));
+				float x = ctx.localChroma * (1.0f - fabsf(fmodf(hPrime, 2.0f) - 1.0f));
 				float r1 = 0.0f, g1 = 0.0f, b1 = 0.0f;
 
-				if (hPrime >= 0.0f && hPrime < 1.0f) { r1 = localChroma; g1 = x; }
-				else if (hPrime >= 1.0f && hPrime < 2.0f) { r1 = x; g1 = localChroma; }
-				else if (hPrime >= 2.0f && hPrime < 3.0f) { g1 = localChroma; b1 = x; }
-				else if (hPrime >= 3.0f && hPrime < 4.0f) { g1 = x; b1 = localChroma; }
-				else if (hPrime >= 4.0f && hPrime < 5.0f) { r1 = x; b1 = localChroma; }
-				else { r1 = localChroma; b1 = x; }
+				if      (hPrime >= 0.0f && hPrime < 1.0f) { r1 = ctx.localChroma; g1 = x; }
+				else if (hPrime >= 1.0f && hPrime < 2.0f) { r1 = x; g1 = ctx.localChroma; }
+				else if (hPrime >= 2.0f && hPrime < 3.0f) { g1 = ctx.localChroma; b1 = x; }
+				else if (hPrime >= 3.0f && hPrime < 4.0f) { g1 = x; b1 = ctx.localChroma; }
+				else if (hPrime >= 4.0f && hPrime < 5.0f) { r1 = x; b1 = ctx.localChroma; }
+				else                                      { r1 = ctx.localChroma; b1 = x; }
 
 				float m = localMin;
 				r = r1 + m;
@@ -914,47 +808,39 @@ void gl_dynlightSaturateLegacy(float &r, float &g, float &b, float current_boost
 	}
 }
 
-// We need this for huge dynlights not to overexposure the surfaces
-void gl_dynlightTameBigLightsLegacy(float &r, float &g, float &b, float radius, const FLightColorContext &ctx, bool isTranslucent)
+// We need this for huge dynlights not to overexposure the mirrored surfaces
+void gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(FDynamicLight * light, float &r, float &g, float &b, float radius, bool isOpaque)
 {
-	// CHROMATIC INDIVIDUAL CHANNEL HDR ATTENUATOR CONVEYOR
-	// THE MASTER KEY: If this dynamic light is active, hits a transparent surface,
-	// and its radius is larger or equal to 768 units, we execute a soft 
-	// chromatic dampening algorithm directly on the processed channels.
-	// It smoothly calculates a white burn factor: pure monochrome lamps (chroma = 0) 
-	// get squashed up to 4x times down, while your beautiful colored sunset (chroma > 0.5) 
-	// preserves its rich, juicy RGB spectrum gradients without any darkening.
+	const float intensThresh = 0.22f; // max starting mirrored surface brightness
 
-	const float invMul1000 = 1.0f / 1000.0f;
-	if (isTranslucent && radius >= 768.0f && ctx.maxColor > 0.001f)
+	if (!isOpaque && radius >= 468.0f && light != nullptr && light->IsActive())
 	{
-		// Evaluate the white overload risk: monochrome lamps stay near 1.0f
-		float whiteBurnFactor = ctx.maxColor * (1.0f - ctx.chroma);
-		if (whiteBurnFactor > 1.0f) whiteBurnFactor = 1.0f;
-		if (whiteBurnFactor < 0.0f) whiteBurnFactor = 0.0f;
+		// Extract original, uncorrupted color signatures before any hue shifts
+		FLightColorContext colorCtx(light);
 
-		// Calculate the physical mass weight of this giant light emitter
-		float currentWeight = 1.0f / (1.0f + (radius * invMul1000));
-		float cumulativeWeight = currentWeight * (1.0f + whiteBurnFactor * 1.5f);
+		float minimumScaleLimit = intensThresh; // Default floor for monochrome lamps
 
-		// Dynamic threshold shifts floats from 0.05f (lamps) up to 0.35f (sunset)
-		float dynamicThreshold = 0.35f - (whiteBurnFactor * 0.30f);
-
-		if (cumulativeWeight > dynamicThreshold)
+		// Cascading chroma segregation gates
+		if (colorCtx.chroma >= 0.25f)
 		{
-			float individualChannelScale = dynamicThreshold / cumulativeWeight;
-
-			// Hard 4x squeeze applied exclusively over blinding white emitters
-			float intensitySqueeze = 1.0f - (whiteBurnFactor * 0.75f);
-			individualChannelScale *= intensitySqueeze;
-			if (individualChannelScale < 0.16f) individualChannelScale = 0.16f;
-
-			r *= individualChannelScale;
-			g *= individualChannelScale;
-			b *= individualChannelScale;
+			// Tier A: Highly colorful spectral emitters (pink sunset / neon plasma)
+			// 0.55f allows peak legacy luminosity without blowing out underlying reflections
+			minimumScaleLimit = 0.55f;
+		}
+		else if (colorCtx.chroma >= 0.10f)
+		{
+			// Tier B: Mildly colorful lights
+			minimumScaleLimit = 0.45f;
+		}
+		else
+		{
+			// Tier C: Perfectly colorless, blinding monochrome white proctors (lamps)
+			minimumScaleLimit = intensThresh; // Locked tightly at 0.18f
 		}
 
-		// Clean hardware clamping boundaries to secure fixed-function registers
+		// Apply the selected adaptive individual channel scale limits safely
+		r *= minimumScaleLimit; g *= minimumScaleLimit; b *= minimumScaleLimit;
+
 		if (r < 0.0f) r = 0.0f; else if (r > 1.0f) r = 1.0f;
 		if (g < 0.0f) g = 0.0f; else if (g > 1.0f) g = 1.0f;
 		if (b < 0.0f) b = 0.0f; else if (b > 1.0f) b = 1.0f;
@@ -962,15 +848,16 @@ void gl_dynlightTameBigLightsLegacy(float &r, float &g, float &b, float radius, 
 }
 
 // We need this to tame down subtractive and other lights if needed.
-// This is the only way to control their intensity for transluscent map geometry surfaces!
+// This is the only way to control their intensity for transluscent map geometry surfaces,
+// As well as subtractive both on transluscent and regular other map geometry surfaces!
 void gl_dynlightTameSpecialLightsLegacy(float &r, float &g, float &b, FDynamicLight* light)
 {
 	if (!gl.legacyMode || !light || !light->IsActive()) return;
 
 	// GLOBAL INTENSITY BALANCERS MULTIPLIERS PER DYNLIGHT TYPE
 	const float regularGlobalLightIntensity = 1.0f;
-	const float additiveGlobalLightIntensity = 1.0f;
-	const float SubtractiveGlobalLightIntensity = 0.75f;
+	const float additiveGlobalLightIntensity = 0.22f;
+	const float subtractiveGlobalLightIntensity = 0.22f;
 
 	//--- 1. REGULAR MODULATED CHANNELS (TEMPORARILY COMMENTED OUT) ---
 	//if (!light->IsAdditive() && !light->IsSubtractive())
@@ -981,19 +868,19 @@ void gl_dynlightTameSpecialLightsLegacy(float &r, float &g, float &b, FDynamicLi
 	//}
 
 	//--- 2. SPECIAL ADDITIVE CHANNELS (TEMPORARILY COMMENTED OUT) ---
-	//if (light->IsAdditive())
-	//{
-	//	r *= additiveGlobalLightIntensity;
-	//	g *= additiveGlobalLightIntensity;
-	//	b *= additiveGlobalLightIntensity;
-	//}
+	if (light->IsAdditive())
+	{
+		r *= additiveGlobalLightIntensity;
+		g *= additiveGlobalLightIntensity;
+		b *= additiveGlobalLightIntensity;
+	}
 	
 	// --- 3. SPECIAL SUBTRACTIVE ANTI-LIGHT CHANNELS (FULLY ACTIVE) ---
 	if (light->IsSubtractive())
 	{
-		r *= SubtractiveGlobalLightIntensity;
-		g *= SubtractiveGlobalLightIntensity;
-		b *= SubtractiveGlobalLightIntensity;
+		r *= subtractiveGlobalLightIntensity;
+		g *= subtractiveGlobalLightIntensity;
+		b *= subtractiveGlobalLightIntensity;
 	}
 
 	// Symmetrical fixed-function registers hardware boundaries safety lock
@@ -1233,7 +1120,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// This is the only way to control their intensity for transluscent map geometry surfaces!
 	gl_dynlightTameSpecialLightsLegacy(r, g, b, light);
 
-	// We need this for huge dynlights not to overexposure the walls surfaces
+	// We need this for huge dynlights not to overexposure the walls mirrored surfaces
 	if (g_CurrentSetupWallContext != nullptr)
 	{
 		// Safe extraction after non-null pointer assurance
@@ -1242,13 +1129,15 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 		if (isTrueTranslucentWall)
 		{
-			gl_dynlightTameBigLightsLegacy(r, g, b, radius, colorCtx, false);
+			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radius, !isTrueTranslucentWall);
 		}
 	}
 
 	if (light->IsSubtractive())
 	{
+		// Subtractive anti-light hole pass configuration
 		gl_RenderState.BlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+
 		float length = float(FVector3(r, g, b).Length());
 		r = length - r; g = length - g; b = length - b;
 	}
@@ -1256,6 +1145,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	{
 		gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	}
+
 	gl_RenderState.SetColor(r, g, b);
 	return true;
 }
@@ -1544,14 +1434,15 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// This is the only way to control their intensity for transluscent map geometry surfaces!
 	gl_dynlightTameSpecialLightsLegacy(r, g, b, light);
 
-	// We need this for huge dynlights not to overexposure the flat surfaces
+	// We need this for huge dynlights not to overexposure the flat mirrored surfaces
 	if (g_CurrentSetupFlatContext != nullptr)
 	{
 		// Safe extraction after non-null pointer assurance
-		bool isTrueTranslucentFlat = (!(p.Normal().Z != 0.0f) && g_CurrentSetupFlatContext->alpha <= 0.99f);
+		//bool isTrueTranslucentFlat = (!(p.Normal().Z != 0.0f) && g_CurrentSetupFlatContext->alpha <= 0.99f);
+		bool isTrueTranslucentFlat = (g_CurrentSetupFlatContext->alpha <= 0.99f);
 		if (isTrueTranslucentFlat)
 		{
-			gl_dynlightTameBigLightsLegacy(r, g, b, radius, colorCtx, true);
+			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radius, !isTrueTranslucentFlat);
 		}
 	}
 

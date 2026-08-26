@@ -230,18 +230,13 @@ void gl_FillScreen();
 //    into geometric VBO arrays ("dldrawlists") during BSP traversal.
 //    Instead, they are compiled dynamically inside the back-to-front 
 //    SortNode runtime tree loop at the very end of the scene.
-// 2. Forcing these transparent primitives through static multipass 
-//    arrays (_MASKED/_FOGMASKED) causes the culling "ss_renderflags" 
-//    buffers to return a blind zero. The engine drops texture unit 
-//    states completely, clips lights upon camera orbits, or throws 
-//    null pointer read crashes (Access Violation inside SetMaterial).
-// 3. Solution: Wrap the execution in GLDrawList::DoDraw (gl_drawinfo.cpp).
+// 2. Multi-Pass Cascade State Protection: Forcing transparent primitives 
+//    through static arrays causes the state cacher to drift, throwing 
+//    null pointer read crashes or completely culling the background skybox.
+//    Solution: Wrap the execution in GLDrawList::DoDraw (gl_drawinfo.cpp).
 //    This traps the primitive in the exact microsecond of its true 
 //    existence—immediately after the CPU pushes the translucent base.
-//    It preserves pristine OpenGL 1.1 blend states, enforces the rigid 
-//    GL_LEQUAL depth function, and executes a clean multi-pass cascade 
-//    directly over the hot geometry, completely isolating light flags.
-// 4. Multi-Layer Overdraw Attenuation Matrix (Anti-Hole Blowouts):
+// 3. The 3D-Floor Overdraw Attenuation Matrix (Anti-Hole Blowouts):
 //    To prevent cumulative light stacking spikes (where multi-level 3D 
 //    floors overlap inside deep floor holes, multiplying blending 
 //    values into radioactive sunset glares), we deploy a CPU-driven 
@@ -253,6 +248,32 @@ void gl_FillScreen();
 //    values cleanly but halts writing color pixels, burying deep 
 //    shafts into natural matte darkness while keeping rich RGB color 
 //    channels fully open on the upper visible lake surfaces!
+//
+// THE UDMF MIRROR SURFACE EXTRACTION SHIELD:
+// 1. Fixed-function hardware registers completely collapse when regular 
+//    or additive dynamic lights are forced to blend directly over active 
+//    planar mirror reflections or specular river overlays, generating a 
+//    permanent white-out blowout, and ugly yellow slime streaks.
+// 2. The gl_fakeflat.cpp Memory Leak Trap: During runtime sector cloning, 
+//    the factory "gl_FakeFlat" routine completely drops and breaks the 
+//    "reflect" array pointer inside temporary "dest" structs. Calling 
+//    a raw pointer check natively fails, bypassing reflectivity filters.
+// 3. Solution: Deploy standalone Thread-Local Context State Links 
+//    (g_CurrentSetupFlatContext / g_CurrentSetupWallContext) inside 
+//    gl_20.cpp, securely bridged with a logic gate invert negation operator 
+//    (!isTrueTranslucentFlat) right before calling Setup light systems!
+// 4. Symmetrical Sanitizer & Taming: The setup engine calls your custom 
+//    standalone "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy" filter 
+//    (using correct 0.22f intensity thresholds for monochrome lamps).
+//    The flat loop reads uncorrupted master array color signatures directly 
+//    inside "level.sectors[sector->sectornum].reflect" (0 == floor). 
+//    If any UDMF reflection value or a secondary (renderstyle == STYLE_Add) 
+//    mirror pass is detected on the hot sector, the CPU-side dynamic 
+//    light brightness injector is forcefully shut down to 0.0f power!
+// 5. This shields the mirror buffer registers from experiencing color 
+//    overflows, smoothly separating 2x tamed dynamic light level boosts 
+//    on true 3D-floors (brightnessBoost = 0.55f / darkSurfLightlevelThresh = 150) 
+//    from pristine, deep analog mirror specular reflections on the river!
 //
 // THREE-PASS CASCADE HARDWARE CONVEYOR:
 // * Pass 1 (Modulated Lights): Enforces GL_DST_COLOR, GL_ONE blending 
@@ -279,136 +300,6 @@ void gl_FillScreen();
 //   - NEVER alter global vertex shading registers using cached 
 //     "SetColor" during flat passes: the cacher explicitly strips 
 //     vertex alpha layers, instantly culling the background skybox.
-//
-// FILE: gl_drawinfo.cpp
-// METHOD: void GLDrawList::DoDraw(int pass, int i, bool trans)
-//
-//void GLDrawList::DoDraw(int pass, int i, bool trans)
-//{
-//	// STEP 1: Render base translucent surface
-//	switch(drawitems[i].rendertype)
-//	{
-//	case GLDIT_FLAT:
-//		RenderFlat.Clock();
-//		flats[drawitems[i].index].Draw(pass, trans);
-//		RenderFlat.Unclock();
-//		break;
-//	case GLDIT_WALL:
-//		RenderWall.Clock();
-//		walls[drawitems[i].index].Draw(pass);
-//		RenderWall.Unclock();
-//		break;
-//	case GLDIT_SPRITE:
-//		RenderSprite.Clock();
-//		sprites[drawitems[i].index].Draw(pass);
-//		RenderSprite.Unclock();
-//		break;
-//	}
-//
-//	// STEP 2: Hardware color mask filtration
-//	if(pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
-//	{
-//		int currentRenderType = drawitems[i].rendertype;
-//		int index = drawitems[i].index;
-//
-//		if(type == GLDIT_FLAT || type == GLDIT_WALL)
-//		{
-//			// Fog boundary protection
-//			if(type == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
-//			{
-//				float d1 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y,
-//							   walls[index].glseg.x1, walls[index].glseg.y1);
-//				float d2 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y,
-//							   walls[index].glseg.x2, walls[index].glseg.y2);
-//				if(d1 < 576.0f || d2 < 576.0f) return;
-//			}
-//
-//			// Setup light texture
-//			if(gl_SetupLightTexture())
-//			{
-//				// Disable fog and set blend mode
-//				gl_RenderState.EnableFog(false);
-//				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
-//				gl_RenderState.Apply();
-//
-//				glDisable(GL_FOG);
-//				glDepthFunc(GL_LEQUAL);
-//				glDepthMask(false);
-//				glBlendFunc(GL_DST_COLOR, GL_ONE);
-//				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-//
-//				// Anti-overdraw engine
-//				bool maskOut = false;
-//				if(type == GLDIT_FLAT)
-//				{
-//					GLFlat* f = &flats[index];
-//					if(f && f->sector && (r_viewpoint.Pos.Z - f->z) > 0.0f)
-//					{
-//						float cz = f->z;
-//						for(unsigned j = 0; j < flats.Size(); j++)
-//						{
-//							if(flats[j].sector == f->sector && flats[j].z > cz)
-//							{
-//								maskOut = true;
-//								break;
-//							}
-//						}
-//					}
-//				}
-//
-//				// Apply color mask if needed
-//				if(maskOut)
-//				{
-//					gl_RenderState.SetColorMask(false, false, false, false);
-//					gl_RenderState.ApplyColorMask();
-//				}
-//
-//				// --- PIPELINE CASCADE PASS 1: REGULAR MODULATED ---
-//				glBlendEquation(GL_FUNC_ADD);
-//				glBlendFunc(GL_DST_COLOR, GL_ONE);
-//				glColor4f(currentAlphaDamp, currentAlphaDamp, currentAlphaDamp, 1.0f);
-//				if(type == GLDIT_WALL)
-//					walls[index].Draw(GLPASS_LIGHTTEX);
-//				else if(type == GLDIT_FLAT)
-//					flats[index].Draw(GLPASS_LIGHTTEX, trans);
-//
-//				// --- PIPELINE CASCADE PASS 2: SPECIAL ADDITIVE ---
-//				glBlendEquation(GL_FUNC_ADD);
-//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-//				glColor4f(0.12f, 0.12f, 0.12f, currentAlphaDamp);
-//				if(type == GLDIT_WALL)
-//					walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
-//				else if(type == GLDIT_FLAT)
-//					flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
-//
-//				// --- PIPELINE CASCADE PASS 3: SPECIAL SUBTRACTIVE ---
-//				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-//				glColor4f(0.05f, 0.05f, 0.05f, currentAlphaDamp);
-//				if(type == GLDIT_WALL)
-//					walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
-//				else if(type == GLDIT_FLAT)
-//					flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
-//
-//				// Restore state
-//				if(maskOut)
-//				{
-//					gl_RenderState.ResetColorMask();
-//					gl_RenderState.ApplyColorMask();
-//				}
-//
-//				glBlendEquation(GL_FUNC_ADD); // Hard reset fallback
-//
-//				glEnable(GL_FOG);
-//				glDepthMask(true);
-//				glDepthFunc(GL_LESS);
-//				gl_RenderState.EnableFog(true);
-//				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-//				gl_RenderState.Apply();
-//			}
-//		}
-//	}
-//}
 //
 // RELATED FILES:
 // gl_20.cpp, gl_walls_draw.cpp, gl_flats_draw.cpp, gl_walls.cpp, gl_scene.cpp
