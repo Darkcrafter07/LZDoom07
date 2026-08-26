@@ -72,6 +72,8 @@
 #include "vm.h"
 #include "gl/dynlights/gl_dynlightcache.h"
 
+#include "gl/compatibility/gl_20.h"
+
 //==========================================================================
 //
 // CVARs
@@ -362,17 +364,13 @@ void GLSceneDrawer::RenderScene(int recursion)
 		{
 			RenderMultipassStuff();
 
-			// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Start ---
+			// --- Legacy GL1x/GL2x overbright dynlights pass - START ---
 			if (gl_legacy_dynlight_overbright && GLRenderer && GLRenderer->mLightCount > 0 && !FixedColormap)
 			{
 				// Pure OpenGL 1.1 State Machine Lock - 100% isolated from gl_RenderState caches!
 				glDisable(GL_FOG);        // Ensure hardware fixed fog doesn't blow out our spots
 				glDepthMask(false);       // Lock Z-Buffer writing to eliminate depth-fighting seams
 				glDepthFunc(GL_EQUAL);    // Only draw pixels that perfectly match existing coordinates
-
-				glEnable(GL_POLYGON_OFFSET_FILL);
-				// Pull it a bit closer to the camera to counteract transluscent surfaces
-				glPolygonOffset(-0.5f, -0.5f);
 
 				glEnable(GL_BLEND);
 				glBlendFunc(GL_DST_COLOR, GL_ONE); // Multiplicative overbright blending window
@@ -416,7 +414,6 @@ void GLSceneDrawer::RenderScene(int recursion)
 				// FIXED-FUNCTION SYMMETRIC CONTEXT RESET
 				// Always pop the matrix target back to GL_MODELVIEW immediately to secure the sky rendering pipe!
 				glMatrixMode(GL_MODELVIEW);
-				glDisable(GL_POLYGON_OFFSET_FILL);
 
 				// Restore raw OpenGL hardware states back cleanly immediately!
 				glEnable(GL_FOG);
@@ -426,8 +423,28 @@ void GLSceneDrawer::RenderScene(int recursion)
 
 				// Revert texture environment configuration back from custom overbright leaks
 				glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+
+				// SYNCHRONIZER FOR SKYBOX 3D MODELS
+				// THE MASTER SHIELD: Since vanilla raw OpenGL 1.1 states bypass the cacher, 
+				// we explicitly force gl_RenderState to flush and re-sync all hardware registers!
+				// This purges any hidden texture generation leaks and matrix drifts,
+				// instantly restoring full UV mapping and brightness on all 3D sky box models!
+				gl_RenderState.EnableFog(true);
+				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				gl_RenderState.SetTextureMode(TM_MODULATE);
+
+				// Force clear internal texture units generation slots straight in hardware
+				glActiveTexture(GL_TEXTURE1);
+				glDisable(GL_TEXTURE_GEN_S);
+				glDisable(GL_TEXTURE_GEN_T);
+				glActiveTexture(GL_TEXTURE0);
+				glDisable(GL_TEXTURE_GEN_S);
+				glDisable(GL_TEXTURE_GEN_T);
+
+				// THE MONOLITHIC SYNCHRONIZATION FLUSH
+				gl_RenderState.Apply();
 			}
-			// --- Legacy GL1x/GL2x Custom Spot Overbright Pass Finish ---
+			// --- Legacy GL1x/GL2x overbright dynlights pass - FINISH ---
 
 		}
 

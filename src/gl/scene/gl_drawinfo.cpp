@@ -769,6 +769,9 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 	//--------------------------------------------------------------------------
 	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
+	//                   Can't configurae dynlight intensities here!
+	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
+	// "gl_dynlightTameSpecialLightsLegacy" after "gl_dynlightSaturateLegacy"
 	//--------------------------------------------------------------------------
 	if (pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
 	{
@@ -798,19 +801,20 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				glDepthFunc(GL_LEQUAL);
 				glDepthMask(false);
 
-				float currentAlphaDamp = 1.0f;
-				if (currentRenderType == GLDIT_WALL)
-				{
-					GLWall* w = &walls[index];
-					if (w) currentAlphaDamp = fabsf(w->alpha);
-				}
-				else if (currentRenderType == GLDIT_FLAT)
-				{
-					GLFlat* f = &flats[index];
-					if (f) currentAlphaDamp = fabsf(f->alpha);
-				}
-				if (currentAlphaDamp > 1.0f) currentAlphaDamp = 1.0f;
-				if (currentAlphaDamp < 0.1f) currentAlphaDamp = 0.1f;
+				// Useless code
+				//float currentAlphaDamp = 1.0f;
+				//if (currentRenderType == GLDIT_WALL)
+				//{
+				//	GLWall* w = &walls[index];
+				//	if (w) currentAlphaDamp = fabsf(w->alpha);
+				//}
+				//else if (currentRenderType == GLDIT_FLAT)
+				//{
+				//	GLFlat* f = &flats[index];
+				//	if (f) currentAlphaDamp = fabsf(f->alpha);
+				//}
+				//if (currentAlphaDamp > 1.0f) currentAlphaDamp = 1.0f;
+				//if (currentAlphaDamp < 0.1f) currentAlphaDamp = 0.1f;
 
 				bool maskColorChannelsOut = false;
 				if (currentRenderType == GLDIT_FLAT)
@@ -839,7 +843,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_DST_COLOR, GL_ONE);
-				glColor4f(currentAlphaDamp, currentAlphaDamp, currentAlphaDamp, 1.0f);
+				//glColor4f(currentAlphaDamp, currentAlphaDamp, currentAlphaDamp, 1.0f); // useless
 
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX, trans);
@@ -847,7 +851,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// --- PASS 2: SPECIAL ADDITIVE LIGHTS PLACED ON PURPOSE CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-				glColor4f(0.12f, 0.12f, 0.12f, currentAlphaDamp);
+				//glColor4f(0.12f, 0.12f, 0.12f, currentAlphaDamp); // useless
 
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
@@ -855,7 +859,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// --- PASS 3: SPECIAL SUBTRACTIVE LIGHTS ANTI-ILLUMINATION CHANNEL ---
 				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-				glColor4f(0.40f, 0.40f, 0.40f, currentAlphaDamp);
+				//glColor4f(0.05f, 0.05f, 0.05f, currentAlphaDamp); // useless
 
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);

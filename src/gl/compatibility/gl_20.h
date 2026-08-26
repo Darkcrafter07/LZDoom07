@@ -260,7 +260,8 @@ void gl_FillScreen();
 // * Pass 2 (Additive Lights): Enforces GL_SRC_ALPHA, GL_ONE blending 
 //   with soft vertex tinting to project muzzle flares and BFG bursts.
 // * Pass 3 (Subtractive Lights): Enforces GL_FUNC_REVERSE_SUBTRACT 
-//   equation directly into GPU registers to render deep blackholes.
+//   equation dynamically coupled with low-level 0.75f CPU-side 
+//   attenuation filters inside gl_dynlightTameSpecialLightsLegacy().
 // * Hardware Registry Recovery: At the very end of traversal, the loop 
 //   triggers an explicit glBlendEquation(GL_FUNC_ADD) hardware reset. 
 //   This permanently shields plain walls, HUD elements, and monster 
@@ -307,18 +308,18 @@ void gl_FillScreen();
 //	// STEP 2: Hardware color mask filtration
 //	if(pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
 //	{
-//		int type = drawitems[i].rendertype;
-//		int idx = drawitems[i].index;
+//		int currentRenderType = drawitems[i].rendertype;
+//		int index = drawitems[i].index;
 //
 //		if(type == GLDIT_FLAT || type == GLDIT_WALL)
 //		{
 //			// Fog boundary protection
-//			if(type == GLDIT_WALL && walls[idx].type == RENDERWALL_FOGBOUNDARY)
+//			if(type == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
 //			{
 //				float d1 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y,
-//							   walls[idx].glseg.x1, walls[idx].glseg.y1);
+//							   walls[index].glseg.x1, walls[index].glseg.y1);
 //				float d2 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y,
-//							   walls[idx].glseg.x2, walls[idx].glseg.y2);
+//							   walls[index].glseg.x2, walls[index].glseg.y2);
 //				if(d1 < 576.0f || d2 < 576.0f) return;
 //			}
 //
@@ -340,7 +341,7 @@ void gl_FillScreen();
 //				bool maskOut = false;
 //				if(type == GLDIT_FLAT)
 //				{
-//					GLFlat* f = &flats[idx];
+//					GLFlat* f = &flats[index];
 //					if(f && f->sector && (r_viewpoint.Pos.Z - f->z) > 0.0f)
 //					{
 //						float cz = f->z;
@@ -362,29 +363,32 @@ void gl_FillScreen();
 //					gl_RenderState.ApplyColorMask();
 //				}
 //
-//				// --- PIPELINE CASCADE PASS 1: MODULATED LIGHTS ---
+//				// --- PIPELINE CASCADE PASS 1: REGULAR MODULATED ---
+//				glBlendEquation(GL_FUNC_ADD);
+//				glBlendFunc(GL_DST_COLOR, GL_ONE);
+//				glColor4f(currentAlphaDamp, currentAlphaDamp, currentAlphaDamp, 1.0f);
 //				if(type == GLDIT_WALL)
-//					walls[idx].Draw(GLPASS_LIGHTTEX);
+//					walls[index].Draw(GLPASS_LIGHTTEX);
 //				else if(type == GLDIT_FLAT)
-//					flats[idx].Draw(GLPASS_LIGHTTEX, trans);
+//					flats[index].Draw(GLPASS_LIGHTTEX, trans);
 //
-//				// --- PIPELINE CASCADE PASS 2: ADDITIVE LIGHTS ---
+//				// --- PIPELINE CASCADE PASS 2: SPECIAL ADDITIVE ---
 //				glBlendEquation(GL_FUNC_ADD);
 //				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-//				glColor4f(0.12f, 0.12f, 0.12f, maskOut ? 0.25f : 1.0f);
+//				glColor4f(0.12f, 0.12f, 0.12f, currentAlphaDamp);
 //				if(type == GLDIT_WALL)
-//					walls[idx].Draw(GLPASS_LIGHTTEX_ADDITIVE);
+//					walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
 //				else if(type == GLDIT_FLAT)
-//					flats[idx].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
+//					flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
 //
-//				// --- PIPELINE CASCADE PASS 3: SUBTRACTIVE LIGHTS ---
+//				// --- PIPELINE CASCADE PASS 3: SPECIAL SUBTRACTIVE ---
 //				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
 //				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-//				glColor4f(0.40f, 0.40f, 0.40f, maskOut ? 0.25f : 1.0f);
+//				glColor4f(0.05f, 0.05f, 0.05f, currentAlphaDamp);
 //				if(type == GLDIT_WALL)
-//					walls[idx].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
+//					walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
 //				else if(type == GLDIT_FLAT)
-//					flats[idx].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
+//					flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 //
 //				// Restore state
 //				if(maskOut)
@@ -393,7 +397,7 @@ void gl_FillScreen();
 //					gl_RenderState.ApplyColorMask();
 //				}
 //
-//				glBlendEquation(GL_FUNC_ADD); // Critical hardware fallback reset
+//				glBlendEquation(GL_FUNC_ADD); // Hard reset fallback
 //
 //				glEnable(GL_FOG);
 //				glDepthMask(true);
@@ -405,7 +409,6 @@ void gl_FillScreen();
 //		}
 //	}
 //}
-//
 //
 // RELATED FILES:
 // gl_20.cpp, gl_walls_draw.cpp, gl_flats_draw.cpp, gl_walls.cpp, gl_scene.cpp

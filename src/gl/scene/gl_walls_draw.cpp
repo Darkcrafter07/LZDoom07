@@ -496,53 +496,14 @@ void GLWall::Draw(int pass)
 
 	case GLPASS_TRANSLUCENT:
 	{
-		// [Darkcrafter07] - GL1x/GL2x CPU transluscent walls dynlights
-		int adjustedWallLight = lightlevel;
-
-		if (gl.legacyMode && seg && seg->sidedef)
-		{
-			float totalCpuIntensity = 0.0f;
-			float baseFactor = 0.15f;
-
-			// Calc precise 3D-coords of geometric glass center
-			float wx = ((float)glseg.x1 + (float)glseg.x2) * 0.5f;
-			float wy = ((float)glseg.y1 + (float)glseg.y2) * 0.5f;
-			float wz = ((float)zbottom[0] + (float)ztop[0]) * 0.5f;
-
-			// Poll lights directly from the frontal subsector in front of glass
-			FLightNode *node = (seg->frontsector) ? seg->frontsector->lighthead : nullptr;
-
-			while (node)
-			{
-				FDynamicLight *light = node->lightsource;
-				if (light && light->IsActive() && light->GetRadius() > 0.0f)
-				{
-					float radius = light->GetRadius();
-					float dx = wx - (float)light->X();
-					float dy = wy - (float)light->Y();
-					float dz = wz - (float)light->Z();
-					float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
-
-					if (dist2 < (radius * radius))
-					{
-						float dist = sqrtf(dist2);
-						totalCpuIntensity += (1.0f - (dist / radius)) * baseFactor * 5.0f;
-					}
-				}
-				node = node->nextLight;
-			}
-
-			if (totalCpuIntensity > 0.0f)
-			{
-				if (totalCpuIntensity > 0.75f) totalCpuIntensity = 0.75f;
-				adjustedWallLight += (int)(totalCpuIntensity * 255.0f);
-				if (adjustedWallLight > 255) adjustedWallLight = 255;
-			}
-		}
-
-		// Temporary lightlevel interrogation for native walls drawin functions
 		int backupLight = lightlevel;
-		lightlevel = adjustedWallLight;
+
+		if (gl.legacyMode && seg && seg->frontsector)
+		{
+			// in GL1x/GL2x very dark transcluscent surfaces disappear, 
+			// ... thus we can't make them darker than this
+			if (lightlevel < 100) lightlevel = 100;
+		}
 
 		switch (type)
 		{
@@ -559,7 +520,6 @@ void GLWall::Draw(int pass)
 			break;
 		}
 
-		// Restore the source lightlevel
 		lightlevel = backupLight;
 		break;
 	}

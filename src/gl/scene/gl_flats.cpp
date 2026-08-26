@@ -410,59 +410,21 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 	case GLPASS_TRANSLUCENT:
 	{
-		// [Darkcrafter07] - GL1x/GL2x CPU transluscent walls dynlights
-		int adjustedLightLevel = lightlevel;
 
-		// Light gather works for all legacy modes (GL 1.1, GL 1.3, GL 2.x)
-		if (gl.legacyMode && sector && sector->lighthead)
+		int safeTranslucentLight = lightlevel;
+		if (gl.legacyMode && sector && sector->special != GLSector_Skybox)
 		{
-			float totalFlatCpuIntensity = 0.0f;
-			float baseFactor = 0.15f; // Safe baseline fallback scaling factor
-			float flatZ = (float)this->z;
-
-			// Read active dynlights from the alive sector buffer
-			FLightNode *node = sector->lighthead;
-
-			// Scan distances from dynlights to flat center on a CPU
-			while (node)
-			{
-				FDynamicLight *light = node->lightsource;
-				if (light && light->IsActive() && light->GetRadius() > 0.0f)
-				{
-					float radius = light->GetRadius();
-
-					// Cacl distance to flat surface by X, Y, Z axes
-					float dx = (float)sector->centerspot.X - (float)light->X();
-					float dy = (float)sector->centerspot.Y - (float)light->Y();
-					float dz = flatZ - (float)light->Z();
-					float dist2 = (dx * dx) + (dy * dy) + (dz * dz);
-
-					if (dist2 < (radius * radius))
-					{
-						float dist = sqrtf(dist2);
-						// Soft CPU light fade curve
-						totalFlatCpuIntensity += (1.0f - (dist / radius)) * baseFactor * 5.0f;
-					}
-				}
-				node = node->nextLight;
-			}
-
-			if (totalFlatCpuIntensity > 0.0f)
-			{
-				// Protective plateu from overexposure
-				if (totalFlatCpuIntensity > 0.75f) totalFlatCpuIntensity = 0.75f;
-
-				// Convert software intensity to byte based engine lightlevel (0-255)
-				adjustedLightLevel += (int)(totalFlatCpuIntensity * 255.0f);
-				if (adjustedLightLevel > 255) adjustedLightLevel = 255;
-			}
+			// in GL1x/GL2x very dark transcluscent surfaces disappear, 
+			// ... thus we can't make them darker than this
+			if (lightlevel < 100) lightlevel = 100;
+			if (safeTranslucentLight < 100) safeTranslucentLight = 100;
 		}
 
 		if (renderstyle == STYLE_Add) gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-		// Feed the dynamically lit CPU based lightlevel to the engine cache
-		mDrawer->SetColor(adjustedLightLevel, rel, Colormap, alpha);
-		mDrawer->SetFog(adjustedLightLevel, rel, &Colormap, false);
+		// Pass our dynamically stabilized safeTranslucentLight instead of raw crushed lightlevel!
+		mDrawer->SetColor(safeTranslucentLight, rel, Colormap, alpha);
+		mDrawer->SetFog(safeTranslucentLight, rel, &Colormap, false);
 
 		if (!gltexture || !gltexture->tex->isFullbright())
 			gl_RenderState.SetObjectColor(FlatColor | 0xff000000);
@@ -536,6 +498,61 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		glBlendFunc(GL_ONE, GL_ZERO);
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		break;
+
+	//case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX: // for an extra case
+	//	// Cleaned up legacy overbright brightening pass for flats
+	//	// Uses low-level DrawLightsCompat routine integrated with fixed constants
+	//	gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
+	//	glDepthFunc(GL_EQUAL);
+	//	glDepthMask(false);
+	//
+	//	// Bind the native dynamic light texture filter mask (glLight)
+	//	if (gl_SetupLightTexture())
+	//	{
+	//		if (this->sector && this->sector->special != GLSector_Skybox)
+	//		{
+	//			// Execute light pass loops. Light stacking now happens per-light inside DrawSubsectorLights!
+	//			DrawLightsCompat(pass);	// Triggers our clean, seamless, scaled DrawSubsectorLights loop
+	//		}
+	//	}
+	//
+	//	// FIX: SYNC STATE MACHINE AND PREVENT FLATS LEAKS INTO SKY
+	//	// Force-update the local render state cache to prevent blending and depth corruption
+	//	gl_RenderState.EnableFog(true);
+	//	gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
+	//	gl_RenderState.SetTextureMode(TM_MODULATE);
+	//
+	//	glDepthMask(true);
+	//	glDepthFunc(GL_LESS);
+	//
+	//	// Flush all fixed-function parameters directly into the GPU registers!
+	//	// This guarantees that GL_DST_COLOR, GL_ONE completely drops before sky portals process.
+	//	gl_RenderState.Apply();
+	//
+	//	// SANITIZER AGAINST SKYBOX DARKENING
+	//	// THE MASTER KEY: We forcefully shutdown any leftover fixed-function texture 
+	//	// coordinate generation flags on BOTH texture units inside raw OpenGL 1.1 registers!
+	//	// This completely prevents lightmap projection vectors from corrupting UV mapping 
+	//	// loops of subsequent passes, instantly curing 3D skybox models darkening bugs!
+	//	glEnable(GL_FOG);
+	//	glBlendFunc(GL_ONE, GL_ZERO);
+	//
+	//	// 1. Clean and reset the secondary texture unit registers (Dynlights Channel)
+	//	glActiveTexture(GL_TEXTURE1);
+	//	glDisable(GL_TEXTURE_2D);
+	//	glDisable(GL_TEXTURE_GEN_S);
+	//	glDisable(GL_TEXTURE_GEN_T);
+	//	glDisable(GL_TEXTURE_GEN_R);
+	//	glDisable(GL_TEXTURE_GEN_Q);
+	//
+	//	// 2. Clean and reset the primary diffuse texture unit registers
+	//	glActiveTexture(GL_TEXTURE0);
+	//	glDisable(GL_TEXTURE_GEN_S);
+	//	glDisable(GL_TEXTURE_GEN_T);
+	//	glDisable(GL_TEXTURE_GEN_R);
+	//	glDisable(GL_TEXTURE_GEN_Q);
+	//	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE); // Safe native fallback reset
+	//	break;
 
 	case GLPASS_BRIGHTMAP_LEGACY:
 	{
