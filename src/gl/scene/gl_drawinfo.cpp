@@ -741,30 +741,30 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
 	switch (drawitems[i].rendertype)
 	{
-		case GLDIT_FLAT:
-		{
-			GLFlat * f = &flats[drawitems[i].index];
-			RenderFlat.Clock();
-			f->Draw(pass, trans);
-			RenderFlat.Unclock();
-			break;
-		}
-		case GLDIT_WALL:
-		{
-			GLWall * w = &walls[drawitems[i].index];
-			RenderWall.Clock();
-			w->Draw(pass);
-			RenderWall.Unclock();
-			break;
-		}
-		case GLDIT_SPRITE:
-		{
-			GLSprite * s = &sprites[drawitems[i].index];
-			RenderSprite.Clock();
-			s->Draw(pass);
-			RenderSprite.Unclock();
-			break;
-		}
+	case GLDIT_FLAT:
+	{
+		GLFlat * f = &flats[drawitems[i].index];
+		RenderFlat.Clock();
+		f->Draw(pass, trans);
+		RenderFlat.Unclock();
+		break;
+	}
+	case GLDIT_WALL:
+	{
+		GLWall * w = &walls[drawitems[i].index];
+		RenderWall.Clock();
+		w->Draw(pass);
+		RenderWall.Unclock();
+		break;
+	}
+	case GLDIT_SPRITE:
+	{
+		GLSprite * s = &sprites[drawitems[i].index];
+		RenderSprite.Clock();
+		s->Draw(pass);
+		RenderSprite.Unclock();
+		break;
+	}
 	}
 
 	int currentRenderType = drawitems[i].rendertype;
@@ -802,6 +802,9 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				glDepthFunc(GL_LEQUAL);
 				glDepthMask(false);
 
+				// --- DETECT CUMULATIVE TRANSLUCENCY ---
+				// Check overdraw heights strictly within the current sector bounds,
+				// minimizing the stacked overexposed cumulative translucency overlay.
 				bool maskColorChannelsOut = false;
 				if (currentRenderType == GLDIT_FLAT)
 				{
@@ -868,6 +871,167 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 		}
 	}
 }
+
+// For an extra case when you need it to draw subtractive lights only on transluscent surfaces
+//void GLDrawList::DoDraw(int pass, int i, bool trans)
+//{
+//	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
+//	switch (drawitems[i].rendertype)
+//	{
+//	case GLDIT_FLAT:
+//	{
+//		GLFlat * f = &flats[drawitems[i].index];
+//		RenderFlat.Clock();
+//		f->Draw(pass, trans);
+//		RenderFlat.Unclock();
+//		break;
+//	}
+//	case GLDIT_WALL:
+//	{
+//		GLWall * w = &walls[drawitems[i].index];
+//		RenderWall.Clock();
+//		w->Draw(pass);
+//		RenderWall.Unclock();
+//		break;
+//	}
+//	case GLDIT_SPRITE:
+//	{
+//		GLSprite * s = &sprites[drawitems[i].index];
+//		RenderSprite.Clock();
+//		s->Draw(pass);
+//		RenderSprite.Unclock();
+//		break;
+//	}
+//	}
+//
+//	int currentRenderType = drawitems[i].rendertype;
+//	int index = drawitems[i].index;
+//
+//	//--------------------------------------------------------------------------
+//	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
+//	//                   Can't configure dynlight intensities here!
+//	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
+//	// "gl_dynlightTameSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
+//	// and also call "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy".
+//	//--------------------------------------------------------------------------
+//	if (pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
+//	{
+//		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
+//		{
+//			// TOTAL DISTANCE FOG BOUNDARY GEOMETRY CULLING FILTER
+//			// If this wall primitive is a fake fog boundary line,
+//			// SKIP skip lightmap projections over it on ANY distance.
+//			// Since fake fog lines share identical 3D coordinates with solid room seams,
+//			// culling them here permanently cures the legacy 16-bit Z-buffer depth fighting,
+//			// completely extinguishing far-away flickering and sector side alternating artifacts
+//			if (currentRenderType == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
+//			{
+//				return; // Safe and clean bypass on any distance before changing registers
+//			}
+//
+//			if (gl_SetupLightTexture())
+//			{
+//				// Common baseline registers hardware isolation setup
+//				gl_RenderState.EnableFog(false);
+//				gl_RenderState.Apply();
+//
+//				glDisable(GL_FOG);
+//				glDepthFunc(GL_LEQUAL);
+//				glDepthMask(false);
+//
+//				// --- DETECT CUMULATIVE TRANSLUCENCY ---
+//				// Check overdraw heights strictly within the current sector bounds,
+//				// minimizing the stacked overexposed cumulative translucency overlay.
+//				bool maskColorChannelsOut = false;
+//				if (currentRenderType == GLDIT_FLAT)
+//				{
+//					GLFlat* f = &flats[index];
+//					if (f && f->sector && ((float)r_viewpoint.Pos.Z - (float)f->z) > 0.0f)
+//					{
+//						float currentFlatZ = (float)f->z;
+//						for (unsigned int j = 0; j < flats.Size(); j++)
+//						{
+//							if (flats[j].sector == f->sector && (float)flats[j].z > currentFlatZ)
+//							{
+//								maskColorChannelsOut = true;
+//								break;
+//							}
+//						}
+//					}
+//				}
+//
+//				if (maskColorChannelsOut)
+//				{
+//					gl_RenderState.SetColorMask(false, false, false, false);
+//					gl_RenderState.ApplyColorMask();
+//				}
+//
+//				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
+//				glBlendEquation(GL_FUNC_ADD);
+//				glBlendFunc(GL_DST_COLOR, GL_ONE);
+//				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX);
+//				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX, trans);
+//
+//				// --- PASS 2: SPECIAL ADDITIVE LIGHTS PLACED ON PURPOSE CHANNEL ---
+//				glBlendEquation(GL_FUNC_ADD);
+//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+//				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
+//				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
+//
+//				// --- PASS 3: SPECIAL SUBTRACTIVE LIGHTS ANTI-ILLUMINATION CHANNEL ---
+//				// MASTER KEY: Scan the subsector node array dynamically to confirm if 
+//				// any active subtractive anti-light actor is currently affecting this surface.
+//				// If tracked, the CPU fires the inverse hardware subtract equation strictly 
+//				// inside translucent map bounds, preventing empty alpha leaks.
+//				bool hasActiveSubtractiveLights = false;
+//				FLightNode* subScanNode = nullptr;
+//
+//				if (currentRenderType == GLDIT_FLAT)
+//					subScanNode = flats[index].sector ? flats[index].sector->lighthead : nullptr;
+//				else if (currentRenderType == GLDIT_WALL)
+//					subScanNode = walls[index].seg ? walls[index].seg->frontsector->lighthead : nullptr;
+//
+//				while (subScanNode)
+//				{
+//					FDynamicLight* sl = subScanNode->lightsource;
+//					if (sl && sl->IsActive() && sl->IsSubtractive())
+//					{
+//						hasActiveSubtractiveLights = true;
+//						break; // Subtractive node confirmed, break early to save cycles
+//					}
+//					subScanNode = subScanNode->nextLight;
+//				}
+//
+//				// The conditional if-else block safely processes subtractive nodes strictly when needed!
+//				if (hasActiveSubtractiveLights)
+//				{
+//					glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+//					glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+//					if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
+//					else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
+//				}
+//
+//				// RECOVERY AND CLEANUP
+//				if (maskColorChannelsOut)
+//				{
+//					gl_RenderState.ResetColorMask();
+//					gl_RenderState.ApplyColorMask();
+//				}
+//
+//				glBlendEquation(GL_FUNC_ADD); // Hard reset blending equations safely
+//
+//				glEnable(GL_FOG);
+//				glDepthMask(true);
+//				glDepthFunc(GL_LESS);
+//				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+//
+//				gl_RenderState.EnableFog(true);
+//				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+//				gl_RenderState.Apply();
+//			}
+//		}
+//	}
+//}
 
 //==========================================================================
 //
@@ -958,68 +1122,6 @@ void GLDrawList::DrawSorted()
 		glDisable(GL_CLIP_DISTANCE2);
 	}
 	gl_RenderState.ClearClipSplit();
-}
-
-//==========================================================================
-//
-// [Darkcrafter07] - HARDWARE BATCH TREE WALKER FOR MULTIPASS LIGHTING
-// UNUSED
-//
-//==========================================================================
-// This functions traverses the pre-compiled Back-to-Front Sorted tree,
-// but executes strictly the dynamic lightmap pass for geometry walls and flats!
-void GLDrawList::DoTranslucentBatchLights(SortNode * head)
-{
-	if (!head) return;
-
-	// 1. Traverse left tree branch (further away)
-	if (head->left)
-	{
-		DoTranslucentBatchLights(head->left);
-	}
-
-	// 2. THE ULTIMATE HARDWARE INJECTION: Evaluate the current hot sorted primitive
-	int renderType = drawitems[head->itemindex].rendertype;
-
-	// Strictly process 3D-water flats and glass walls, completely bypassing sprites!
-	// This mirrors your perfect culling protection, making for freeze-free monster sorting!
-	if (renderType == GLDIT_FLAT || renderType == GLDIT_WALL)
-	{
-		// Force execute low-level Draw loop in raw dynamic lightmap channel!
-		// This generates flawless 3D texture projection paths for plasma guns and flashlights!
-		DoDraw(GLPASS_LIGHTTEX, head->itemindex, true);
-	}
-
-	// 3. Traverse identical overlapping sub-slabs layers (like multilayered 3D-water floors)
-	if (head->equal)
-	{
-		SortNode * ehead = head->equal;
-		while (ehead)
-		{
-			int dupType = drawitems[ehead->itemindex].rendertype;
-			if (dupType == GLDIT_FLAT || dupType == GLDIT_WALL)
-			{
-				DoDraw(GLPASS_LIGHTTEX, ehead->itemindex, true);
-			}
-			ehead = ehead->equal;
-		}
-	}
-
-	// 4. Traverse right tree branch (closer to viewer)
-	if (head->right)
-	{
-		DoTranslucentBatchLights(head->right);
-	}
-}
-
-// Global entry gate called directly from the core multipass engine loop
-void GLDrawList::DrawTranslucentBatchLights()
-{
-	// If the sorted tree doesn't exist yet in memory or list is empty, skip execution safely
-	if (drawitems.Size() == 0 || !sorted) return;
-
-	// Directly pass the compiled root node into our strict geometry light mapping conveyor
-	DoTranslucentBatchLights(sorted);
 }
 
 //==========================================================================

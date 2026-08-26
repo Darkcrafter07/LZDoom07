@@ -225,7 +225,7 @@
 //   with soft vertex tinting to project muzzle flares and BFG bursts.
 // * Pass 3 (Subtractive Lights): Enforces GL_FUNC_REVERSE_SUBTRACT 
 //   equation dynamically coupled with low-level 0.75f CPU-side 
-//   attenuation filters inside gl_dynlightTameSpecialLightsLegacy().
+//   attenuation filters inside gl_dynlightHandleSpecialLightsLegacy().
 // * Hardware Registry Recovery: At the very end of traversal, the loop 
 //   triggers an explicit glBlendEquation(GL_FUNC_ADD) hardware reset. 
 //   This permanently shields plain walls, HUD elements, and monster 
@@ -850,33 +850,58 @@ void gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(FDynamicLight * light, flo
 // We need this to tame down subtractive and other lights if needed.
 // This is the only way to control their intensity for transluscent map geometry surfaces,
 // As well as subtractive both on transluscent and regular other map geometry surfaces!
-void gl_dynlightTameSpecialLightsLegacy(float &r, float &g, float &b, FDynamicLight* light)
+void gl_dynlightHandleSpecialLightsLegacy(float &r, float &g, float &b, bool isTransluscent, FDynamicLight* light)
 {
-	if (!gl.legacyMode || !light || !light->IsActive()) return;
+	if (!light || !light->IsActive()) return;
 
-	// GLOBAL INTENSITY BALANCERS MULTIPLIERS PER DYNLIGHT TYPE
 	const float regularGlobalLightIntensity = 1.0f;
+	const float regularGlobalTransluscentLightIntensity = 1.0f;
+
 	const float additiveGlobalLightIntensity = 0.22f;
-	const float subtractiveGlobalLightIntensity = 0.22f;
+	const float additiveGlobalTransluscentLightIntensity = 0.22f;
+
+	const float subtractiveGlobalLightIntensity = 1.0f;
+	const float subtractiveGlobalTransluscentLightIntensity = 0.17f;
+
+	// CRITICAL FIX: check translucent flag FIRST.
+	// This prevents general rules from overriding custom transparent material multipliers.
 
 	//--- 1. REGULAR MODULATED CHANNELS (TEMPORARILY COMMENTED OUT) ---
-	//if (!light->IsAdditive() && !light->IsSubtractive())
+	//if (isTransluscent && !light->IsAdditive() && !light->IsSubtractive())
+	//{
+	//	r *= regularGlobalTransluscentLightIntensity;
+	//	g *= regularGlobalTransluscentLightIntensity;
+	//	b *= regularGlobalTransluscentLightIntensity;
+	//}
+	//else if (!light->IsAdditive() && !light->IsSubtractive())
 	//{
 	//	r *= regularGlobalLightIntensity;
 	//	g *= regularGlobalLightIntensity;
 	//	b *= regularGlobalLightIntensity;
 	//}
 
-	//--- 2. SPECIAL ADDITIVE CHANNELS (TEMPORARILY COMMENTED OUT) ---
-	if (light->IsAdditive())
+	// --- 2. SPECIAL ADDITIVE CHANNELS ---
+	if (isTransluscent && light->IsAdditive())
+	{
+		r *= additiveGlobalTransluscentLightIntensity;
+		g *= additiveGlobalTransluscentLightIntensity;
+		b *= additiveGlobalTransluscentLightIntensity;
+	}
+	else if (light->IsAdditive())
 	{
 		r *= additiveGlobalLightIntensity;
 		g *= additiveGlobalLightIntensity;
 		b *= additiveGlobalLightIntensity;
 	}
-	
-	// --- 3. SPECIAL SUBTRACTIVE ANTI-LIGHT CHANNELS (FULLY ACTIVE) ---
-	if (light->IsSubtractive())
+
+	// --- 3. SPECIAL SUBTRACTIVE ANTI-LIGHT CHANNELS ---
+	if (isTransluscent && light->IsSubtractive())
+	{
+		r *= subtractiveGlobalTransluscentLightIntensity;
+		g *= subtractiveGlobalTransluscentLightIntensity;
+		b *= subtractiveGlobalTransluscentLightIntensity;
+	}
+	else if (light->IsSubtractive())
 	{
 		r *= subtractiveGlobalLightIntensity;
 		g *= subtractiveGlobalLightIntensity;
@@ -1116,17 +1141,20 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// Route final pipeline colors with pre-calculated context and radius constraints
 	gl_dynlightSaturateLegacy(r, g, b, current_boost, radius, colorCtx);
 
-	// We need this to tame down subtractive and other lights if needed.
+	bool isTrueTranslucentWall = false;       // initialize the variable
+	if (g_CurrentSetupWallContext != nullptr) // Safe extraction after non-null pointer assurance
+	{
+		isTrueTranslucentWall = (g_CurrentSetupWallContext->alpha <= 0.99f ||
+			g_CurrentSetupWallContext->type == RENDERWALL_MIRRORSURFACE);
+	}
+
+	// We need this to handle subtractive and other lights if needed.
 	// This is the only way to control their intensity for transluscent map geometry surfaces!
-	gl_dynlightTameSpecialLightsLegacy(r, g, b, light);
+	gl_dynlightHandleSpecialLightsLegacy(r, g, b, isTrueTranslucentWall, light);
 
 	// We need this for huge dynlights not to overexposure the walls mirrored surfaces
 	if (g_CurrentSetupWallContext != nullptr)
 	{
-		// Safe extraction after non-null pointer assurance
-		bool isTrueTranslucentWall = (g_CurrentSetupWallContext->alpha <= 0.99f ||
-			g_CurrentSetupWallContext->type == RENDERWALL_MIRRORSURFACE);
-
 		if (isTrueTranslucentWall)
 		{
 			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radius, !isTrueTranslucentWall);
@@ -1430,16 +1458,17 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// Route final pipeline colors into the custom saturation encapsulation pass with radius constraints
 	gl_dynlightSaturateLegacy(r, g, b, current_boost, radius, colorCtx);
 
+	bool isTrueTranslucentFlat = false;       // initialize the variable
+	if (g_CurrentSetupFlatContext != nullptr) // Safe extraction after non-null pointer assurance
+	{ isTrueTranslucentFlat = (g_CurrentSetupFlatContext->alpha <= 0.99f); }
+
 	// We need this to tame down subtractive and other lights if needed.
 	// This is the only way to control their intensity for transluscent map geometry surfaces!
-	gl_dynlightTameSpecialLightsLegacy(r, g, b, light);
+	gl_dynlightHandleSpecialLightsLegacy(r, g, b, isTrueTranslucentFlat, light);
 
 	// We need this for huge dynlights not to overexposure the flat mirrored surfaces
 	if (g_CurrentSetupFlatContext != nullptr)
 	{
-		// Safe extraction after non-null pointer assurance
-		//bool isTrueTranslucentFlat = (!(p.Normal().Z != 0.0f) && g_CurrentSetupFlatContext->alpha <= 0.99f);
-		bool isTrueTranslucentFlat = (g_CurrentSetupFlatContext->alpha <= 0.99f);
 		if (isTrueTranslucentFlat)
 		{
 			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radius, !isTrueTranslucentFlat);
@@ -2461,11 +2490,11 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 
 		if (pass == GLPASS_LIGHTTEX)
 		{
-			// Pass 1: Regular modulated dynlights (non-additive)
-			if (light->IsAdditive() || light->IsSubtractive())
+			// Pass 1: Regular modulated and subtractive dynlights (non-additive)
+			if (light->IsAdditive())
 			{
 				node = node->nextLight;
-				continue;
+				continue; // THAT MEANS: TURN OFF THESE TYPES OF LIGHTS!
 			}
 		}
 		else if (pass == GLPASS_LIGHTTEX_ADDITIVE)
@@ -2556,6 +2585,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			ptr++;
 		}
 
+		// FIRST PASS: Multiplies existing floor texture by the projected light mask shape
 		GLRenderer->mVBO->RenderCurrent(ptr, GL_TRIANGLE_FAN);
 
 		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
@@ -2565,6 +2595,14 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 
 		node = node->nextLight;
 	}
+
+	// --- BLEND EQUATION RECOVERY - FIX PITCH-BLACK SURFACES UNDER SOME ANGLES ---
+	// If a subtractive node was processed during the loop,
+	// it leaves the GPU register stuck in GL_FUNC_REVERSE_SUBTRACT mode.
+	// We forcefully restore GL_FUNC_ADD right here before the memory context 
+	// leaves this floor sector chunk, permanently curing the angle pitch-black glitch.
+	gl_RenderState.BlendEquation(GL_FUNC_ADD);
+	gl_RenderState.Apply();
 }
 
 //==========================================================================
@@ -2720,11 +2758,11 @@ void GLWall::RenderLightsCompat(int pass)
 
 		if (pass == GLPASS_LIGHTTEX)
 		{
-			// Pass 1: Pass only regular (non-additive and non-subtractive) lights
-			if (light->IsAdditive() || light->IsSubtractive())
+			// Pass 1: Regular modulated and subtractive dynlights (non-additive)
+			if (light->IsAdditive())
 			{
 				node = node->nextLight;
-				continue;
+				continue; // THAT MEANS: TURN OFF THESE TYPES OF LIGHTS!
 			}
 		}
 		else if (pass == GLPASS_LIGHTTEX_ADDITIVE)
@@ -2759,6 +2797,15 @@ void GLWall::RenderLightsCompat(int pass)
 		g_CurrentSetupWallContext = nullptr; // Clear after evaluation
 		node = node->nextLight;
 	}
+
+	// --- BLEND EQUATION RECOVERY - FIX PITCH-BLACK SURFACES UNDER SOME ANGLES ---
+	// If a subtractive node was processed during the loop,
+	// it leaves the GPU register stuck in GL_FUNC_REVERSE_SUBTRACT mode.
+	// We forcefully restore GL_FUNC_ADD right here before the memory context 
+	// leaves this floor sector chunk, permanently curing the angle pitch-black glitch.
+	gl_RenderState.BlendEquation(GL_FUNC_ADD);
+	gl_RenderState.Apply();
+
 	memcpy(tcs, save, sizeof(tcs));
 	vertcount = 0;
 }
@@ -2994,46 +3041,76 @@ void GLSceneDrawer::RenderMultipassStuff()
 		}
 	}
 
-	// Seventh pass: subtractive lights for regular geometry (not transluscent, even though the lists are)
+	// Seventh pass: subtractive lights for regular geometry (not transluscent, even though the lists are).
+	// WHY THE WHOLE PASS IS DISABLED? BECAUSE SUBTRACTIVE LIGHTING IS DONE WITH MODULATED.
 	// We are NOT doing surfaces dynlights here because they live really short and won't get here.
 	// Instead we are DOING it in gl_drawinfo.cpp, DoDraw function. Why transluscent lists are here?
 	// Because we need them to allow lghting all OTHER surfaces with SUBTRACTIVE lights ...
-	// ... SIMULTANEOUSLY with the transluscent surfaces
-	if (GLRenderer->mLightCount && !FixedColormap)
-	{
-		if (gl_SetupLightTexture())
-		{
-			gl_RenderState.EnableTexture(true);
-			gl_RenderState.EnableBrightmap(false);
-			gl_RenderState.EnableFog(false);
-
-			glDepthFunc(GL_EQUAL);
-			glDepthMask(false);
-
-			// Hard lock hardware blending registers into inverse subtraction mode
-			glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-			glColor4f(0.40f, 0.40f, 0.40f, 1.0f);
-
-			// Dynamic lights subsector loop filters out everything except IsSubtractive()!
-			// We pass GLPASS_TRANSLUCENT_LIGHTTEX to trigger the filtered low-level gates!
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
-
-			// Multi-pass restoration recovery
-			glBlendEquation(GL_FUNC_ADD);
-			glDepthMask(true);
-			glDepthFunc(GL_LESS);
-			gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-			gl_RenderState.Apply();
-		}
-	}
+	// ... SIMULTANEOUSLY with the transluscent surfaces.
+	// But in case you wondered how to do it another way!
+	// Returning to the question, why 7th pass was done in the first place if engine did subtractives?
+	// Because DoDraw function handling of different dynlight types was separated and
+	// functions DrawSubsectorLights(flats) and RenderLightsCompat(Walls) handled them separately and
+	// one little BUG intruded: they SKIPPED processing subtractives! How? Here's the explanation:
+	//
+	//	// WRONG!!! The 7th pass is NEEDED!
+	//if (pass == GLPASS_LIGHTTEX)
+	//{
+	//	// Pass 1: Only regular modulated lights rendered
+	//	if (light->IsAdditive() && light->IsSubtractive())
+	//	{
+	//		node = node->nextLight;
+	//		continue; // pay attention
+	//	}
+	//}
+	//
+	//	// CORRECT - OK handling - 7th pass is NOT needed!
+	//if (pass == GLPASS_LIGHTTEX)
+	//{
+	//	// Pass 1: Regular modulated and subtractive dynlights (non-additive)
+	//	if (light->IsAdditive())
+	//	{
+	//		node = node->nextLight;
+	//		continue; // THAT MEANS: TURN OFF THESE TYPES OF LIGHTS!
+	//	}
+	//}
+	//
+	// So here comes disabled 7th pass, it works but it looks worse and must hog CPU!
+	//if (GLRenderer->mLightCount && !FixedColormap)
+	//{
+	//	if (gl_SetupLightTexture())
+	//	{
+	//		gl_RenderState.EnableTexture(true);
+	//		gl_RenderState.EnableBrightmap(false);
+	//		gl_RenderState.EnableFog(false);
+	//
+	//		glDepthFunc(GL_EQUAL);
+	//		glDepthMask(false);
+	//
+	//		// Hard lock hardware blending registers into inverse subtraction mode
+	//		glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+	//		glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+	//		glColor4f(0.40f, 0.40f, 0.40f, 1.0f); // useless
+	//
+	//		// Dynamic lights subsector loop filters out everything except IsSubtractive()!
+	//		// We pass GLPASS_TRANSLUCENT_LIGHTTEX to trigger the filtered low-level gates!
+	//		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
+	//		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
+	//		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
+	//		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
+	//		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
+	//		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
+	//		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
+	//		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
+	//
+	//		// Multi-pass restoration recovery
+	//		glBlendEquation(GL_FUNC_ADD);
+	//		glDepthMask(true);
+	//		glDepthFunc(GL_LESS);
+	//		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	//		gl_RenderState.Apply();
+	//	}
+	//}
 
 	glDepthMask(true);
 

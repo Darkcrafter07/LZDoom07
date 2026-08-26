@@ -282,7 +282,7 @@ void gl_FillScreen();
 //   with soft vertex tinting to project muzzle flares and BFG bursts.
 // * Pass 3 (Subtractive Lights): Enforces GL_FUNC_REVERSE_SUBTRACT 
 //   equation dynamically coupled with low-level 0.75f CPU-side 
-//   attenuation filters inside gl_dynlightTameSpecialLightsLegacy().
+//   attenuation filters inside gl_dynlightHandleSpecialLightsLegacy().
 // * Hardware Registry Recovery: At the very end of traversal, the loop 
 //   triggers an explicit glBlendEquation(GL_FUNC_ADD) hardware reset. 
 //   This permanently shields plain walls, HUD elements, and monster 
