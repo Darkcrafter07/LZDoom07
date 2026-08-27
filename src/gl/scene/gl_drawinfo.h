@@ -162,6 +162,7 @@ public:
 	
 	void DoDraw(int pass, int index, bool trans);
 	void DoDrawSorted(SortNode * node);
+	void SortDrawItemsByBlockmap();
 	void DrawSorted();
 	void DoTranslucentBatchLights(SortNode * head);
 	void DrawTranslucentBatchLights();

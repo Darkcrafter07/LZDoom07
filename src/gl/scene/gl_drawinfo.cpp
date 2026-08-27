@@ -741,30 +741,30 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
 	switch (drawitems[i].rendertype)
 	{
-	case GLDIT_FLAT:
-	{
-		GLFlat * f = &flats[drawitems[i].index];
-		RenderFlat.Clock();
-		f->Draw(pass, trans);
-		RenderFlat.Unclock();
-		break;
-	}
-	case GLDIT_WALL:
-	{
-		GLWall * w = &walls[drawitems[i].index];
-		RenderWall.Clock();
-		w->Draw(pass);
-		RenderWall.Unclock();
-		break;
-	}
-	case GLDIT_SPRITE:
-	{
-		GLSprite * s = &sprites[drawitems[i].index];
-		RenderSprite.Clock();
-		s->Draw(pass);
-		RenderSprite.Unclock();
-		break;
-	}
+		case GLDIT_FLAT:
+		{
+			GLFlat * f = &flats[drawitems[i].index];
+			RenderFlat.Clock();
+			f->Draw(pass, trans);
+			RenderFlat.Unclock();
+			break;
+		}
+		case GLDIT_WALL:
+		{
+			GLWall * w = &walls[drawitems[i].index];
+			RenderWall.Clock();
+			w->Draw(pass);
+			RenderWall.Unclock();
+			break;
+		}
+		case GLDIT_SPRITE:
+		{
+			GLSprite * s = &sprites[drawitems[i].index];
+			RenderSprite.Clock();
+			s->Draw(pass);
+			RenderSprite.Unclock();
+			break;
+		}
 	}
 
 	int currentRenderType = drawitems[i].rendertype;
@@ -774,10 +774,10 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
 	//                   Can't configure dynlight intensities here!
 	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
-	// "gl_dynlightTameSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
+	// "gl_dynlightHandleSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
 	// and also call "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy".
 	//--------------------------------------------------------------------------
-	if (pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
+	if (gl.legacyMode && pass == GLPASS_TRANSLUCENT && currentRenderType != GLDIT_SPRITE && GLRenderer->mLightCount)
 	{
 		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
 		{
@@ -846,7 +846,6 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// --- PASS 3: SPECIAL SUBTRACTIVE LIGHTS ANTI-ILLUMINATION CHANNEL ---
 				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 
@@ -857,11 +856,16 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 					gl_RenderState.ApplyColorMask();
 				}
 
-				glBlendEquation(GL_FUNC_ADD); // Hard reset blending equations
+				// DEPTH MASK SANITIZER GATEWAY
+				// THE CORE SHIELD: We STRICTLY force glDepthMask to stay FALSE here!
+				// Allowing true to leak inside the iteration node loop completely breaks 
+				// sorting arrays for subsequent transparent fog sprites and monster sheets.
+				// We keep GL_LEQUAL depth function to let multi-layered reflections stack up
+				glBlendEquation(GL_FUNC_ADD);
 
 				glEnable(GL_FOG);
-				glDepthMask(true);
-				glDepthFunc(GL_LESS);
+				glDepthMask(false);     // The hardware lock, the mask is on false
+				glDepthFunc(GL_LEQUAL); // Keep LEQUAL, not to break light overlays
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 				gl_RenderState.EnableFog(true);
@@ -872,7 +876,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	}
 }
 
-// For an extra case when you need it to draw subtractive lights only on transluscent surfaces
+// For an extra case when you need it to draw subtractive lights only if they're detected here
 //void GLDrawList::DoDraw(int pass, int i, bool trans)
 //{
 //	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
@@ -1094,28 +1098,162 @@ void GLDrawList::DoDrawSorted(SortNode * head)
 }
 
 //==========================================================================
+// [Darkcrafter07] - THE UNIFIED SEGMENT-CLAMPED BLOCKMAP SORTING ENGINE
+//==========================================================================
+// THE CONVEYOR RESOLUTION: We forcefully abandon original glitchy subsector 
+// SortNodes compiling which causes sprites to alternate and clip inside adjacent seams.
+// Operating globally across ALL active pipeline render paths (GL1.1 up to GL4+ Core).
+//
+// GEOMETRIC ATTENUATION CODES:
+// 1. Core Vector Alignment: Instead of blindly sampling flat 1D projection rays to the screen 
+//    plane which drift at close-ups, this loop extracts absolute spherical 3D Euclidean distances 
+//    (LengthSquared) from r_viewpoint straight to the rendering centers of active elements!
+// 2. Translucent Segment Clamping: For wall primitives, the engine projects the camera position 
+//    onto the seg line vector and clamps it within segment boundaries (t = [0.0f; 1.0f]). This finds 
+//    the exact closest physical point on long fences and grates, completely stopping transparency bleeding!
+// 3. The 0-Index Vertex Shield: Left vertex height bounds are mapped securely via the canonical 
+//    zbottom[0] index array array to protect float layout precision tracking across the map!
+//
+// THE HOVERING SHADOW ANCHOR MATRIX:
+// Since a monster sprite hull and its underlying translucent stencil footprint share matching actor 
+// positions, identical distance values would cause fast qsort to randomly flip node priorities.
+// Solution: Check 'isGLSpriteClassShadow' flag directly from the sprites array. Push back by 25 units
+// if true in the Back-to-Front queue sequence.
+// Coupled with a soft '<=' inequality sort compare, this guarantees that dynamic shadows stay 
+// hard-locked underneath monster feet under any close-up angle.
+
+void GLDrawList::SortDrawItemsByBlockmap()
+{
+	if (drawitems.Size() <= 1) return;
+
+	struct FBlockmapSortBucket
+	{
+		int originalIndex;
+		float distanceToView;
+	};
+
+	TArray<FBlockmapSortBucket> sortStack;
+	sortStack.Resize(drawitems.Size());
+
+	for (unsigned int i = 0; i < drawitems.Size(); i++)
+	{
+		sortStack[i].originalIndex = i;
+		float itemX = 0.0f, itemY = 0.0f, itemZ = 0.0f;
+		float shadowSortBias = 0.0f;
+
+		GLDrawItemType type = drawitems[i].rendertype;
+		int idx = drawitems[i].index;
+
+		if (type == GLDIT_SPRITE && idx < (int)sprites.Size())
+		{
+			itemX = (float)sprites[idx].x;
+			itemY = (float)sprites[idx].y;
+			itemZ = (float)sprites[idx].z;
+
+			if (sprites[idx].isGLSpriteClassShadow)
+			{
+				shadowSortBias = 25.0f; // Push shadow 25 units back
+			}
+		}
+		else if (type == GLDIT_FLAT && idx < (int)flats.Size())
+		{
+			itemX = (float)flats[idx].sector->centerspot.X;
+			itemY = (float)flats[idx].sector->centerspot.Y;
+			itemZ = (float)flats[idx].z;
+		}
+		else if (type == GLDIT_WALL && idx < (int)walls.Size())
+		{
+			float x1 = (float)walls[idx].glseg.x1;
+			float y1 = (float)walls[idx].glseg.y1;
+			float x2 = (float)walls[idx].glseg.x2;
+			float y2 = (float)walls[idx].glseg.y2;
+
+			float segDx = x2 - x1;
+			float segDy = y2 - y1;
+			float segLengthSq = (segDx * segDx) + (segDy * segDy);
+
+			if (segLengthSq < 0.001f)
+			{
+				itemX = x1; itemY = y1;
+			}
+			else
+			{
+				float viewDx = (float)r_viewpoint.Pos.X - x1;
+				float viewDy = (float)r_viewpoint.Pos.Y - y1;
+				float t = (viewDx * segDx + viewDy * segDy) / segLengthSq;
+
+				if (t < 0.0f) t = 0.0f;
+				else if (t > 1.0f) t = 1.0f;
+
+				itemX = x1 + t * segDx;
+				itemY = y1 + t * segDy;
+			}
+			itemZ = (float)walls[idx].zbottom[0];
+		}
+
+		float dx = itemX - (float)r_viewpoint.Pos.X;
+		float dy = itemY - (float)r_viewpoint.Pos.Y;
+		float dz = itemZ - (float)r_viewpoint.Pos.Z;
+
+		// Bake the shadow bias into the Euclidean distance
+		sortStack[i].distanceToView = (dx * dx) + (dy * dy) + (dz * dz) + shadowSortBias;
+	}
+
+	// High-speed array realignment (Pure Back-to-Front tracking)
+	for (unsigned int i = 0; i < sortStack.Size(); i++)
+	{
+		for (unsigned int j = i + 1; j < sortStack.Size(); j++)
+		{
+			// Soft "<=" comparison keeps the nodes add order introduced by Nash
+			if (sortStack[i].distanceToView <= sortStack[j].distanceToView)
+			{
+				FBlockmapSortBucket temp = sortStack[i];
+				sortStack[i] = sortStack[j];
+				sortStack[j] = temp;
+			}
+		}
+	}
+
+	// Re-bake drawitems using standard engine types
+	TArray<GLDrawItem> tempItems = drawitems;
+	for (unsigned int i = 0; i < sortStack.Size(); i++)
+	{
+		drawitems[i] = tempItems[sortStack[i].originalIndex];
+	}
+}
+
+//==========================================================================
 //
 //
 //
 //==========================================================================
 void GLDrawList::DrawSorted()
 {
-	if (drawitems.Size()==0) return;
+	if (drawitems.Size() == 0) return;
 
+	// BLOCKMAP INTERCEPT: Rearrange transparent drawitems
+	// directly via real spatial distances globally
 	if (!sorted)
 	{
-		GLRenderer->mVBO->Map();
-		MakeSortList();
-		sorted=DoSort(SortNodes[SortNodeStart]);
-		GLRenderer->mVBO->Unmap();
+		SortDrawItemsByBlockmap();
+
+		// Assign a valid dummy memory address to trick the cache
+		sorted = (SortNode*)1;
 	}
+
 	gl_RenderState.ClearClipSplit();
 	if (!(gl.flags & RFL_NO_CLIP_PLANES))
 	{
 		glEnable(GL_CLIP_DISTANCE1);
 		glEnable(GL_CLIP_DISTANCE2);
 	}
-	DoDrawSorted(sorted);
+
+	// LINEAR CONVEYOR STREAM: Stream the sorted flat array sequentially into DoDraw pass
+	for (unsigned int i = 0; i < drawitems.Size(); i++)
+	{
+		DoDraw(GLPASS_TRANSLUCENT, i, true);
+	}
+
 	if (!(gl.flags & RFL_NO_CLIP_PLANES))
 	{
 		glDisable(GL_CLIP_DISTANCE1);

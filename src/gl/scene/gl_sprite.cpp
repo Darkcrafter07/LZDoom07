@@ -791,11 +791,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	sector_t rs;
 	sector_t * rendersector;
 
-	if (thing == nullptr)
-		return;
+	if (thing == nullptr) return;
 
-	if (IsLinedefCulledByDistance(thing))
-		return;
+	if (IsLinedefCulledByDistance(thing)) return;
 
 	// [ZZ] allow CustomSprite-style direct picnum specification
 	bool isPicnumOverride = thing->picnum.isValid();
@@ -805,6 +803,8 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	{
 		return;
 	}
+
+	isGLSpriteClassShadow = isSpriteShadow; // [Darkcrafter07] - record the bool in the GLSprite for the new sorting algoritm
 
 	AActor *camera = r_viewpoint.camera;
 

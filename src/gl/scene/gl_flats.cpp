@@ -438,10 +438,9 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 			if (!isTrueMirrorOverlay && realSectorIndex >= 0 && realSectorIndex < (int)level.sectors.Size())
 			{
 				sector_t* realSector = &level.sectors[realSectorIndex];
-				if (realSector && realSector->reflect[0] > 0.0f) // 0 == sector_t::floor
-				{
-					isTrueMirrorOverlay = true;
-				}
+				// Check both index 0 (floor) or index 1 (ceiling) arrays.
+				if (realSector && (realSector->reflect[0] > 0.0f || realSector->reflect[1] > 0.0f))
+				{ isTrueMirrorOverlay = true; }
 			}
 
 			// So far, this is for transluscent 3D floors.
