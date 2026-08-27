@@ -832,14 +832,12 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_DST_COLOR, GL_ONE);
-
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX, trans);
 
 				// --- PASS 2: SPECIAL ADDITIVE LIGHTS PLACED ON PURPOSE CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-
 				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
 
@@ -1231,35 +1229,68 @@ void GLDrawList::DrawSorted()
 {
 	if (drawitems.Size() == 0) return;
 
-	// BLOCKMAP INTERCEPT: Rearrange transparent drawitems
-	// directly via real spatial distances globally
-	if (!sorted)
+	if (gl.legacyMode)
 	{
-		SortDrawItemsByBlockmap();
+		// 1. PURE FIXED-FUNCTION PATH (GL1x/GL2x legacy mode)
+		// Enforces segment-clamped blockmap sorter.
+		if (!sorted)
+		{
+			SortDrawItemsByBlockmap();
+			sorted = (SortNode*)1; // Pass fake memory anchor to skip culler
+		}
 
-		// Assign a valid dummy memory address to trick the cache
-		sorted = (SortNode*)1;
+		gl_RenderState.ClearClipSplit();
+		if (!(gl.flags & RFL_NO_CLIP_PLANES))
+		{
+			glEnable(GL_CLIP_DISTANCE1);
+			glEnable(GL_CLIP_DISTANCE2);
+		}
+
+		// High-speed flat array conveyor with mIsRenderingSpriteContext locks
+		for (unsigned int i = 0; i < drawitems.Size(); i++)
+		{
+			gl_RenderState.mIsRenderingSpriteContext = (drawitems[i].rendertype == GLDIT_SPRITE);
+			DoDraw(GLPASS_TRANSLUCENT, i, true);
+		}
+
+		gl_RenderState.mIsRenderingSpriteContext = false; // Safe flush
+
+		if (!(gl.flags & RFL_NO_CLIP_PLANES))
+		{
+			glDisable(GL_CLIP_DISTANCE1);
+			glDisable(GL_CLIP_DISTANCE2);
+		}
+		gl_RenderState.ClearClipSplit();
 	}
-
-	gl_RenderState.ClearClipSplit();
-	if (!(gl.flags & RFL_NO_CLIP_PLANES))
+	else
 	{
-		glEnable(GL_CLIP_DISTANCE1);
-		glEnable(GL_CLIP_DISTANCE2);
-	}
+		// 2. MODERN SHADER PATH (GL3x/GL4x modern mode)
+		// Use Subsector BSP SortNode tree structures
+		if (!sorted)
+		{
+			GLRenderer->mVBO->Map();
+			MakeSortList();
+			sorted = DoSort(SortNodes[SortNodeStart]);
+			GLRenderer->mVBO->Unmap();
+		}
 
-	// LINEAR CONVEYOR STREAM: Stream the sorted flat array sequentially into DoDraw pass
-	for (unsigned int i = 0; i < drawitems.Size(); i++)
-	{
-		DoDraw(GLPASS_TRANSLUCENT, i, true);
-	}
+		gl_RenderState.ClearClipSplit();
+		if (!(gl.flags & RFL_NO_CLIP_PLANES))
+		{
+			glEnable(GL_CLIP_DISTANCE1);
+			glEnable(GL_CLIP_DISTANCE2);
+		}
 
-	if (!(gl.flags & RFL_NO_CLIP_PLANES))
-	{
-		glDisable(GL_CLIP_DISTANCE1);
-		glDisable(GL_CLIP_DISTANCE2);
+		// Execute standard shader DoDrawSorted tree
+		DoDrawSorted(sorted);
+
+		if (!(gl.flags & RFL_NO_CLIP_PLANES))
+		{
+			glDisable(GL_CLIP_DISTANCE1);
+			glDisable(GL_CLIP_DISTANCE2);
+		}
+		gl_RenderState.ClearClipSplit();
 	}
-	gl_RenderState.ClearClipSplit();
 }
 
 //==========================================================================
