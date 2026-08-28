@@ -462,8 +462,12 @@ static bool currentModelMatrixState;
 
 extern int modellightindex; // to distinguish between different dynlight types
 extern bool isUsingVolumetric3DModelLegacyDynlight;
+extern void* g_CurrentRendering3dmdlActorPtr;         // no need to add "AActor *actor" in ApplyFixedFunction
 void FRenderState::ApplyFixedFunction()
 {
+	AActor* actor = (g_CurrentRendering3dmdlActorPtr != nullptr && (uintptr_t)g_CurrentRendering3dmdlActorPtr > 0x10000)
+		? (AActor*)g_CurrentRendering3dmdlActorPtr : nullptr;
+
 	int thistm = mTextureMode == TM_MODULATE && mTempTM == TM_OPAQUE ? TM_OPAQUE : mTextureMode;
 	if (thistm != ffTextureMode)
 	{
@@ -486,8 +490,8 @@ void FRenderState::ApplyFixedFunction()
 	}
 	if (mFogEnabled)
 	{
-		// Pristine factory log-decay baseline calculation
-		float FogDensity = mLightParms[2] * -0.6931471f;	// = 1/log(2)
+		// Pristine factory log-decay baseline calculation with correct array index tracking
+		float FogDensity = mLightParms[2] * -0.6931471f;	// = 1/log(2) [lzdoom_source]
 		GLfloat FogColor[4] = { mFogColor.r / 255.0f, mFogColor.g / 255.0f, mFogColor.b / 255.0f, 0.0f };
 
 		if (ffFogColor != mFogColor)
@@ -496,25 +500,73 @@ void FRenderState::ApplyFixedFunction()
 			glFogfv(GL_FOG_COLOR, FogColor);
 		}
 
-		if (mActiveGL1xDynlightPass)
+		if (gl_lights)
 		{
-			// Check if the incoming fog color is black or sits within the strict 5-unit tolerance threshold
-			if (mFogColor.r >= 5 && mFogColor.g >= 5 && mFogColor.b >= 5) // That's weird but it works
+			// Extract surfaces lightlevel
+			int lightlevel = 128; // Safe baseline default if unbound
+
+			if (mIsRenderingSpriteNow)
 			{
-				// Keep stock density as is for ordinary high-intensity color fog maps
+				AActor* actor = (g_CurrentRendering3dmdlActorPtr != nullptr && (uintptr_t)g_CurrentRendering3dmdlActorPtr > 0x10000)
+					? (AActor*)g_CurrentRendering3dmdlActorPtr : nullptr;
+
+				if (actor != nullptr && actor->Sector != nullptr)
+				{
+					lightlevel = actor->Sector->lightlevel; // Fetch live sprite/model lighting zone
+				}
 			}
 			else
 			{
-				// Fog loses intensity if rendered on top of regular modulated dynlight lit surfaces
-				if (mIsRenderingSpriteNow) FogDensity *= 1.25f; // less for sprites/models
-				else                       FogDensity *= 2.0f;  // more for walls or flats
+				// Safe extraction after non-null pointer assurance for geometric flats and walls
+				if (g_CurrentSetupWallContext != nullptr)
+				{
+					lightlevel = g_CurrentSetupWallContext->lightlevel;
+				}
+				else if (g_CurrentSetupFlatContext != nullptr)
+				{
+					lightlevel = g_CurrentSetupFlatContext->lightlevel;
+				}
+			}
+
+			float fogDensMul = 2.0f; // Default world boost for walls and flats
+
+			if      (lightlevel <= 88)                       fogDensMul = 1.0f;
+			else if (lightlevel >= 89  && lightlevel < 96)   fogDensMul = 1.05f;
+			else if (lightlevel >= 96  && lightlevel < 104)  fogDensMul = 1.15f;
+			else if (lightlevel >= 104 && lightlevel < 112)  fogDensMul = 1.25f;
+			else if (lightlevel >= 112 && lightlevel < 120)  fogDensMul = 1.28f;
+			else if (lightlevel >= 120 && lightlevel < 128)  fogDensMul = 1.32f;
+			else if (lightlevel >= 128 && lightlevel < 136)  fogDensMul = 1.40f;
+			else if (lightlevel >= 136 && lightlevel < 144)  fogDensMul = 1.55f;
+			else if (lightlevel >= 144 && lightlevel < 152)  fogDensMul = 1.65f;
+			else if (lightlevel >= 152 && lightlevel < 160)  fogDensMul = 1.75f;
+			else if (lightlevel >= 160 && lightlevel < 168)  fogDensMul = 1.80f;
+			else if (lightlevel >= 168 && lightlevel < 176)  fogDensMul = 1.85f;
+			else if (lightlevel >= 176 && lightlevel < 184)  fogDensMul = 1.90f;
+			else if (lightlevel >= 184 && lightlevel < 192)  fogDensMul = 1.95f;
+			else if (lightlevel >= 192 && lightlevel < 200)  fogDensMul = 2.10f;
+			else if (lightlevel >= 200 && lightlevel < 216)  fogDensMul = 2.25f;
+			else                                             fogDensMul = 2.75f;
+
+			// Fog loses intensity if rendered on top of regular modulated dynlight lit surfaces
+			// Apply the dual-cascade logic with the strict 0.625f dampener and 1.0f floor clamp!
+			if (mIsRenderingSpriteNow)
+			{
+				float spriteResult = fogDensMul * 0.625f;
+				if (spriteResult < 1.0f) spriteResult = 1.0f;
+
+				FogDensity *= spriteResult; // less for sprites/models
+			}
+			else
+			{
+				FogDensity *= fogDensMul; // more for walls or flats
 			}
 
 			glFogf(GL_FOG_DENSITY, FogDensity); // Push the boosted parameters directly
 
 			// THE RESOLUTION: Abrupt fog drops, pops in and out on actors because
-			// ffFogDensity was synched with raw mLightParms[2] while coordinates drifted.
-			// Anchor the cache strictly on the real pushed 'FogDensity' for sprites, 
+			// ffFogDensity was synched with raw mLightParms while coordinates drifted.
+			// Anchor the cache strictly on the real pushed 'FogDensity' for sprites,
 			// and fallback to factory base tracking for ordinary world walls.
 			if (mIsRenderingSpriteNow) ffFogDensity = FogDensity; // HARD-LOCK SYNC FOR SPRITES & MODELS!
 			else                       ffFogDensity = mLightParms[2]; // Factory sync for walls/flats
