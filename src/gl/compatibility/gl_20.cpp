@@ -486,18 +486,49 @@ void FRenderState::ApplyFixedFunction()
 	}
 	if (mFogEnabled)
 	{
+		// Pristine factory log-decay baseline calculation
+		float FogDensity = mLightParms[2] * -0.6931471f;	// = 1/log(2)
+		GLfloat FogColor[4] = { mFogColor.r / 255.0f, mFogColor.g / 255.0f, mFogColor.b / 255.0f, 0.0f };
+
 		if (ffFogColor != mFogColor)
 		{
 			ffFogColor = mFogColor;
-			GLfloat FogColor[4] = { mFogColor.r / 255.0f,mFogColor.g / 255.0f,mFogColor.b / 255.0f,0.0f };
 			glFogfv(GL_FOG_COLOR, FogColor);
 		}
-		if (ffFogDensity != mLightParms[2])
+
+		if (mActiveGL1xDynlightPass)
 		{
-			// [Darkcrafter07] fog density for GL1x/GL2x increased for all non-black sectors by 2 times
-			// and for sprites (models too?) by 1.1 times, configured in gl_renderstate.h, SetFog method.
-			glFogf(GL_FOG_DENSITY, mLightParms[2] * -0.6931471f);	// = 1/log(2)
-			ffFogDensity = mLightParms[2];
+			// Check if the incoming fog color is black or sits within the strict 5-unit tolerance threshold
+			if (mFogColor.r >= 5 && mFogColor.g >= 5 && mFogColor.b >= 5) // That's weird but it works
+			{
+				// Keep stock density as is for ordinary high-intensity color fog maps
+			}
+			else
+			{
+				// Fog loses intensity if rendered on top of regular modulated dynlight lit surfaces
+				if (mIsRenderingSpriteNow) FogDensity *= 1.25f; // less for sprites/models
+				else                       FogDensity *= 2.0f;  // more for walls or flats
+			}
+
+			glFogf(GL_FOG_DENSITY, FogDensity); // Push the boosted parameters directly
+
+			// THE RESOLUTION: Abrupt fog drops, pops in and out on actors because
+			// ffFogDensity was synched with raw mLightParms[2] while coordinates drifted.
+			// Anchor the cache strictly on the real pushed 'FogDensity' for sprites, 
+			// and fallback to factory base tracking for ordinary world walls.
+			if (mIsRenderingSpriteNow) ffFogDensity = FogDensity; // HARD-LOCK SYNC FOR SPRITES & MODELS!
+			else                       ffFogDensity = mLightParms[2]; // Factory sync for walls/flats
+		}
+		else
+		{
+			// Safe fallback routing matching the active rendering type boundaries
+			float compareCache = mIsRenderingSpriteNow ? FogDensity : mLightParms[2];
+
+			if (ffFogDensity != compareCache)
+			{
+				glFogf(GL_FOG_DENSITY, FogDensity);
+				ffFogDensity = compareCache;
+			}
 		}
 	}
 	if (mSpecialEffect != ffSpecialEffect)
@@ -2509,6 +2540,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		int executionPass = (pass == GLPASS_TRANSLUCENT_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE) ? GLPASS_LIGHTTEX : pass;
 
 		float planeh = plane.plane.ZatPoint(light->Pos);
+		gl_RenderState.mActiveGL1xDynlightPass = true;
 		if (gl_lights_checkside && ((planeh < light->Z() && ceiling) || (planeh > light->Z() && !ceiling)))
 		{
 			node = node->nextLight;
@@ -2591,6 +2623,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	// it leaves the GPU register stuck in GL_FUNC_REVERSE_SUBTRACT mode.
 	// We forcefully restore GL_FUNC_ADD right here before the memory context 
 	// leaves this floor sector chunk, permanently curing the angle pitch-black glitch.
+	gl_RenderState.mActiveGL1xDynlightPass = false;
 	gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	gl_RenderState.Apply();
 }
@@ -2777,6 +2810,8 @@ void GLWall::RenderLightsCompat(int pass)
 		// Substitue a pass locally to GLPASS_LIGHTTEX for correct VBO mapping
 		int executionPass = (pass == GLPASS_TRANSLUCENT_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE) ? GLPASS_LIGHTTEX : pass;
 
+		gl_RenderState.mActiveGL1xDynlightPass = true;
+
 		// We need this to find out what's current wall alpha value is in gl_SetupLightWall
 		g_CurrentSetupWallContext = this; // Bake current wall address in the stack bridge
 		if (PrepareLight(light, executionPass))
@@ -2793,6 +2828,7 @@ void GLWall::RenderLightsCompat(int pass)
 	// it leaves the GPU register stuck in GL_FUNC_REVERSE_SUBTRACT mode.
 	// We forcefully restore GL_FUNC_ADD right here before the memory context 
 	// leaves this floor sector chunk, permanently curing the angle pitch-black glitch.
+	gl_RenderState.mActiveGL1xDynlightPass = false;
 	gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	gl_RenderState.Apply();
 
@@ -3070,6 +3106,7 @@ void GLSceneDrawer::RenderMultipassStuff()
 	//{
 	//	if (gl_SetupLightTexture())
 	//	{
+	//
 	//		gl_RenderState.EnableTexture(true);
 	//		gl_RenderState.EnableBrightmap(false);
 	//		gl_RenderState.EnableFog(false);

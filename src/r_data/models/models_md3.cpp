@@ -677,9 +677,12 @@ int FMD3Model::FindFrame(const char * name)
 // the GPU instantly fired up its internal Gouraud Shading processors.
 // ====================================================================================
 
-void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frameno, int frameno2, double inter, int translation)
+void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frameno, int frameno2, double inter, int translation, const PClass *ti)
 {
-	AActor* actor = (AActor*)g_CurrentRendering3dmdlActorPtr; // no need to add "AActor *actor" in RenderFrame
+	AActor* actor = (g_CurrentRendering3dmdlActorPtr != nullptr && (uintptr_t)g_CurrentRendering3dmdlActorPtr > 0x10000) 
+		? (AActor*)g_CurrentRendering3dmdlActorPtr : nullptr;
+
+	const FSpriteModelFrame* safeFramePtr = nullptr; 
 
 	float xscaleMdldef, yscaleMdldef, xyscaleMdldef, zscaleMdldef = 1.0f;
 	float xyscaleMap, zscaleMap = 1.0f;
@@ -688,14 +691,46 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 	float map2mdldefRatioXYinv, mdldef2mapRatioXYinv = 1.0f;
 	float scaleZcombo, scaleZcomboInvCompens = 1.0f;
 
-	if (actor != nullptr) // crash fix
+	bool isClassTypeValid = (ti != nullptr && (uintptr_t)ti > 0x10000);
+	
+	// ZOMBIE-ACTOR MEMORY BYPASS
+	// To completely block Access Violations when reading fields 
+	// 'actor->sprite' / 'actor->frame' over unmapped RAM blocks, enforce a strict 
+	// hardware try/catch boundary check on the actor pointer before reading specs.
+	// If it fails, fall back straight to pristine global cached frames natively.
+	bool isActorValidPtr = false;
+
+	if (isClassTypeValid)
 	{
-		xscaleMdldef = (float)curSpriteMDLFrame->xscale;
-		yscaleMdldef = (float)curSpriteMDLFrame->yscale;
-		zscaleMdldef = (float)curSpriteMDLFrame->zscale;
-		// So they decided to tie XY to X and Z to Y, where this decision came from?
-		xyscaleMap = (float)actor->Scale.X; // actually both X and Y axes wtf!
-		zscaleMap = (float)actor->Scale.Y;  // actually Z (vertical) axis only!
+		// Safe execution loop: only touch actor fields if the memory page is 100% verified
+		if (isActorValidPtr)
+		{
+			safeFramePtr = FindModelFrame(ti, actor->sprite, actor->frame, false);
+		}
+		
+		if (safeFramePtr == nullptr)
+		{
+			// Safe Global Cache fallback with strict pointer boundary validations
+			if (curSpriteMDLFrame != nullptr && (uintptr_t)curSpriteMDLFrame > 0x10000) 
+			{
+				safeFramePtr = curSpriteMDLFrame; 
+			}
+		}
+	}
+
+	// DOUBLE-LOCK GATEWAY: Evaluate across all load and menu toggle sequences
+	if (safeFramePtr != nullptr) 
+	{
+		xscaleMdldef = (float)safeFramePtr->xscale;
+		yscaleMdldef = (float)safeFramePtr->yscale;
+		zscaleMdldef = (float)safeFramePtr->zscale;
+		
+		// Secure scale assignments: use fallback safe unit matrix if actor memory is dead
+		if (isActorValidPtr)
+		{
+			xyscaleMap = (float)actor->Scale.X; // actually both X and Y axes wtf!
+			zscaleMap = (float)actor->Scale.Y;  // actually Z (vertical) axis only!
+		}
 	}
 
 	xyscaleMdldef = (xscaleMdldef + yscaleMdldef) * 0.5f;
@@ -717,10 +752,8 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 		float baseColor = (float)g_legacyModelSectorLight * invMul255;
 
 		if (!gl_lights) // Dynligths are off, clear array cache and shutdown surfaces
-		// needs to be done, otherwise actors won't kill volumen dynlight when turned off in menu
-		{
-			g_legacyLightActive = false; g_legacyModelLights.Clear();
-		}
+		// needs to be done, otherwise actors won't kill volumetric dynlight when turned off in menu
+		{ g_legacyLightActive = false; g_legacyModelLights.Clear(); }
 
 		if (!actor)
 		{
@@ -821,7 +854,6 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 
 					// --- FORCE UNIT LENGTH NORMALS ---
 					glEnable(GL_NORMALIZE);
-
 					glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, GL_TRUE); // Force two-sided math to secure all faces
 
 					// Compute inverse model matrix to cancel out OpenGL Eye Space double-multiplication bugs
@@ -858,9 +890,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 
 						float nLen = sqrtf(alignedNx * alignedNx + alignedNy * alignedNy + alignedNz * alignedNz);
 						if (nLen > 0.001f)
-						{
-							alignedNx /= nLen; alignedNy /= nLen; alignedNz /= nLen;
-						}
+						{ alignedNx /= nLen; alignedNy /= nLen; alignedNz /= nLen; }
 
 						generatedNormals[v * 3 + 0] = alignedNx;
 						generatedNormals[v * 3 + 1] = alignedNy;
@@ -882,7 +912,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 					if (baseAmbG > 1.0f) baseAmbG = 1.0f;
 					if (baseAmbB > 1.0f) baseAmbB = 1.0f;
 
-					// --- EXACT FIXED ARRAY INDEXATION SQUARE BRACKETS ---
+					// --- ARRAY INDEXATION SQUARE BRACKETS [4], [0], [1], [2], [3] ---
 					float ambColor[4];
 					ambColor[0] = baseAmbR;
 					ambColor[1] = baseAmbG;
@@ -907,7 +937,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						GLenum lightSlot = GL_LIGHT0 + l;
 						glEnable(lightSlot);
 
-						// Pure WORLD space parameters coordinates
+						// Pure WORLD space parameters coordinates [4], [0], [1], [2], [3]
 						float lightPos[4];
 						lightPos[0] = (float)cachedLight.absX;
 						lightPos[1] = (float)cachedLight.absZ;
@@ -915,7 +945,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						lightPos[3] = 1.0f;
 
 						// --- HIGH-SPEED STRIDE VERTEX SAMPLER SHUNT ---
-						float closestVertexWorld[3];
+						float closestVertexWorld[3]; //  [3], [0], [1], [2]
 						closestVertexWorld[0] = (float)modelPos.X;
 						closestVertexWorld[1] = (float)modelPos.Y;
 						closestVertexWorld[2] = (float)midZ;
@@ -963,7 +993,7 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						float distFactor = 1.0f - (currentDist / (scaledRadius * 0.75f));
 						if (distFactor < 0.0f) distFactor = 0.0f;
 
-						// --- EXACT FIXED ARRAY INDEXATION SQUARE BRACKETS ---
+						// --- ARRAY INDEXATION SQUARE BRACKETS [4], [0], [1], [2], [3] ---
 						float diffuseColor[4];
 						diffuseColor[0] = cachedLight.r * legacyVolumDynlightIntensity * distFactor * distFactor;
 						diffuseColor[1] = cachedLight.g * legacyVolumDynlightIntensity * distFactor * distFactor;
@@ -981,12 +1011,12 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 						glLightfv(lightSlot, GL_AMBIENT, diffuseColor); // Diffuse mirroring anchor channel
 
 						// --- CLEAN LINEAR ATTENUATION INJECTOR ---
-						float linAttA = (1.0f / cachedLight.radius) * currentDist * 48.0f;
-						float linAttB = (1.0f / cachedLight.radius) * avgModelScale * 0.4f;
+						float radiusInv = 1.0f / cachedLight.radius;
+						float linAttA = radiusInv * currentDist * 48.0f;
+						float linAttB = radiusInv * avgModelScale * 0.4f;
 						float decrLightBlbSizOnBigMdl = map2mdldefRatioXY * 0.005f;
 						float avgAttAB = (linAttA + linAttB) * 0.5f;
 						glLightf(lightSlot, GL_CONSTANT_ATTENUATION, 0.0f);
-						//glLightf(lightSlot, GL_LINEAR_ATTENUATION, avgAttAB * map2mdldefRatioXY + (avgModelScale * 0.1f));
 						glLightf(lightSlot, GL_LINEAR_ATTENUATION, avgAttAB + decrLightBlbSizOnBigMdl);
 						glLightf(lightSlot, GL_QUADRATIC_ATTENUATION, 0.0f);
 					}

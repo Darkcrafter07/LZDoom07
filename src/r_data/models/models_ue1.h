@@ -1,3 +1,4 @@
+// models_ue1.h
 #pragma once
 
 #include "models.h"
@@ -24,11 +25,20 @@ public:
 
 	bool Load(const char * fn, int lumpnum, const char * buffer, int length) override;
 	int FindFrame(const char * name) override;
-	void RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame, int frame2, double inter, int translation=0) override;
+	void RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame, int frame2, double inter, int translation = 0, const PClass *ti = nullptr) override;
 	void BuildVertexBuffer(FModelRenderer *renderer) override;
 	void AddSkins(uint8_t *hitlist) override;
 	void LoadGeometry();
 	void UnloadGeometry();
+
+	// [Darkcrafter07]: Real-time per-frame vertex height constraints array payload for UE1 models
+	TArray<float> trueVisualHeights; TArray<float> trueVisualRadii;
+	// Make all mdl formats return their marker
+	int GetModelType() const override { return MDL_TYPE_UE1; }
+	// Unified cross-format geometric frame-perfect constraints retrievers
+	float GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const override;
+	float GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const override;
+
 	FUE1Model()
 	{
 		mDataLump = -1;

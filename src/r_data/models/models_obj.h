@@ -1,4 +1,4 @@
-//
+// models_obj.h
 //---------------------------------------------------------------------------
 //
 // Copyright(C) 2018 Kevin Caccamo
@@ -96,9 +96,17 @@ public:
 	~FOBJModel();
 	bool Load(const char* fn, int lumpnum, const char* buffer, int length) override;
 	int FindFrame(const char* name) override;
-	void RenderFrame(FModelRenderer* renderer, FTexture* skin, int frame, int frame2, double inter, int translation=0) override;
+	void RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame, int frame2, double inter, int translation = 0, const PClass *ti = nullptr) override;
 	void BuildVertexBuffer(FModelRenderer* renderer) override;
 	void AddSkins(uint8_t* hitlist) override;
+
+	// [Darkcrafter07]: Real-time vertex height constraints payload for static OBJ meshes
+	float trueVisualHeight, trueVisualRadius;
+	// make all mdl formats return their marker
+	int GetModelType() const override { return MDL_TYPE_OBJ; }
+	// Unified cross-format geometric frame-perfect constraints retrievers
+	float GetTrueMDLVisualHeight(int currentFrameNo, float finalScaleZ) const override;
+	float GetTrueMDLVisualRadius(int currentFrameNo, float finalScaleX) const override;
 };
 
 #endif

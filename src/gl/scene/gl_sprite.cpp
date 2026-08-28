@@ -273,6 +273,8 @@ void GLSprite::Draw(int pass)
 {
 	if (pass == GLPASS_DECALS) return;
 
+	gl_RenderState.mIsRenderingSpriteNow = true;
+
 	if (pass == GLPASS_LIGHTSONLY)
 	{
 		if (modelframe && !modelframe->isVoxel && !(modelframe->flags & MDL_NOPERPIXELLIGHTING))
@@ -593,6 +595,8 @@ void GLSprite::Draw(int pass)
 	gl_RenderState.SetAddColor(0);
 	gl_RenderState.EnableTexture(true);
 	gl_RenderState.SetDynLight(0, 0, 0);
+
+	gl_RenderState.mIsRenderingSpriteNow = false;
 
 }
 

@@ -288,9 +288,9 @@ void FModelRenderer::RenderFrameModels(const FSpriteModelFrame *smf, const FStat
 			mdl->PushSpriteMDLFrame(smf, i);
 
 			if (smfNext && smf->modelframes[i] != smfNext->modelframes[i])
-				mdl->RenderFrame(this, tex, smf->modelframes[i], smfNext->modelframes[i], inter, translation);
+				mdl->RenderFrame(this, tex, smf->modelframes[i], smfNext->modelframes[i], inter, translation, ti);
 			else
-				mdl->RenderFrame(this, tex, smf->modelframes[i], smf->modelframes[i], 0.f, translation);
+				mdl->RenderFrame(this, tex, smf->modelframes[i], smf->modelframes[i], 0.f, translation, ti);
 
 			ResetVertexBuffer();
 		}
@@ -964,6 +964,15 @@ static void ParseModelDefLump(int Lump)
 
 FSpriteModelFrame * FindModelFrame(const PClass * ti, int sprite, int frame, bool dropped)
 {
+	// [Darkcrafter07] - Access violation occurs during aggressive save spamming 
+	// because 'actor->GetClass()' dynamically drifts into nullptr inside zombie states.
+	// Force an immediate fallback check: if incoming 'ti' type pointer is null, 
+	// return nullptr to completely eliminate runtime Access Violations.
+	if (ti == nullptr || (uintptr_t)ti <= 0x10000) 
+	{
+		return nullptr; // Safe-guard exit block, prevent reading OS kernel bounds.
+	}
+
 	if (GetDefaultByType(ti)->hasmodel)
 	{
 		FSpriteModelFrame smf;

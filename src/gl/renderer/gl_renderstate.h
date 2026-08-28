@@ -144,8 +144,8 @@ public:
 	{
 		Reset();
 
-		// [Darkcrafter07] - GL1x/GL2x context lock to bypass fog boosting on actors
-		mIsRenderingSpriteContext = false;
+		mIsRenderingSpriteNow = false; // [Darkcrafter07] - if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
+		mActiveGL1xDynlightPass = false; // [Darkcrafter07] - GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
 	}
 
 	void Reset();
@@ -435,42 +435,15 @@ public:
 		mSpecularLevel = specularLevel;
 	}
 
-	//void SetFog(PalEntry c, float d)
-	//{
-	//	const float LOG2E = 1.442692f;	// = 1/log(2)
-	//	mFogColor = c;
-	//	if (d >= 0.0f) mLightParms[2] = d * (-LOG2E / 64000.f);
-	//}
-
-	// [Darkcrafter07] - GL1x/GL2x context lock to bypass fog boosting on actors
-	bool mIsRenderingSpriteContext;
-
 	void SetFog(PalEntry c, float d)
 	{
-		float processedDensity = d;
 		const float LOG2E = 1.442692f;	// = 1/log(2)
 		mFogColor = c;
-
-		if (gl.legacyMode)
-		{
-			// If fog color is black or sits within the strict n-units tol threshold
-			if (c.r <= 5 && c.g <= 5 && c.b <= 5)
-			{
-				// Keep stock density as is - will be natively multiplied by LOG2E below
-			}
-			else
-			{
-				// Original GL1x/GL2x fog density is "-0.6931471" which is "1/log(2)"
-				// Math: -1.12 / -0.6931471 = 1.6158 linear pre-scale multiplier
-				// That is done to make it behave closer to GL3+ version.
-				if (mIsRenderingSpriteContext) processedDensity *= 1.1f; // less for sprites
-				else                           processedDensity *= 2.0f; // more for rest
-			}
-		}
-
-		// Feed the perfectly cross-faded value directly into mLightParms array
-		if (processedDensity >= 0.0f) mLightParms[2] = processedDensity * (-LOG2E / 64000.f);
+		if (d >= 0.0f) mLightParms[2] = d * (-LOG2E / 64000.f);
 	}
+
+	bool mIsRenderingSpriteNow; // [Darkcrafter07] - if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
+	bool mActiveGL1xDynlightPass; // [Darkcrafter07] GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
 
 	void SetLightParms(float f, float d)
 	{

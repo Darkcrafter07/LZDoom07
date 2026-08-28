@@ -777,7 +777,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	// "gl_dynlightHandleSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
 	// and also call "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy".
 	//--------------------------------------------------------------------------
-	if (gl.legacyMode && pass == GLPASS_TRANSLUCENT && currentRenderType != GLDIT_SPRITE && GLRenderer->mLightCount)
+	if (gl.legacyMode && pass == GLPASS_TRANSLUCENT && GLRenderer->mLightCount)
 	{
 		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
 		{
@@ -794,6 +794,9 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 			if (gl_SetupLightTexture())
 			{
+				// Tell the variable that it's a dynlight phase now
+				gl_RenderState.mActiveGL1xDynlightPass = GLPASS_LIGHTTEX;
+
 				// Common baseline registers hardware isolation setup
 				gl_RenderState.EnableFog(false);
 				gl_RenderState.Apply();
@@ -1054,8 +1057,9 @@ void GLDrawList::DoDrawSorted(SortNode * head)
 		relation = z > r_viewpoint.Pos.Z ? 1 : -1;
 	}
 
+
 	// left is further away, i.e. for stuff above viewz its z coordinate higher, for stuff below viewz its z coordinate is lower
-	if (head->left)
+	if (head->left) 
 	{
 		if (relation == -1)
 		{
@@ -1068,27 +1072,16 @@ void GLDrawList::DoDrawSorted(SortNode * head)
 		DoDrawSorted(head->left);
 		gl_RenderState.SetClipSplit(clipsplit);
 	}
-
-	gl_RenderState.mIsRenderingSpriteContext = (drawitems[head->itemindex].rendertype == GLDIT_SPRITE);
-
 	DoDraw(GLPASS_TRANSLUCENT, head->itemindex, true);
-
-	gl_RenderState.mIsRenderingSpriteContext = false; // Safe immediate flush
-
 	if (head->equal)
 	{
-		SortNode * ehead = head->equal;
+		SortNode * ehead=head->equal;
 		while (ehead)
 		{
-			gl_RenderState.mIsRenderingSpriteContext = (drawitems[ehead->itemindex].rendertype == GLDIT_SPRITE);
-
 			DoDraw(GLPASS_TRANSLUCENT, ehead->itemindex, true);
-
-			gl_RenderState.mIsRenderingSpriteContext = false; // Safe immediate flush
-			ehead = ehead->equal;
+			ehead=ehead->equal;
 		}
 	}
-
 	// right is closer, i.e. for stuff above viewz its z coordinate is lower, for stuff below viewz its z coordinate is higher
 	if (head->right)
 	{
@@ -1144,7 +1137,7 @@ void GLDrawList::DrawSorted()
 		DoDrawSorted(sorted);
 
 		// Symmetrical registers cleanup matrix to secure subsequent rendering frames
-		gl_RenderState.mIsRenderingSpriteContext = false;
+		gl_RenderState.mIsRenderingSpriteNow = false;
 		glDisable(GL_ALPHA_TEST);
 		gl_RenderState.AlphaFunc(GL_GREATER, 0.0f);
 		gl_RenderState.Apply();

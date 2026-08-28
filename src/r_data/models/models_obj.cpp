@@ -645,7 +645,7 @@ int FOBJModel::FindFrame(const char* name)
  * @param inter Unused
  * @param translation The translation for the skin
  */
-void FOBJModel::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frameno, int frameno2, double inter, int translation)
+void FOBJModel::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame, int frame2, double inter, int translation, const PClass *ti)
 {
 	for (unsigned int i = 0; i < surfaces.Size(); i++)
 	{
