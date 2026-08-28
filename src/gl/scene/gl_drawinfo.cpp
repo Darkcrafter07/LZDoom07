@@ -1054,9 +1054,8 @@ void GLDrawList::DoDrawSorted(SortNode * head)
 		relation = z > r_viewpoint.Pos.Z ? 1 : -1;
 	}
 
-
 	// left is further away, i.e. for stuff above viewz its z coordinate higher, for stuff below viewz its z coordinate is lower
-	if (head->left) 
+	if (head->left)
 	{
 		if (relation == -1)
 		{
@@ -1069,16 +1068,27 @@ void GLDrawList::DoDrawSorted(SortNode * head)
 		DoDrawSorted(head->left);
 		gl_RenderState.SetClipSplit(clipsplit);
 	}
+
+	gl_RenderState.mIsRenderingSpriteContext = (drawitems[head->itemindex].rendertype == GLDIT_SPRITE);
+
 	DoDraw(GLPASS_TRANSLUCENT, head->itemindex, true);
+
+	gl_RenderState.mIsRenderingSpriteContext = false; // Safe immediate flush
+
 	if (head->equal)
 	{
-		SortNode * ehead=head->equal;
+		SortNode * ehead = head->equal;
 		while (ehead)
 		{
+			gl_RenderState.mIsRenderingSpriteContext = (drawitems[ehead->itemindex].rendertype == GLDIT_SPRITE);
+
 			DoDraw(GLPASS_TRANSLUCENT, ehead->itemindex, true);
-			ehead=ehead->equal;
+
+			gl_RenderState.mIsRenderingSpriteContext = false; // Safe immediate flush
+			ehead = ehead->equal;
 		}
 	}
+
 	// right is closer, i.e. for stuff above viewz its z coordinate is lower, for stuff below viewz its z coordinate is higher
 	if (head->right)
 	{
@@ -1096,131 +1106,6 @@ void GLDrawList::DoDrawSorted(SortNode * head)
 }
 
 //==========================================================================
-// [Darkcrafter07] - THE UNIFIED SEGMENT-CLAMPED BLOCKMAP SORTING ENGINE
-//==========================================================================
-// THE CONVEYOR RESOLUTION: We forcefully abandon original glitchy subsector 
-// SortNodes compiling which causes sprites to alternate and clip inside adjacent seams.
-// Operating globally across ALL active pipeline render paths (GL1.1 up to GL4+ Core).
-//
-// GEOMETRIC ATTENUATION CODES:
-// 1. Core Vector Alignment: Instead of blindly sampling flat 1D projection rays to the screen 
-//    plane which drift at close-ups, this loop extracts absolute spherical 3D Euclidean distances 
-//    (LengthSquared) from r_viewpoint straight to the rendering centers of active elements!
-// 2. Translucent Segment Clamping: For wall primitives, the engine projects the camera position 
-//    onto the seg line vector and clamps it within segment boundaries (t = [0.0f; 1.0f]). This finds 
-//    the exact closest physical point on long fences and grates, completely stopping transparency bleeding!
-// 3. The 0-Index Vertex Shield: Left vertex height bounds are mapped securely via the canonical 
-//    zbottom[0] index array array to protect float layout precision tracking across the map!
-//
-// THE HOVERING SHADOW ANCHOR MATRIX:
-// Since a monster sprite hull and its underlying translucent stencil footprint share matching actor 
-// positions, identical distance values would cause fast qsort to randomly flip node priorities.
-// Solution: Check 'isGLSpriteClassShadow' flag directly from the sprites array. Push back by 25 units
-// if true in the Back-to-Front queue sequence.
-// Coupled with a soft '<=' inequality sort compare, this guarantees that dynamic shadows stay 
-// hard-locked underneath monster feet under any close-up angle.
-
-void GLDrawList::SortDrawItemsByBlockmap()
-{
-	if (drawitems.Size() <= 1) return;
-
-	struct FBlockmapSortBucket
-	{
-		int originalIndex;
-		float distanceToView;
-	};
-
-	TArray<FBlockmapSortBucket> sortStack;
-	sortStack.Resize(drawitems.Size());
-
-	for (unsigned int i = 0; i < drawitems.Size(); i++)
-	{
-		sortStack[i].originalIndex = i;
-		float itemX = 0.0f, itemY = 0.0f, itemZ = 0.0f;
-		float shadowSortBias = 0.0f;
-
-		GLDrawItemType type = drawitems[i].rendertype;
-		int idx = drawitems[i].index;
-
-		if (type == GLDIT_SPRITE && idx < (int)sprites.Size())
-		{
-			itemX = (float)sprites[idx].x;
-			itemY = (float)sprites[idx].y;
-			itemZ = (float)sprites[idx].z;
-
-			if (sprites[idx].isGLSpriteClassShadow)
-			{
-				shadowSortBias = 25.0f; // Push shadow 25 units back
-			}
-		}
-		else if (type == GLDIT_FLAT && idx < (int)flats.Size())
-		{
-			itemX = (float)flats[idx].sector->centerspot.X;
-			itemY = (float)flats[idx].sector->centerspot.Y;
-			itemZ = (float)flats[idx].z;
-		}
-		else if (type == GLDIT_WALL && idx < (int)walls.Size())
-		{
-			float x1 = (float)walls[idx].glseg.x1;
-			float y1 = (float)walls[idx].glseg.y1;
-			float x2 = (float)walls[idx].glseg.x2;
-			float y2 = (float)walls[idx].glseg.y2;
-
-			float segDx = x2 - x1;
-			float segDy = y2 - y1;
-			float segLengthSq = (segDx * segDx) + (segDy * segDy);
-
-			if (segLengthSq < 0.001f)
-			{
-				itemX = x1; itemY = y1;
-			}
-			else
-			{
-				float viewDx = (float)r_viewpoint.Pos.X - x1;
-				float viewDy = (float)r_viewpoint.Pos.Y - y1;
-				float t = (viewDx * segDx + viewDy * segDy) / segLengthSq;
-
-				if (t < 0.0f) t = 0.0f;
-				else if (t > 1.0f) t = 1.0f;
-
-				itemX = x1 + t * segDx;
-				itemY = y1 + t * segDy;
-			}
-			itemZ = (float)walls[idx].zbottom[0];
-		}
-
-		float dx = itemX - (float)r_viewpoint.Pos.X;
-		float dy = itemY - (float)r_viewpoint.Pos.Y;
-		float dz = itemZ - (float)r_viewpoint.Pos.Z;
-
-		// Bake the shadow bias into the Euclidean distance
-		sortStack[i].distanceToView = (dx * dx) + (dy * dy) + (dz * dz) + shadowSortBias;
-	}
-
-	// High-speed array realignment (Pure Back-to-Front tracking)
-	for (unsigned int i = 0; i < sortStack.Size(); i++)
-	{
-		for (unsigned int j = i + 1; j < sortStack.Size(); j++)
-		{
-			// Soft "<=" comparison keeps the nodes add order introduced by Nash
-			if (sortStack[i].distanceToView <= sortStack[j].distanceToView)
-			{
-				FBlockmapSortBucket temp = sortStack[i];
-				sortStack[i] = sortStack[j];
-				sortStack[j] = temp;
-			}
-		}
-	}
-
-	// Re-bake drawitems using standard engine types
-	TArray<GLDrawItem> tempItems = drawitems;
-	for (unsigned int i = 0; i < sortStack.Size(); i++)
-	{
-		drawitems[i] = tempItems[sortStack[i].originalIndex];
-	}
-}
-
-//==========================================================================
 //
 //
 //
@@ -1229,68 +1114,54 @@ void GLDrawList::DrawSorted()
 {
 	if (drawitems.Size() == 0) return;
 
+	// Use original Subsector BSP SortNode tree for all GL modes
+	if (!sorted)
+	{
+		GLRenderer->mVBO->Map();
+		MakeSortList();
+		sorted = DoSort(SortNodes[SortNodeStart]);
+		GLRenderer->mVBO->Unmap();
+	}
+
+	gl_RenderState.ClearClipSplit();
+	if (!(gl.flags & RFL_NO_CLIP_PLANES))
+	{
+		glEnable(GL_CLIP_DISTANCE1);
+		glEnable(GL_CLIP_DISTANCE2);
+	}
+
 	if (gl.legacyMode)
 	{
-		// 1. PURE FIXED-FUNCTION PATH (GL1x/GL2x legacy mode)
-		// Enforces segment-clamped blockmap sorter.
-		if (!sorted)
-		{
-			SortDrawItemsByBlockmap();
-			sorted = (SortNode*)1; // Pass fake memory anchor to skip culler
-		}
+		// GL1x/GL2x mode
+		// Use ecursive DoDrawSorted tree, but we strictly lock the hardware 
+		// Alpha-Test threshold right here to prevent translucent surfaces above/behind
+		// from eating, biting and cutting transparent sprite sheets resting on top
+		glEnable(GL_ALPHA_TEST);
+		gl_RenderState.AlphaFunc(GL_GREATER, 0.85f); // Hardware binary pixel gate
+		gl_RenderState.Apply();
 
-		gl_RenderState.ClearClipSplit();
-		if (!(gl.flags & RFL_NO_CLIP_PLANES))
-		{
-			glEnable(GL_CLIP_DISTANCE1);
-			glEnable(GL_CLIP_DISTANCE2);
-		}
+		// Execute standard tree loop for legacy mode cleanly
+		DoDrawSorted(sorted);
 
-		// High-speed flat array conveyor with mIsRenderingSpriteContext locks
-		for (unsigned int i = 0; i < drawitems.Size(); i++)
-		{
-			gl_RenderState.mIsRenderingSpriteContext = (drawitems[i].rendertype == GLDIT_SPRITE);
-			DoDraw(GLPASS_TRANSLUCENT, i, true);
-		}
-
-		gl_RenderState.mIsRenderingSpriteContext = false; // Safe flush
-
-		if (!(gl.flags & RFL_NO_CLIP_PLANES))
-		{
-			glDisable(GL_CLIP_DISTANCE1);
-			glDisable(GL_CLIP_DISTANCE2);
-		}
-		gl_RenderState.ClearClipSplit();
+		// Symmetrical registers cleanup matrix to secure subsequent rendering frames
+		gl_RenderState.mIsRenderingSpriteContext = false;
+		glDisable(GL_ALPHA_TEST);
+		gl_RenderState.AlphaFunc(GL_GREATER, 0.0f);
+		gl_RenderState.Apply();
 	}
 	else
 	{
-		// 2. MODERN SHADER PATH (GL3x/GL4x modern mode)
-		// Use Subsector BSP SortNode tree structures
-		if (!sorted)
-		{
-			GLRenderer->mVBO->Map();
-			MakeSortList();
-			sorted = DoSort(SortNodes[SortNodeStart]);
-			GLRenderer->mVBO->Unmap();
-		}
-
-		gl_RenderState.ClearClipSplit();
-		if (!(gl.flags & RFL_NO_CLIP_PLANES))
-		{
-			glEnable(GL_CLIP_DISTANCE1);
-			glEnable(GL_CLIP_DISTANCE2);
-		}
-
+		// 2. GL3+ mode
 		// Execute standard shader DoDrawSorted tree
 		DoDrawSorted(sorted);
-
-		if (!(gl.flags & RFL_NO_CLIP_PLANES))
-		{
-			glDisable(GL_CLIP_DISTANCE1);
-			glDisable(GL_CLIP_DISTANCE2);
-		}
-		gl_RenderState.ClearClipSplit();
 	}
+
+	if (!(gl.flags & RFL_NO_CLIP_PLANES))
+	{
+		glDisable(GL_CLIP_DISTANCE1);
+		glDisable(GL_CLIP_DISTANCE2);
+	}
+	gl_RenderState.ClearClipSplit();
 }
 
 //==========================================================================
