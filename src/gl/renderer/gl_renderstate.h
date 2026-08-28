@@ -454,7 +454,7 @@ public:
 		if (gl.legacyMode)
 		{
 			// If fog color is black or sits within the strict n-units tol threshold
-			if (c.r <= 18 && c.g <= 18 && c.b <= 18)
+			if (c.r <= 5 && c.g <= 5 && c.b <= 5)
 			{
 				// Keep stock density as is - will be natively multiplied by LOG2E below
 			}
