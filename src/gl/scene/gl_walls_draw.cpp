@@ -52,6 +52,8 @@
 
 EXTERN_CVAR(Bool, gl_seamless)
 
+GLWall* g_isCurrentlyGLWallDrawing = nullptr; // for all GL modes
+
 //==========================================================================
 //
 // Collect lights for shader
@@ -480,6 +482,8 @@ void GLWall::RenderTranslucentWall()
 //==========================================================================
 void GLWall::Draw(int pass)
 {
+	g_isCurrentlyGLWallDrawing = this; // we're drawing walls now
+
 	gl_RenderState.SetNormal(glseg.Normal());
 	switch (pass)
 	{
@@ -1010,6 +1014,8 @@ void GLWall::Draw(int pass)
 	}
 	break;
 	}
+
+	g_isCurrentlyGLWallDrawing = nullptr; // we're not drawing walls anymore
 }
 
 

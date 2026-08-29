@@ -259,7 +259,7 @@ void gl_FillScreen();
 //    "reflect" array pointer inside temporary "dest" structs. Calling 
 //    a raw pointer check natively fails, bypassing reflectivity filters.
 // 3. Solution: Deploy standalone Thread-Local Context State Links 
-//    (g_CurrentSetupFlatContext / g_CurrentSetupWallContext) inside 
+//    (g_isCurrentlyGL1xDynlightFlatDrawing / g_isCurrentlyGL1xDynlightWallDrawing) inside 
 //    gl_20.cpp, securely bridged with a logic gate invert negation operator 
 //    (!isTrueTranslucentFlat) right before calling Setup light systems!
 // 4. Symmetrical Sanitizer & Taming: The setup engine calls your custom 

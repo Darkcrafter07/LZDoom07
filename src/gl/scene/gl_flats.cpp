@@ -62,6 +62,9 @@
 #ifdef _DEBUG
 CVAR(Int, gl_breaksec, -1, 0)
 #endif
+
+GLFlat* g_isCurrentlyGLFlatDrawing = nullptr; // for all GL modes
+
 //==========================================================================
 //
 // Sets the texture matrix according to the plane's texture positioning
@@ -366,6 +369,8 @@ void GLFlat::DrawSkyboxSector(int pass, bool processlights)
 //==========================================================================
 void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIGHTSONLY
 {
+	g_isCurrentlyGLFlatDrawing = this; // we're drawing flats now
+
 	int rel = getExtraLight();
 
 #ifdef _DEBUG
@@ -664,6 +669,8 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 	}
 	gl_RenderState.SetAddColor(0);
+
+	g_isCurrentlyGLFlatDrawing = nullptr; // we're not drawing flats anymore
 }
 
 

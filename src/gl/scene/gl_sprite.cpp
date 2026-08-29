@@ -273,7 +273,7 @@ void GLSprite::Draw(int pass)
 {
 	if (pass == GLPASS_DECALS) return;
 
-	gl_RenderState.mIsRenderingSpriteNow = true;
+	gl_RenderState.g_isCurrentlyGLSpriteDrawing = true;
 
 	if (pass == GLPASS_LIGHTSONLY)
 	{
@@ -596,7 +596,7 @@ void GLSprite::Draw(int pass)
 	gl_RenderState.EnableTexture(true);
 	gl_RenderState.SetDynLight(0, 0, 0);
 
-	gl_RenderState.mIsRenderingSpriteNow = false;
+	gl_RenderState.g_isCurrentlyGLSpriteDrawing = false;
 
 }
 

@@ -144,8 +144,8 @@ public:
 	{
 		Reset();
 
-		mIsRenderingSpriteNow = false; // [Darkcrafter07] - if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
-		mActiveGL1xDynlightPass = false; // [Darkcrafter07] - GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
+		g_isCurrentlyGLSpriteDrawing = false; // [Darkcrafter07] - if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
+		g_isCurrentlyGL1xDynlightPassActive = false; // [Darkcrafter07] - GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
 	}
 
 	void Reset();
@@ -442,8 +442,8 @@ public:
 		if (d >= 0.0f) mLightParms[2] = d * (-LOG2E / 64000.f);
 	}
 
-	bool mIsRenderingSpriteNow; // [Darkcrafter07] - if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
-	bool mActiveGL1xDynlightPass; // [Darkcrafter07] GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
+	bool g_isCurrentlyGLSpriteDrawing; // [Darkcrafter07] - if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
+	bool g_isCurrentlyGL1xDynlightPassActive; // [Darkcrafter07] GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
 
 	void SetLightParms(float f, float d)
 	{

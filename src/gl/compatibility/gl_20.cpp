@@ -202,7 +202,7 @@
 //    "reflect" array pointer inside temporary "dest" structs. Calling 
 //    a raw pointer check natively fails, bypassing reflectivity filters.
 // 3. Solution: Deploy standalone Thread-Local Context State Links 
-//    (g_CurrentSetupFlatContext / g_CurrentSetupWallContext) inside 
+//    (g_isCurrentlyGL1xDynlightFlatDrawing / g_isCurrentlyGL1xDynlightWallDrawing) inside 
 //    gl_20.cpp, securely bridged with a logic gate invert negation operator 
 //    (!isTrueTranslucentFlat) right before calling Setup light systems!
 // 4. Symmetrical Sanitizer & Taming: The setup engine calls your custom 
@@ -277,8 +277,10 @@ CVAR(Float, gl_legacy_dynlight_overbright_walls, 0.125f, CVAR_ARCHIVE) // Intens
 // Enables the zscript camglow dynlight spawn (why not to keep it for all renderers GL1,2,3,4, Software, Polyrenderer?)
 CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
-static GLFlat* g_CurrentSetupFlatContext = nullptr;
-static GLWall* g_CurrentSetupWallContext = nullptr;
+static GLFlat* g_isCurrentlyGL1xDynlightFlatDrawing = nullptr; // for GL1x/GL2x modes only
+static GLWall* g_isCurrentlyGL1xDynlightWallDrawing = nullptr; // for GL1x/GL2x modes only
+extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes
+extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes
 
 
 //==========================================================================
@@ -488,103 +490,122 @@ void FRenderState::ApplyFixedFunction()
 		}
 		else glDisable(GL_FOG);
 	}
+	//	//if (mFogEnabled) // old block, not very cool
+	//	//{
+	//	//	if (ffFogColor != mFogColor)
+	//	//	{
+	//	//		ffFogColor = mFogColor;
+	//	//		GLfloat FogColor[4] = { mFogColor.r / 255.0f,mFogColor.g / 255.0f,mFogColor.b / 255.0f,0.0f };
+	//	//		glFogfv(GL_FOG_COLOR, FogColor);
+	//	//	}
+	//	//	if (ffFogDensity != mLightParms[2])
+	//	//	{
+	//	//		glFogf(GL_FOG_DENSITY, mLightParms[2] * -0.6931471f);	// = 1/log(2)
+	//	//		ffFogDensity = mLightParms[2];
+	//	//	}
+	//	//}
 	if (mFogEnabled)
 	{
 		// Pristine factory log-decay baseline calculation with correct array index tracking
-		float FogDensity = mLightParms[2] * -0.6931471f;	// = 1/log(2)
-		GLfloat FogColor[4] = { mFogColor.r / 255.0f, mFogColor.g / 255.0f, mFogColor.b / 255.0f, 0.0f };
+		float mLightParmsInitial = mLightParms[2];
+		float FogDensityInitial = mLightParmsInitial * -0.6931471f;	// = 1/log(2)
+		float FogDensityCurrent = FogDensityInitial; // Mutable working copy
+		const float invMul255 = 1.0f / 255.0f;
 
-		if (ffFogColor != mFogColor)
+		// Unpack immutable baseline state snapshots of the current sector fog color
+		int8_t fogColInitR = mFogColor.r; int8_t fogColCurR = fogColInitR;
+		int8_t fogColInitG = mFogColor.g; int8_t fogColCurG = fogColInitG;
+		int8_t fogColInitB = mFogColor.b; int8_t fogColCurB = fogColInitB;
+
+		int lightlevel = 128; // Safe baseline default if unbound
+
+		// Context validation shield protects from access violations on map change
+		bool isLevelContextAlive = (g_isCurrentlyGL1xDynlightWallDrawing != nullptr ||
+									g_isCurrentlyGL1xDynlightFlatDrawing != nullptr ||
+									g_isCurrentlyGLWallDrawing != nullptr ||
+									g_isCurrentlyGLFlatDrawing != nullptr);
+
+		if (g_isCurrentlyGLSpriteDrawing && isLevelContextAlive && actor != nullptr && (uintptr_t)actor > 0x10000)
 		{
-			ffFogColor = mFogColor;
-			glFogfv(GL_FOG_COLOR, FogColor);
-		}
-
-		if (gl_lights && mFogColor.r >= 5 && mFogColor.g >= 5 && mFogColor.b >= 5)
-		{
-			// Extract surfaces lightlevel
-			int lightlevel = 128; // Safe baseline default if unbound
-
-			// Track live level state via geometric context registers (g_CurrentSetupWallContext / Flat).
-			// During map reloads or player death, geometry pointers collapse into nullptr.
-			// This safely locks the actor memory gateway, completely stopping Access Violations.
-			bool isLevelContextAlive = (g_CurrentSetupWallContext != nullptr || g_CurrentSetupFlatContext != nullptr);
-
-			if (mIsRenderingSpriteNow && isLevelContextAlive && actor != nullptr && (uintptr_t)actor > 0x10000)
+			if ((uintptr_t)actor->Sector > 0x10000)
 			{
-				// Double-safe hardware memory fence mapping
-				if ((uintptr_t)actor->Sector > 0x10000)
-				{
-					lightlevel = actor->Sector->lightlevel; // Fetch live sprite/model lighting zone securely
-				}
+				lightlevel = actor->Sector->lightlevel; // Fetch live sprite/model lighting zone
 			}
-			else
-			{
-				// Safe extraction after non-null pointer assurance for geometric flats and walls
-				if (g_CurrentSetupWallContext != nullptr)
-				{
-					lightlevel = g_CurrentSetupWallContext->lightlevel;
-				}
-				else if (g_CurrentSetupFlatContext != nullptr)
-				{
-					lightlevel = g_CurrentSetupFlatContext->lightlevel;
-				}
-			}
-
-			// With regular "modulated" dynamic lights, the fog intenisites go lower,
-			// so in order to look closer to GL3+ mode, boost them per surface lightlevel
-			float fogDensMul = 2.0f; // Default world boost for walls and flats
-			if      (lightlevel <= 88)                       fogDensMul = 1.0f;
-			else if (lightlevel >= 89  && lightlevel < 96)   fogDensMul = 1.05f;
-			else if (lightlevel >= 96  && lightlevel < 104)  fogDensMul = 1.15f;
-			else if (lightlevel >= 104 && lightlevel < 112)  fogDensMul = 1.45f;
-			else if (lightlevel >= 112 && lightlevel < 120)  fogDensMul = 1.58f;
-			else if (lightlevel >= 120 && lightlevel < 128)  fogDensMul = 1.75f;
-			else if (lightlevel >= 128 && lightlevel < 136)  fogDensMul = 2.0f;
-			else if (lightlevel >= 136 && lightlevel < 144)  fogDensMul = 2.12f;
-			else if (lightlevel >= 144 && lightlevel < 152)  fogDensMul = 2.24f;
-			else if (lightlevel >= 152 && lightlevel < 160)  fogDensMul = 2.44f;
-			else if (lightlevel >= 160 && lightlevel < 168)  fogDensMul = 2.75f;
-			else if (lightlevel >= 168 && lightlevel < 176)  fogDensMul = 3.0f;
-			else if (lightlevel >= 176 && lightlevel < 184)  fogDensMul = 3.25f;
-			else if (lightlevel >= 184 && lightlevel < 192)  fogDensMul = 3.55f;
-			else if (lightlevel >= 192 && lightlevel < 200)  fogDensMul = 3.75f;
-			else if (lightlevel >= 200 && lightlevel < 216)  fogDensMul = 4.0f;
-			else                                             fogDensMul = 4.25f;
-
-			// Fog loses intensity if rendered on top of regular modulated dynlight lit surfaces
-			// Apply the dual-cascade logic with the strict 0.625f dampener and 1.0f floor clamp!
-			if (mIsRenderingSpriteNow)
-			{
-				float spriteResult = fogDensMul * 0.625f;
-				if (spriteResult < 1.0f) spriteResult = 1.0f;
-
-				FogDensity *= spriteResult; // less for sprites/models
-			}
-			else
-			{
-				FogDensity *= fogDensMul; // more for walls or flats
-			}
-
-			glFogf(GL_FOG_DENSITY, FogDensity); // Push the boosted parameters directly
-
-			// THE RESOLUTION: Abrupt fog drops, pops in and out on actors because
-			// ffFogDensity was synched with raw mLightParms while coordinates drifted.
-			// Anchor the cache strictly on the real pushed 'FogDensity' for sprites,
-			// and fallback to factory base tracking for ordinary world walls.
-			if (mIsRenderingSpriteNow) ffFogDensity = FogDensity; // HARD-LOCK SYNC FOR SPRITES & MODELS!
-			else                       ffFogDensity = mLightParms[2]; // Factory sync for walls/flats
 		}
 		else
 		{
-			// Safe fallback routing matching the active rendering type boundaries
-			float compareCache = mIsRenderingSpriteNow ? FogDensity : mLightParms[2];
+			if (g_isCurrentlyGL1xDynlightWallDrawing != nullptr)
+			{ lightlevel = g_isCurrentlyGL1xDynlightWallDrawing->lightlevel; }
+			else if (g_isCurrentlyGL1xDynlightFlatDrawing != nullptr)
+			{ lightlevel = g_isCurrentlyGL1xDynlightFlatDrawing->lightlevel; }
+			else if (g_isCurrentlyGLWallDrawing != nullptr)
+			{ lightlevel = g_isCurrentlyGLWallDrawing->lightlevel; }
+			else if (g_isCurrentlyGLFlatDrawing != nullptr && g_isCurrentlyGLFlatDrawing->sector != nullptr)
+			{ lightlevel = g_isCurrentlyGLFlatDrawing->sector->lightlevel; }
+		}
 
-			if (ffFogDensity != compareCache)
+		float fogDensMul = 2.0f; float fogColorMul = 1.0f;
+		if (gl_lights && fogColInitR >= 5 && fogColInitG >= 5 && fogColInitB >= 5)
+		{
+			if      (lightlevel <= 88)                      { fogDensMul = 1.0f;  fogColorMul = 1.0f;  }
+			else if (lightlevel >= 89 && lightlevel < 96)   { fogDensMul = 1.05f; fogColorMul = 0.99f; }
+			else if (lightlevel >= 96 && lightlevel < 104)  { fogDensMul = 1.15f; fogColorMul = 0.98f; }
+			else if (lightlevel >= 104 && lightlevel < 112) { fogDensMul = 1.45f; fogColorMul = 0.97f; }
+			else if (lightlevel >= 112 && lightlevel < 120) { fogDensMul = 1.58f; fogColorMul = 0.96f; }
+			else if (lightlevel >= 120 && lightlevel < 128) { fogDensMul = 1.75f; fogColorMul = 0.95f; }
+			else if (lightlevel >= 128 && lightlevel < 136) { fogDensMul = 2.0f;  fogColorMul = 0.94f; }
+			else if (lightlevel >= 136 && lightlevel < 144) { fogDensMul = 2.12f; fogColorMul = 0.93f; }
+			else if (lightlevel >= 144 && lightlevel < 152) { fogDensMul = 2.24f; fogColorMul = 0.92f; }
+			else if (lightlevel >= 152 && lightlevel < 160) { fogDensMul = 2.24f; fogColorMul = 0.91f; }
+			else if (lightlevel >= 160 && lightlevel < 168) { fogDensMul = 2.0f;  fogColorMul = 0.91f; }
+			else if (lightlevel >= 168 && lightlevel < 176) { fogDensMul = 1.88f; fogColorMul = 0.92f; }
+			else if (lightlevel >= 176 && lightlevel < 184) { fogDensMul = 1.75f; fogColorMul = 0.93f; }
+			else if (lightlevel >= 184 && lightlevel < 192) { fogDensMul = 1.65f; fogColorMul = 0.95f; }
+			else if (lightlevel >= 192 && lightlevel < 200) { fogDensMul = 1.5f;  fogColorMul = 0.97f; }
+			else if (lightlevel >= 200 && lightlevel < 216) { fogDensMul = 1.25f; fogColorMul = 0.99f; }
+			else                                            { fogDensMul = 1.12f; fogColorMul = 1.0f;  }
+
+			//if (!g_isCurrentlyGLSpriteDrawing) fogDensMul *= 1.5f; // in case you want even more fog but why?
+
+			fogColCurR = (int8_t)(fogColInitR * fogColorMul);
+			fogColCurG = (int8_t)(fogColInitG * fogColorMul);
+			fogColCurB = (int8_t)(fogColInitB * fogColorMul);
+
+			// Fog loses intensity and gets brighter if rendered on top of regular modulated dynlight lit surfaces
+			if (g_isCurrentlyGLSpriteDrawing)
 			{
-				glFogf(GL_FOG_DENSITY, FogDensity);
-				ffFogDensity = compareCache;
+				float spriteFogDens = fogDensMul * 0.625f;
+				if (spriteFogDens < 1.0f) spriteFogDens = 1.0f;
+
+				FogDensityCurrent *= spriteFogDens; // less for sprites/models
 			}
+			else
+			{
+				FogDensityCurrent *= fogDensMul;    // more for walls or flats
+
+				// Keep solid walls and flats tightly clamped at a maximum dense -0.35f threshold
+				if (FogDensityCurrent < -0.35f) FogDensityCurrent = -0.35f; // HARD-LOCK SHIELD FOR GEOMETRY!
+			}
+
+			// Push un-corrupted dynamically faded color assets straight into hardware registers
+			GLfloat HardwareFogColor[4] = { fogColCurR * invMul255, fogColCurG * invMul255, fogColCurB * invMul255, 0.0f };
+			glFogfv(GL_FOG_COLOR, HardwareFogColor);
+			ffFogColor = mFogColor; // Set sync footprint
+
+			glFogf(GL_FOG_DENSITY, fabsf(FogDensityCurrent)); // Push boosted parameters directly
+
+			//if (g_isCurrentlyGLSpriteDrawing) ffFogDensity = FogDensityCurrent;
+			if (g_isCurrentlyGLSpriteDrawing) ffFogDensity = mLightParmsInitial; // no abrupt fog intens drop on sprites?
+			else                              ffFogDensity = mLightParmsInitial;
+		}
+		else
+		{
+			GLfloat FactoryFogColor[4] = { fogColInitR * invMul255, fogColInitG * invMul255, fogColInitB * invMul255, 0.0f };
+			glFogfv(GL_FOG_COLOR, FactoryFogColor);
+			ffFogColor = mFogColor;                           // Reset footprint
+
+			glFogf(GL_FOG_DENSITY, fabsf(FogDensityInitial)); // Force hardware fallback to clean initial log curve
+			ffFogDensity = mLightParmsInitial;                // Hard-sync cacher to initial state instantly
 		}
 	}
 	if (mSpecialEffect != ffSpecialEffect)
@@ -994,6 +1015,8 @@ void gl_dynlightHandleSpecialLightsLegacy(float &r, float &g, float &b, bool isT
 bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
 {
 	FVector3 fn, pos;
+	float r, g, b;
+	float current_boost;
 	const float invMul64 = 1.0f / 64.0f;
 	const float invMul255 = 1.0f / 255.0f;
 	const float invMul286 = 1.0f / 286.0f;
@@ -1132,9 +1155,6 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		surface_lightlevel = light_subsector->sector->lightlevel;
 	}
 
-	float r, g, b;
-	float current_boost;
-
 	// Calculate strict bounds for the smooth 64-unit transition window around the threshold
 	float lowerBound = (float)gl_legacy_dynlight_saturation_thresh - 32.0f;
 	float upperBound = (float)gl_legacy_dynlight_saturation_thresh + 32.0f;
@@ -1219,10 +1239,10 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	gl_dynlightSaturateLegacy(r, g, b, current_boost, radius, colorCtx);
 
 	bool isTrueTranslucentWall = false;       // initialize the variable
-	if (g_CurrentSetupWallContext != nullptr) // Safe extraction after non-null pointer assurance
+	if (g_isCurrentlyGL1xDynlightWallDrawing != nullptr) // Safe extraction after non-null pointer assurance
 	{
-		isTrueTranslucentWall = (g_CurrentSetupWallContext->alpha <= 0.99f ||
-			g_CurrentSetupWallContext->type == RENDERWALL_MIRRORSURFACE);
+		isTrueTranslucentWall = (g_isCurrentlyGL1xDynlightWallDrawing->alpha <= 0.99f ||
+			g_isCurrentlyGL1xDynlightWallDrawing->type == RENDERWALL_MIRRORSURFACE);
 	}
 
 	// We need this to handle subtractive and other lights if needed.
@@ -1230,7 +1250,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	gl_dynlightHandleSpecialLightsLegacy(r, g, b, isTrueTranslucentWall, light);
 
 	// We need this for huge dynlights not to overexposure the walls mirrored surfaces
-	if (g_CurrentSetupWallContext != nullptr)
+	if (g_isCurrentlyGL1xDynlightWallDrawing != nullptr)
 	{
 		if (isTrueTranslucentWall)
 		{
@@ -1258,6 +1278,8 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
 {
 	FVector3 fn, pos;
+	float r, g, b;
+	float current_boost;
 	const float invMul64 = 1.0f / 64.0f;
 	const float invMul255 = 1.0f / 255.0f;
 	const float invMul284 = 1.0f / 284.0f;
@@ -1449,9 +1471,6 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		surface_lightlevel = light_subsector->sector->lightlevel;
 	}
 
-	float r, g, b;
-	float current_boost;
-
 	// Calculate strict bounds for the smooth 64-unit transition window around the threshold
 	float lowerBound = (float)gl_legacy_dynlight_saturation_thresh - 32.0f;
 	float upperBound = (float)gl_legacy_dynlight_saturation_thresh + 32.0f;
@@ -1536,15 +1555,15 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	gl_dynlightSaturateLegacy(r, g, b, current_boost, radius, colorCtx);
 
 	bool isTrueTranslucentFlat = false;       // initialize the variable
-	if (g_CurrentSetupFlatContext != nullptr) // Safe extraction after non-null pointer assurance
-	{ isTrueTranslucentFlat = (g_CurrentSetupFlatContext->alpha <= 0.99f); }
+	if (g_isCurrentlyGL1xDynlightFlatDrawing != nullptr) // Safe extraction after non-null pointer assurance
+	{ isTrueTranslucentFlat = (g_isCurrentlyGL1xDynlightFlatDrawing->alpha <= 0.99f); }
 
 	// We need this to tame down subtractive and other lights if needed.
 	// This is the only way to control their intensity for transluscent map geometry surfaces!
 	gl_dynlightHandleSpecialLightsLegacy(r, g, b, isTrueTranslucentFlat, light);
 
 	// We need this for huge dynlights not to overexposure the flat mirrored surfaces
-	if (g_CurrentSetupFlatContext != nullptr)
+	if (g_isCurrentlyGL1xDynlightFlatDrawing != nullptr)
 	{
 		if (isTrueTranslucentFlat)
 		{
@@ -2464,11 +2483,70 @@ bool GLWall::PutWallCompat(int passflag)
 //
 //==========================================================================
 
+//bool GLFlat::PutFlatCompat(bool fog)
+//{
+//	// Are lights possible?
+//	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent ||
+//		alpha < 1.f - FLT_EPSILON || sector->lighthead == NULL) return false;
+//
+//	static int list_indices[2][2] =
+//	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
+//
+//	bool masked = gltexture->isMasked() && ((renderflags&SSRF_RENDER3DPLANES) || stack);
+//	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
+//
+//	if (gl.gl1path && gl.gl1_v1dot1 && masked)
+//	{
+//		// Force the engine to route ALL transluscent 3D-floor textures straight in GLLDL_FLATS_FOGMASKED
+//		// This instantly triggers the perfect fixed-function fog-blend state machine,
+//		// making for the rich color modulation, smooth dynlights, and 100% crystal alpha holes,
+//		// otherwise the surface is going to be lit additively, which is unwanted if that's a regular dynlight.
+//		foggy = true;
+//	}
+//
+//	int list = list_indices[masked][foggy];
+//	gl_drawinfo->dldrawlists[list].AddFlat(this);
+//	return true;
+//}
+
+//bool GLFlat::PutFlatCompat(bool fog)
+//{
+//	// Are lights possible?
+//	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture) return false;
+//
+//	static int list_indices[2][2] =
+//	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
+//
+//	// Secure boundary checks for translucent markers adaptively
+//	bool isTranslucentType = (renderstyle == STYLE_Translucent || alpha < 1.f - FLT_EPSILON);
+//	bool masked = gltexture->isMasked() && (((renderflags & SSRF_RENDER3DPLANES) || stack) || isTranslucentType);
+//	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags & LEVEL_HASFADETABLE) || gl_lights_additive;
+//
+//	if (gl.gl1path && gl.gl1_v1dot1 && masked)
+//	{
+//		// Force the engine to route ALL translucent/solid 3D-floor textures straight in GLLDL_FLATS_FOGMASKED
+//		// This instantly triggers the perfect fixed-function fog-blend state machine,
+//		// making for the rich color modulation, smooth dynlights, and 100% crystal alpha holes,
+//		// otherwise the surface is going to be lit additively, which is unwanted if that's a regular dynlight.
+//		foggy = true;
+//	}
+//
+//	int list = list_indices[masked][foggy];
+//	gl_drawinfo->dldrawlists[list].AddFlat(this);
+//	return true;
+//}
+
 bool GLFlat::PutFlatCompat(bool fog)
 {
+	//	// Are lights possible?
+	//if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent ||
+	//	alpha < 1.f - FLT_EPSILON || sector->lighthead == NULL) return false;
+
 	// Are lights possible?
-	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent || 
-											alpha < 1.f - FLT_EPSILON || sector->lighthead == NULL) return false;
+	// remove "|| sector->lighthead == NULL" from the condition, otherwise distant foggy dynlight surfaces
+	// lose fog intensity abrub
+	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent ||
+		alpha < 1.f - FLT_EPSILON) return false;
 
 	static int list_indices[2][2] =
 	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
@@ -2596,7 +2674,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		int executionPass = (pass == GLPASS_TRANSLUCENT_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE) ? GLPASS_LIGHTTEX : pass;
 
 		float planeh = plane.plane.ZatPoint(light->Pos);
-		gl_RenderState.mActiveGL1xDynlightPass = true;
+		gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = true;
 		if (gl_lights_checkside && ((planeh < light->Z() && ceiling) || (planeh > light->Z() && !ceiling)))
 		{
 			node = node->nextLight;
@@ -2605,14 +2683,14 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 
 		p.Set(plane.plane);
 		// We need this to find out what's current wall alpha value is in gl_SetupLightFlat
-		g_CurrentSetupFlatContext = this; // Bake current flat address in the stack bridge
+		g_isCurrentlyGL1xDynlightFlatDrawing = this; // Bake current flat address in the stack bridge
 		if (!gl_SetupLightFlat(sub->sector->PortalGroup, p, light, nearPt, up, right, scale, false, executionPass != GLPASS_LIGHTTEX))
 		{
-			g_CurrentSetupFlatContext = nullptr; // Unlink on skip loop
+			g_isCurrentlyGL1xDynlightFlatDrawing = nullptr; // Unlink on skip loop
 			node = node->nextLight;
 			continue;
 		}
-		g_CurrentSetupFlatContext = nullptr; // Clear immediately after evaluation!
+		g_isCurrentlyGL1xDynlightFlatDrawing = nullptr; // Clear immediately after evaluation!
 
 		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
 		{
@@ -2679,7 +2757,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	// it leaves the GPU register stuck in GL_FUNC_REVERSE_SUBTRACT mode.
 	// We forcefully restore GL_FUNC_ADD right here before the memory context 
 	// leaves this floor sector chunk, permanently curing the angle pitch-black glitch.
-	gl_RenderState.mActiveGL1xDynlightPass = false;
+	gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = false;
 	gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	gl_RenderState.Apply();
 }
@@ -2866,16 +2944,16 @@ void GLWall::RenderLightsCompat(int pass)
 		// Substitue a pass locally to GLPASS_LIGHTTEX for correct VBO mapping
 		int executionPass = (pass == GLPASS_TRANSLUCENT_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE) ? GLPASS_LIGHTTEX : pass;
 
-		gl_RenderState.mActiveGL1xDynlightPass = true;
+		gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = true;
 
 		// We need this to find out what's current wall alpha value is in gl_SetupLightWall
-		g_CurrentSetupWallContext = this; // Bake current wall address in the stack bridge
+		g_isCurrentlyGL1xDynlightWallDrawing = this; // Bake current wall address in the stack bridge
 		if (PrepareLight(light, executionPass))
 		{
 			vertcount = 0;
 			RenderWall(RWF_TEXTURED);
 		}
-		g_CurrentSetupWallContext = nullptr; // Clear after evaluation
+		g_isCurrentlyGL1xDynlightWallDrawing = nullptr; // Clear after evaluation
 		node = node->nextLight;
 	}
 
@@ -2884,7 +2962,7 @@ void GLWall::RenderLightsCompat(int pass)
 	// it leaves the GPU register stuck in GL_FUNC_REVERSE_SUBTRACT mode.
 	// We forcefully restore GL_FUNC_ADD right here before the memory context 
 	// leaves this floor sector chunk, permanently curing the angle pitch-black glitch.
-	gl_RenderState.mActiveGL1xDynlightPass = false;
+	gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = false;
 	gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	gl_RenderState.Apply();
 

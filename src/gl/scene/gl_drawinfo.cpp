@@ -795,7 +795,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 			if (gl_SetupLightTexture())
 			{
 				// Tell the variable that it's a dynlight phase now
-				gl_RenderState.mActiveGL1xDynlightPass = GLPASS_LIGHTTEX;
+				gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = GLPASS_LIGHTTEX;
 
 				// Common baseline registers hardware isolation setup
 				gl_RenderState.EnableFog(false);
@@ -1137,7 +1137,7 @@ void GLDrawList::DrawSorted()
 		DoDrawSorted(sorted);
 
 		// Symmetrical registers cleanup matrix to secure subsequent rendering frames
-		gl_RenderState.mIsRenderingSpriteNow = false;
+		gl_RenderState.g_isCurrentlyGLSpriteDrawing = false;
 		glDisable(GL_ALPHA_TEST);
 		gl_RenderState.AlphaFunc(GL_GREATER, 0.0f);
 		gl_RenderState.Apply();
