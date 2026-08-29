@@ -491,7 +491,7 @@ void FRenderState::ApplyFixedFunction()
 	if (mFogEnabled)
 	{
 		// Pristine factory log-decay baseline calculation with correct array index tracking
-		float FogDensity = mLightParms[2] * -0.6931471f;	// = 1/log(2) [lzdoom_source]
+		float FogDensity = mLightParms[2] * -0.6931471f;	// = 1/log(2)
 		GLfloat FogColor[4] = { mFogColor.r / 255.0f, mFogColor.g / 255.0f, mFogColor.b / 255.0f, 0.0f };
 
 		if (ffFogColor != mFogColor)
@@ -500,19 +500,22 @@ void FRenderState::ApplyFixedFunction()
 			glFogfv(GL_FOG_COLOR, FogColor);
 		}
 
-		if (gl_lights)
+		if (gl_lights && mFogColor.r >= 5 && mFogColor.g >= 5 && mFogColor.b >= 5)
 		{
 			// Extract surfaces lightlevel
 			int lightlevel = 128; // Safe baseline default if unbound
 
-			if (mIsRenderingSpriteNow)
-			{
-				AActor* actor = (g_CurrentRendering3dmdlActorPtr != nullptr && (uintptr_t)g_CurrentRendering3dmdlActorPtr > 0x10000)
-					? (AActor*)g_CurrentRendering3dmdlActorPtr : nullptr;
+			// Track live level state via geometric context registers (g_CurrentSetupWallContext / Flat).
+			// During map reloads or player death, geometry pointers collapse into nullptr.
+			// This safely locks the actor memory gateway, completely stopping Access Violations.
+			bool isLevelContextAlive = (g_CurrentSetupWallContext != nullptr || g_CurrentSetupFlatContext != nullptr);
 
-				if (actor != nullptr && actor->Sector != nullptr)
+			if (mIsRenderingSpriteNow && isLevelContextAlive && actor != nullptr && (uintptr_t)actor > 0x10000)
+			{
+				// Double-safe hardware memory fence mapping
+				if ((uintptr_t)actor->Sector > 0x10000)
 				{
-					lightlevel = actor->Sector->lightlevel; // Fetch live sprite/model lighting zone
+					lightlevel = actor->Sector->lightlevel; // Fetch live sprite/model lighting zone securely
 				}
 			}
 			else
@@ -528,25 +531,26 @@ void FRenderState::ApplyFixedFunction()
 				}
 			}
 
+			// With regular "modulated" dynamic lights, the fog intenisites go lower,
+			// so in order to look closer to GL3+ mode, boost them per surface lightlevel
 			float fogDensMul = 2.0f; // Default world boost for walls and flats
-
 			if      (lightlevel <= 88)                       fogDensMul = 1.0f;
 			else if (lightlevel >= 89  && lightlevel < 96)   fogDensMul = 1.05f;
 			else if (lightlevel >= 96  && lightlevel < 104)  fogDensMul = 1.15f;
-			else if (lightlevel >= 104 && lightlevel < 112)  fogDensMul = 1.25f;
-			else if (lightlevel >= 112 && lightlevel < 120)  fogDensMul = 1.28f;
-			else if (lightlevel >= 120 && lightlevel < 128)  fogDensMul = 1.32f;
-			else if (lightlevel >= 128 && lightlevel < 136)  fogDensMul = 1.40f;
-			else if (lightlevel >= 136 && lightlevel < 144)  fogDensMul = 1.55f;
-			else if (lightlevel >= 144 && lightlevel < 152)  fogDensMul = 1.65f;
-			else if (lightlevel >= 152 && lightlevel < 160)  fogDensMul = 1.75f;
-			else if (lightlevel >= 160 && lightlevel < 168)  fogDensMul = 1.80f;
-			else if (lightlevel >= 168 && lightlevel < 176)  fogDensMul = 1.85f;
-			else if (lightlevel >= 176 && lightlevel < 184)  fogDensMul = 1.90f;
-			else if (lightlevel >= 184 && lightlevel < 192)  fogDensMul = 1.95f;
-			else if (lightlevel >= 192 && lightlevel < 200)  fogDensMul = 2.10f;
-			else if (lightlevel >= 200 && lightlevel < 216)  fogDensMul = 2.25f;
-			else                                             fogDensMul = 2.75f;
+			else if (lightlevel >= 104 && lightlevel < 112)  fogDensMul = 1.45f;
+			else if (lightlevel >= 112 && lightlevel < 120)  fogDensMul = 1.58f;
+			else if (lightlevel >= 120 && lightlevel < 128)  fogDensMul = 1.75f;
+			else if (lightlevel >= 128 && lightlevel < 136)  fogDensMul = 2.0f;
+			else if (lightlevel >= 136 && lightlevel < 144)  fogDensMul = 2.12f;
+			else if (lightlevel >= 144 && lightlevel < 152)  fogDensMul = 2.24f;
+			else if (lightlevel >= 152 && lightlevel < 160)  fogDensMul = 2.44f;
+			else if (lightlevel >= 160 && lightlevel < 168)  fogDensMul = 2.75f;
+			else if (lightlevel >= 168 && lightlevel < 176)  fogDensMul = 3.0f;
+			else if (lightlevel >= 176 && lightlevel < 184)  fogDensMul = 3.25f;
+			else if (lightlevel >= 184 && lightlevel < 192)  fogDensMul = 3.55f;
+			else if (lightlevel >= 192 && lightlevel < 200)  fogDensMul = 3.75f;
+			else if (lightlevel >= 200 && lightlevel < 216)  fogDensMul = 4.0f;
+			else                                             fogDensMul = 4.25f;
 
 			// Fog loses intensity if rendered on top of regular modulated dynlight lit surfaces
 			// Apply the dual-cascade logic with the strict 0.625f dampener and 1.0f floor clamp!
