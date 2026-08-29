@@ -2483,59 +2483,6 @@ bool GLWall::PutWallCompat(int passflag)
 //
 //==========================================================================
 
-//bool GLFlat::PutFlatCompat(bool fog)
-//{
-//	// Are lights possible?
-//	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent ||
-//		alpha < 1.f - FLT_EPSILON || sector->lighthead == NULL) return false;
-//
-//	static int list_indices[2][2] =
-//	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
-//
-//	bool masked = gltexture->isMasked() && ((renderflags&SSRF_RENDER3DPLANES) || stack);
-//	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
-//
-//	if (gl.gl1path && gl.gl1_v1dot1 && masked)
-//	{
-//		// Force the engine to route ALL transluscent 3D-floor textures straight in GLLDL_FLATS_FOGMASKED
-//		// This instantly triggers the perfect fixed-function fog-blend state machine,
-//		// making for the rich color modulation, smooth dynlights, and 100% crystal alpha holes,
-//		// otherwise the surface is going to be lit additively, which is unwanted if that's a regular dynlight.
-//		foggy = true;
-//	}
-//
-//	int list = list_indices[masked][foggy];
-//	gl_drawinfo->dldrawlists[list].AddFlat(this);
-//	return true;
-//}
-
-//bool GLFlat::PutFlatCompat(bool fog)
-//{
-//	// Are lights possible?
-//	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture) return false;
-//
-//	static int list_indices[2][2] =
-//	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
-//
-//	// Secure boundary checks for translucent markers adaptively
-//	bool isTranslucentType = (renderstyle == STYLE_Translucent || alpha < 1.f - FLT_EPSILON);
-//	bool masked = gltexture->isMasked() && (((renderflags & SSRF_RENDER3DPLANES) || stack) || isTranslucentType);
-//	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags & LEVEL_HASFADETABLE) || gl_lights_additive;
-//
-//	if (gl.gl1path && gl.gl1_v1dot1 && masked)
-//	{
-//		// Force the engine to route ALL translucent/solid 3D-floor textures straight in GLLDL_FLATS_FOGMASKED
-//		// This instantly triggers the perfect fixed-function fog-blend state machine,
-//		// making for the rich color modulation, smooth dynlights, and 100% crystal alpha holes,
-//		// otherwise the surface is going to be lit additively, which is unwanted if that's a regular dynlight.
-//		foggy = true;
-//	}
-//
-//	int list = list_indices[masked][foggy];
-//	gl_drawinfo->dldrawlists[list].AddFlat(this);
-//	return true;
-//}
-
 bool GLFlat::PutFlatCompat(bool fog)
 {
 	//	// Are lights possible?
