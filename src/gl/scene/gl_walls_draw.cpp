@@ -55,7 +55,7 @@ EXTERN_CVAR(Bool, gl_seamless)
 GLWall* g_isCurrentlyGLWallDrawing = nullptr;         // for all GL modes
 extern GLWall* g_isCurrentlyGL1xDynlightWallDrawing;  // declared in gl_20.cpp
 
-const float gl_legacy_dynlight_baked_huge = false;
+const bool gl_legacy_dynlight_baked_huge = false;
 
 //==========================================================================
 //
