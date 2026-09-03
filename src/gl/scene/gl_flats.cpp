@@ -63,7 +63,8 @@
 CVAR(Int, gl_breaksec, -1, 0)
 #endif
 
-GLFlat* g_isCurrentlyGLFlatDrawing = nullptr; // for all GL modes
+GLFlat* g_isCurrentlyGLFlatDrawing = nullptr;         // for all GL modes
+extern GLFlat* g_isCurrentlyGL1xDynlightFlatDrawing;  // declared in gl_20.cpp
 
 //==========================================================================
 //
@@ -373,6 +374,26 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 	int rel = getExtraLight();
 
+	//	// Alternative overbright implementation (slow and too much contrast)
+	//bool isGL1xFlatDynlightPass = false;
+	//if (g_isCurrentlyGL1xDynlightFlatDrawing != nullptr) isGL1xFlatDynlightPass = true;
+	//if(gl.legacyMode && gl_legacy_dynlight_overbright && isGL1xFlatDynlightPass)
+	//{
+	//	if      (lightlevel <= 136)                      { lightlevel = 0.98f; }
+	//	else if (lightlevel >= 137 && lightlevel < 144)  { lightlevel = 0.97f; }
+	//	else if (lightlevel >= 144 && lightlevel < 152)  { lightlevel = 0.95f; }
+	//	else if (lightlevel >= 152 && lightlevel < 160)  { lightlevel = 0.90f; }
+	//	else if (lightlevel >= 160 && lightlevel < 168)  { lightlevel = 0.85f; }
+	//	else if (lightlevel >= 168 && lightlevel < 176)  { lightlevel = 0.78f; }
+	//	else if (lightlevel >= 176 && lightlevel < 184)  { lightlevel = 0.74f; }
+	//	else if (lightlevel >= 184 && lightlevel < 192)  { lightlevel = 0.70f; }
+	//	else if (lightlevel >= 192 && lightlevel < 200)  { lightlevel = 0.67f; }
+	//	else if (lightlevel >= 200 && lightlevel < 216)  { lightlevel = 0.65f; }
+	//	else if (lightlevel >= 216 && lightlevel < 232)  { lightlevel = 0.64f; }
+	//	else if (lightlevel >= 232 && lightlevel < 248)  { lightlevel = 0.62f; }
+	//	else if (lightlevel >= 255)                      { lightlevel = 0.60f; }
+	//}
+
 #ifdef _DEBUG
 	if (sector->sectornum == gl_breaksec)
 	{
@@ -541,7 +562,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		gl_RenderState.EnableTextureMatrix(false);
 		break;
 
-	case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX:
+	case GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY:
 		// Cleaned up legacy overbright brightening pass for flats
 		// Uses low-level DrawLightsCompat routine integrated with fixed constants
 		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
@@ -553,7 +574,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		{
 			if (this->sector && this->sector->special != GLSector_Skybox)
 			{
-				// Execute light pass loops. Light stacking now happens per-light inside DrawSubsectorLights!
+				// Execute light pass loops. Light stacking now happens per-light inside DrawSubsectorLights.
 				DrawLightsCompat(pass);	// Triggers our clean, seamless, scaled DrawSubsectorLights loop
 			}
 		}
@@ -567,7 +588,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		glDepthMask(true);
 		glDepthFunc(GL_LESS);
 
-		// Flush all fixed-function parameters directly into the GPU registers!
+		// Flush all fixed-function parameters directly into the GPU registers.
 		// This guarantees that GL_DST_COLOR, GL_ONE completely drops before sky portals process.
 		gl_RenderState.Apply();
 
@@ -577,62 +598,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		break;
 
-	//case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX: // for an extra case
-	//	// Cleaned up legacy overbright brightening pass for flats
-	//	// Uses low-level DrawLightsCompat routine integrated with fixed constants
-	//	gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
-	//	glDepthFunc(GL_EQUAL);
-	//	glDepthMask(false);
-	//
-	//	// Bind the native dynamic light texture filter mask (glLight)
-	//	if (gl_SetupLightTexture())
-	//	{
-	//		if (this->sector && this->sector->special != GLSector_Skybox)
-	//		{
-	//			// Execute light pass loops. Light stacking now happens per-light inside DrawSubsectorLights!
-	//			DrawLightsCompat(pass);	// Triggers our clean, seamless, scaled DrawSubsectorLights loop
-	//		}
-	//	}
-	//
-	//	// FIX: SYNC STATE MACHINE AND PREVENT FLATS LEAKS INTO SKY
-	//	// Force-update the local render state cache to prevent blending and depth corruption
-	//	gl_RenderState.EnableFog(true);
-	//	gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
-	//	gl_RenderState.SetTextureMode(TM_MODULATE);
-	//
-	//	glDepthMask(true);
-	//	glDepthFunc(GL_LESS);
-	//
-	//	// Flush all fixed-function parameters directly into the GPU registers!
-	//	// This guarantees that GL_DST_COLOR, GL_ONE completely drops before sky portals process.
-	//	gl_RenderState.Apply();
-	//
-	//	// SANITIZER AGAINST SKYBOX DARKENING
-	//	// THE MASTER KEY: We forcefully shutdown any leftover fixed-function texture 
-	//	// coordinate generation flags on BOTH texture units inside raw OpenGL 1.1 registers!
-	//	// This completely prevents lightmap projection vectors from corrupting UV mapping 
-	//	// loops of subsequent passes, instantly curing 3D skybox models darkening bugs!
-	//	glEnable(GL_FOG);
-	//	glBlendFunc(GL_ONE, GL_ZERO);
-	//
-	//	// 1. Clean and reset the secondary texture unit registers (Dynlights Channel)
-	//	glActiveTexture(GL_TEXTURE1);
-	//	glDisable(GL_TEXTURE_2D);
-	//	glDisable(GL_TEXTURE_GEN_S);
-	//	glDisable(GL_TEXTURE_GEN_T);
-	//	glDisable(GL_TEXTURE_GEN_R);
-	//	glDisable(GL_TEXTURE_GEN_Q);
-	//
-	//	// 2. Clean and reset the primary diffuse texture unit registers
-	//	glActiveTexture(GL_TEXTURE0);
-	//	glDisable(GL_TEXTURE_GEN_S);
-	//	glDisable(GL_TEXTURE_GEN_T);
-	//	glDisable(GL_TEXTURE_GEN_R);
-	//	glDisable(GL_TEXTURE_GEN_Q);
-	//	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE); // Safe native fallback reset
-	//	break;
-
-	case GLPASS_BRIGHTMAP_LEGACY:
+	case GLPASS_LIGHTEFFECTS_LEGACY:
 	{
 		FMaterial *bm = gltexture ? gltexture->GetBrightmapLegacy() : nullptr;
 		if (bm)
@@ -675,7 +641,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 
 
-	//case GLPASS_BRIGHTMAP_LEGACY: // with big dynlights baking slow crap
+	//case GLPASS_LIGHTEFFECTS_LEGACY: // with big dynlights baking
 	//{
 	//	const float overallGlowIntensity = 0.9f;
 	//	FMaterial *bm = gltexture ? gltexture->GetBrightmapLegacy() : nullptr;
@@ -829,7 +795,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 	//	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	//	break;
 
-	//case GLPASS_BRIGHTMAP_LEGACY:
+	//case GLPASS_LIGHTEFFECTS_LEGACY:
 	//	FMaterial *bm = gltexture->GetBrightmapLegacy();
 	//	if (bm)
 	//	{

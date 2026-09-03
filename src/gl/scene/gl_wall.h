@@ -200,7 +200,6 @@ public:
 	sector_t *frontsector, *backsector;
 
 	void ApplyTopFog();
-	bool FGlobalWallLightCache_PrepareWrapper(GLWall *wallInstance, FDynamicLight *light, int pass);
 	void ResetDynlightCache();
 	void RenderLightsCompat(int pass);
 	bool PrepareLight(FDynamicLight * light, int pass);
@@ -208,7 +207,6 @@ public:
 private:
 
 	void CheckGlowing();
-	//bool PutWallCompat_original_problematic_unused(int passflag); // unused for a while
 	bool PutWallCompat(int passflag);
 	void PutWall(bool translucent);
 	void PutPortal(int ptype);

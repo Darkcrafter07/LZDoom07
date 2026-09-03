@@ -256,12 +256,12 @@
 #include "gl_20.h"
 #include "gl/dynlights/gl_dynlightcache.h"
 
-//FGLBSPCache g_BSPRenderCache;
+//CVAR(Bool, gl_legacy_dynlight_baked_huge, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+const bool gl_legacy_dynlight_baked_huge = false;
+FGLBSPCache g_BSPRenderCache;
 
 CVAR(Bool, gl_lights_additive, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_legacy_mode, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG | CVAR_NOSET)
-
-//CVAR(Bool, gl_legacy_dynlight_baked_huge, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CVAR(Bool, gl_legacy_dynlight_compress_range, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Float, gl_legacy_dynlight_brightness, 1.8f, CVAR_ARCHIVE)
@@ -277,10 +277,14 @@ CVAR(Float, gl_legacy_dynlight_overbright_walls, 0.125f, CVAR_ARCHIVE) // Intens
 // Enables the zscript camglow dynlight spawn (why not to keep it for all renderers GL1,2,3,4, Software, Polyrenderer?)
 CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
-static GLFlat* g_isCurrentlyGL1xDynlightFlatDrawing = nullptr; // for GL1x/GL2x modes only
-static GLWall* g_isCurrentlyGL1xDynlightWallDrawing = nullptr; // for GL1x/GL2x modes only
-extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes
-extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes
+GLFlat* g_isCurrentlyGL1xDynlightFlatDrawing = nullptr;        // for GL1x/GL2x modes only
+GLWall* g_isCurrentlyGL1xDynlightWallDrawing = nullptr;        // for GL1x/GL2x modes only
+bool g_isCurrentlyGL1xFlatsDynlightOverbrightPass = false;     // for GL1x/GL2x modes only
+bool g_isCurrentlyGL1xWallsDynlightOverbrightPass = false;     // for GL1x/GL2x modes only 
+extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes (in gl_flats.cpp, Draw method)
+extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes (in gl_walls_draw.cpp, Draw method)
+
+float distLight2Wall, distLight2Flat = 0.0f;
 
 
 //==========================================================================
@@ -948,73 +952,88 @@ void gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(FDynamicLight * light, flo
 // We need this to tame down subtractive and other lights if needed.
 // This is the only way to control their intensity for transluscent map geometry surfaces,
 // As well as subtractive both on transluscent and regular other map geometry surfaces!
+float GL1x_light_intens_regular_init = 1.0f;
+float GL1x_light_intens_regular_cur = GL1x_light_intens_regular_init;
+float GL1x_light_intens_regular_transluc_init = 1.0f;
+float GL1x_light_intens_regular_transluc_cur = GL1x_light_intens_regular_transluc_init;
+
+float GL1x_light_intens_additive_init = 0.22f;
+float GL1x_light_intens_additive_cur = GL1x_light_intens_additive_init;
+float GL1x_light_intens_additive_transluc_init = 0.22f;
+float GL1x_light_intens_additive_transluc_cur = GL1x_light_intens_additive_transluc_init;
+
+float GL1x_light_intens_subtractive_init = 1.0f;
+float GL1x_light_intens_subtractive_cur = GL1x_light_intens_subtractive_init;
+float GL1x_light_intens_subtractive_transluc_init = 0.17f;
+float GL1x_light_intens_subtractive_transluc_cur = GL1x_light_intens_subtractive_transluc_init;
 void gl_dynlightHandleSpecialLightsLegacy(float &r, float &g, float &b, bool isTransluscent, FDynamicLight* light)
 {
 	if (!light || !light->IsActive()) return;
+	if (g_isCurrentlyGL1xFlatsDynlightOverbrightPass)
+	{
+		// For regular modulated flats dynlights only as others don't need overbright
+		GL1x_light_intens_regular_cur *= gl_legacy_dynlight_overbright_flats;
+	}
+	if (g_isCurrentlyGL1xWallsDynlightOverbrightPass)
+	{
+		// For regular modulated walls dynlights only as others don't need overbright
+		GL1x_light_intens_regular_cur *= gl_legacy_dynlight_overbright_walls;
+	}
 
-	const float regularGlobalLightIntensity = 1.0f;
-	const float regularGlobalTransluscentLightIntensity = 1.0f;
-
-	const float additiveGlobalLightIntensity = 0.22f;
-	const float additiveGlobalTransluscentLightIntensity = 0.22f;
-
-	const float subtractiveGlobalLightIntensity = 1.0f;
-	const float subtractiveGlobalTransluscentLightIntensity = 0.17f;
-
-	// CRITICAL FIX: check translucent flag FIRST.
+	// CRITICAL NOTE: check translucency flag FIRST.
 	// This prevents general rules from overriding custom transparent material multipliers.
-
 	//--- 1. REGULAR MODULATED CHANNELS (TEMPORARILY COMMENTED OUT) ---
-	//if (isTransluscent && !light->IsAdditive() && !light->IsSubtractive())
-	//{
-	//	r *= regularGlobalTransluscentLightIntensity;
-	//	g *= regularGlobalTransluscentLightIntensity;
-	//	b *= regularGlobalTransluscentLightIntensity;
-	//}
-	//else if (!light->IsAdditive() && !light->IsSubtractive())
-	//{
-	//	r *= regularGlobalLightIntensity;
-	//	g *= regularGlobalLightIntensity;
-	//	b *= regularGlobalLightIntensity;
-	//}
+	if (isTransluscent && !light->IsAdditive() && !light->IsSubtractive())
+	{
+		r *= GL1x_light_intens_regular_transluc_cur;
+		g *= GL1x_light_intens_regular_transluc_cur;
+		b *= GL1x_light_intens_regular_transluc_cur;
+	}
+	else if (!light->IsAdditive() && !light->IsSubtractive())
+	{
+		r *= GL1x_light_intens_regular_cur;
+		g *= GL1x_light_intens_regular_cur;
+		b *= GL1x_light_intens_regular_cur;
+	}
 
 	// --- 2. SPECIAL ADDITIVE CHANNELS ---
 	if (isTransluscent && light->IsAdditive())
 	{
-		r *= additiveGlobalTransluscentLightIntensity;
-		g *= additiveGlobalTransluscentLightIntensity;
-		b *= additiveGlobalTransluscentLightIntensity;
+		r *= GL1x_light_intens_additive_transluc_cur;
+		g *= GL1x_light_intens_additive_transluc_cur;
+		b *= GL1x_light_intens_additive_transluc_cur;
 	}
 	else if (light->IsAdditive())
 	{
-		r *= additiveGlobalLightIntensity;
-		g *= additiveGlobalLightIntensity;
-		b *= additiveGlobalLightIntensity;
+		r *= GL1x_light_intens_additive_cur;
+		g *= GL1x_light_intens_additive_cur;
+		b *= GL1x_light_intens_additive_cur;
 	}
 
 	// --- 3. SPECIAL SUBTRACTIVE ANTI-LIGHT CHANNELS ---
 	if (isTransluscent && light->IsSubtractive())
 	{
-		r *= subtractiveGlobalTransluscentLightIntensity;
-		g *= subtractiveGlobalTransluscentLightIntensity;
-		b *= subtractiveGlobalTransluscentLightIntensity;
+		r *= GL1x_light_intens_subtractive_transluc_cur;
+		g *= GL1x_light_intens_subtractive_transluc_cur;
+		b *= GL1x_light_intens_subtractive_transluc_cur;
 	}
 	else if (light->IsSubtractive())
 	{
-		r *= subtractiveGlobalLightIntensity;
-		g *= subtractiveGlobalLightIntensity;
-		b *= subtractiveGlobalLightIntensity;
+		r *= GL1x_light_intens_subtractive_cur;
+		g *= GL1x_light_intens_subtractive_cur;
+		b *= GL1x_light_intens_subtractive_cur;
 	}
 
 	// Symmetrical fixed-function registers hardware boundaries safety lock
 	if (r < 0.0f) r = 0.0f; else if (r > 1.0f) r = 1.0f;
 	if (g < 0.0f) g = 0.0f; else if (g > 1.0f) g = 1.0f;
 	if (b < 0.0f) b = 0.0f; else if (b > 1.0f) b = 1.0f;
-}
+} 
 
 bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
 {
 	FVector3 fn, pos;
+	int lightlevelwall = 128;
 	float r, g, b;
 	float current_boost;
 	const float invMul64 = 1.0f / 64.0f;
@@ -1022,17 +1041,25 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	const float invMul286 = 1.0f / 286.0f;
 	const float invMul322 = 1.0f / 322.0f;
 	const float invMul424 = 1.0f / 424.0f;
+	bool isTrueTranslucentWall = false;
+
+	if (g_isCurrentlyGL1xDynlightWallDrawing != nullptr)
+	{
+		lightlevelwall = g_isCurrentlyGL1xDynlightWallDrawing->lightlevel;
+		isTrueTranslucentWall = (g_isCurrentlyGL1xDynlightWallDrawing->alpha <= 0.99f ||
+			g_isCurrentlyGL1xDynlightWallDrawing->type == RENDERWALL_MIRRORSURFACE);
+	}
 
 	DVector3 lpos = light->PosRelative(group);
 
-	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
+	distLight2Wall = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 	float radius = light->GetRadius();
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
 	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
 
 	if (radius <= 0.f) return false;
-	if (dist > radius) return false;
+	if (distLight2Wall > radius) return false;
 	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y))
 	{
 		return false;
@@ -1054,7 +1081,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	else if (radius >= 6000.0f && radius <= 12000.0f) distFactor = 0.67f;
 	else if (radius >= 12000.0f)                      distFactor = 0.64f;
 
-	scale = 1.0f / ((2.25f * radius) - (dist * distFactor));
+	scale = 1.0f / ((2.25f * radius) - (distLight2Wall * distFactor));
 
 	pos = { (float)lpos.X, (float)lpos.Z, (float)lpos.Y };
 	fn = p.Normal();
@@ -1125,41 +1152,63 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	}
 	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 
-	FVector3 tmpVec = fn * dist;
+	FVector3 tmpVec = fn * distLight2Wall;
 	nearPt = pos + tmpVec;
 
 	float cs = 0.0f;
+
+	// We need this to handle subtractive and other lights if needed.
+	// This is the only way to control their intensity for transluscent map geometry surfaces!
+	gl_dynlightHandleSpecialLightsLegacy(r, g, b, isTrueTranslucentWall, light);
+	if (gl_legacy_dynlight_overbright && !g_isCurrentlyGL1xWallsDynlightOverbrightPass)
+	{
+		if      (lightlevelwall <= 151)                         { cs *= 0.60f; }
+		else if (lightlevelwall >= 152 && lightlevelwall < 160) { cs *= 0.55f; }
+		else if (lightlevelwall >= 160 && lightlevelwall < 168) { cs *= 0.50f; }
+		else if (lightlevelwall >= 168 && lightlevelwall < 176) { cs *= 0.45f; }
+		else if (lightlevelwall >= 176 && lightlevelwall < 184) { cs *= 0.40f; }
+		else if (lightlevelwall >= 184 && lightlevelwall < 192) { cs *= 0.35f; }
+		else if (lightlevelwall >= 192 && lightlevelwall < 200) { cs *= 0.30f; }
+		else if (lightlevelwall >= 200 && lightlevelwall < 216) { cs *= 0.25f; }
+		else if (lightlevelwall >= 216 && lightlevelwall < 255) { cs *= 0.20f; }
+		else if (lightlevelwall >= 255)                         { cs *= 0.15f; }
+	}
+	if (g_isCurrentlyGL1xWallsDynlightOverbrightPass)
+	{
+		// For regular modulated dynlights only as others don't need overbright
+		cs *= GL1x_light_intens_regular_cur;
+	}
 
 	// Compress range ONLY if CVAR is enabled AND dynlight is at least 10% colorful
 	// That can get you richer color saturation on farther surfaces and some ledges
 	if (gl_legacy_dynlight_compress_range && colorCtx.chroma >= 0.10f)
 	{
 		// Compress range and make darker lit surfaces brighter and saturated
-		float lightRatio = dist / radius;
+		float lightRatio = distLight2Wall / radius;
 		if      (lightRatio > 1.0f) lightRatio = 1.0f;
 		else if (lightRatio < 0.0f) lightRatio = 0.0f;
 		cs = 0.75f - powf(lightRatio, 2.75f);
 	}
 	else
 	{
-		cs = 1.0f - (dist / radius);
+		cs = 1.0f - (distLight2Wall / radius);
 	}
 	if (additive) cs *= 0.2f;
 	if (colorCtx.chroma >= 0.10f) cs *= gl_legacy_dynlight_brightness;
 
+	// Alternative way to extract lightlevel
 	// Dynamically look up the subsector at light source position to pull map light level
-	int surface_lightlevel = 255;
-	subsector_t *light_subsector = P_PointInSubsector(lpos.X, lpos.Y);
-	if (light_subsector && light_subsector->sector)
-	{
-		surface_lightlevel = light_subsector->sector->lightlevel;
-	}
+	//subsector_t *light_subsector = P_PointInSubsector(lpos.X, lpos.Y);
+	//if (light_subsector && light_subsector->sector)
+	//{
+	//	lightlevelwall = light_subsector->sector->lightlevel;
+	//}
 
 	// Calculate strict bounds for the smooth 64-unit transition window around the threshold
 	float lowerBound = (float)gl_legacy_dynlight_saturation_thresh - 32.0f;
 	float upperBound = (float)gl_legacy_dynlight_saturation_thresh + 32.0f;
 
-	if ((float)surface_lightlevel <= lowerBound)
+	if ((float)lightlevelwall <= lowerBound)
 	{
 		// 1. PURE DARK ZONE: 100% full original formula and full dark saturation boost
 		r = colorCtx.r * cs;
@@ -1168,7 +1217,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 		current_boost = gl_legacy_dynlight_saturation_dark;
 	}
-	else if ((float)surface_lightlevel >= upperBound)
+	else if ((float)lightlevelwall >= upperBound)
 	{
 		// 2. PURE BRIGHT ZONE: 100% tamed formulas and full bright saturation modifier
 		if (radius >= 384.0f && radius <= 800.0f)
@@ -1201,7 +1250,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	else
 	{
 		// 3. SMOOTH TRANSITION WINDOW (64 units span centered exactly at thresh)
-		float factor = ((float)surface_lightlevel - lowerBound) * invMul64; // 0.0 at lowerBound, 1.0 at upperBound
+		float factor = ((float)lightlevelwall - lowerBound) * invMul64; // 0.0 at lowerBound, 1.0 at upperBound
 
 		// Interpolate the saturation boost factor between dark and bright settings
 		current_boost = gl_legacy_dynlight_saturation_dark + (gl_legacy_dynlight_saturation_bright - gl_legacy_dynlight_saturation_dark) * factor;
@@ -1213,21 +1262,13 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 		float r_tame, g_tame, b_tame;
 		if (radius >= 384.0f && radius <= 800.0f)
-		{
-			r_tame = light->GetRed() * invMul286 * cs; g_tame = light->GetGreen() * invMul286 * cs; b_tame = light->GetBlue() * invMul286 * cs;
-		}
+		{ r_tame = light->GetRed() * invMul286 * cs; g_tame = light->GetGreen() * invMul286 * cs; b_tame = light->GetBlue() * invMul286 * cs; }
 		else if (radius >= 800.0f && radius <= 1600.0f)
-		{
-			r_tame = light->GetRed() * invMul322 * cs; g_tame = light->GetGreen() * invMul322 * cs; b_tame = light->GetBlue() * invMul322 * cs;
-		}
+		{ r_tame = light->GetRed() * invMul322 * cs; g_tame = light->GetGreen() * invMul322 * cs; b_tame = light->GetBlue() * invMul322 * cs; }
 		else if (radius >= 1600.0f)
-		{
-			r_tame = light->GetRed() * invMul424 * cs; g_tame = light->GetGreen() * invMul424 * cs; b_tame = light->GetBlue() * invMul424 * cs;
-		}
+		{ r_tame = light->GetRed() * invMul424 * cs; g_tame = light->GetGreen() * invMul424 * cs; b_tame = light->GetBlue() * invMul424 * cs; }
 		else
-		{
-			r_tame = r_full; g_tame = g_full; b_tame = b_full;
-		}
+		{ r_tame = r_full; g_tame = g_full; b_tame = b_full; }
 
 		// Blend them: closer to lowerBound means more full power color intensity
 		r = r_full + (r_tame - r_full) * factor;
@@ -1238,17 +1279,6 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// Route final pipeline colors with pre-calculated context and radius constraints
 	gl_dynlightSaturateLegacy(r, g, b, current_boost, radius, colorCtx);
 
-	bool isTrueTranslucentWall = false;       // initialize the variable
-	if (g_isCurrentlyGL1xDynlightWallDrawing != nullptr) // Safe extraction after non-null pointer assurance
-	{
-		isTrueTranslucentWall = (g_isCurrentlyGL1xDynlightWallDrawing->alpha <= 0.99f ||
-			g_isCurrentlyGL1xDynlightWallDrawing->type == RENDERWALL_MIRRORSURFACE);
-	}
-
-	// We need this to handle subtractive and other lights if needed.
-	// This is the only way to control their intensity for transluscent map geometry surfaces!
-	gl_dynlightHandleSpecialLightsLegacy(r, g, b, isTrueTranslucentWall, light);
-
 	// We need this for huge dynlights not to overexposure the walls mirrored surfaces
 	if (g_isCurrentlyGL1xDynlightWallDrawing != nullptr)
 	{
@@ -1257,6 +1287,24 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radius, !isTrueTranslucentWall);
 		}
 	}
+
+	//	// Alternative overbright implementation (slow and too much contrast)
+	//if(gl_legacy_dynlight_overbright && radius >= 468)
+	//{
+	//	if      (lightlevelwall <= 136)                          { r *= 1.00f; g *= 1.00f; b *= 1.00f; }
+	//	else if (lightlevelwall >= 137 && lightlevelwall < 144)  { r *= 0.95f; g *= 0.95f; b *= 0.95f; }
+	//	else if (lightlevelwall >= 144 && lightlevelwall < 152)  { r *= 0.85f; g *= 0.85f; b *= 0.85f; }
+	//	else if (lightlevelwall >= 152 && lightlevelwall < 160)  { r *= 0.75f; g *= 0.75f; b *= 0.75f; }
+	//	else if (lightlevelwall >= 160 && lightlevelwall < 168)  { r *= 0.71f; g *= 0.71f; b *= 0.71f; }
+	//	else if (lightlevelwall >= 168 && lightlevelwall < 176)  { r *= 0.69f; g *= 0.69f; b *= 0.69f; }
+	//	else if (lightlevelwall >= 176 && lightlevelwall < 184)  { r *= 0.67f; g *= 0.67f; b *= 0.67f; }
+	//	else if (lightlevelwall >= 184 && lightlevelwall < 192)  { r *= 0.65f; g *= 0.65f; b *= 0.65f; }
+	//	else if (lightlevelwall >= 192 && lightlevelwall < 200)  { r *= 0.62f; g *= 0.62f; b *= 0.62f; }
+	//	else if (lightlevelwall >= 200 && lightlevelwall < 216)  { r *= 0.60f; g *= 0.60f; b *= 0.60f; }
+	//	else if (lightlevelwall >= 216 && lightlevelwall < 232)  { r *= 0.57f; g *= 0.57f; b *= 0.57f; }
+	//	else if (lightlevelwall >= 232 && lightlevelwall < 248)  { r *= 0.55f; g *= 0.55f; b *= 0.55f; }
+	//	else if (lightlevelwall >= 255)                          { r *= 0.50f; g *= 0.50f; b *= 0.50f; }
+	//}
 
 	if (light->IsSubtractive())
 	{
@@ -1270,7 +1318,12 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	{
 		gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	}
-
+	if (g_isCurrentlyGL1xWallsDynlightOverbrightPass)
+	{
+		r *= gl_legacy_dynlight_overbright_walls;
+		g *= gl_legacy_dynlight_overbright_walls;
+		b *= gl_legacy_dynlight_overbright_walls;
+	}
 	gl_RenderState.SetColor(r, g, b);
 	return true;
 }
@@ -1278,6 +1331,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
 {
 	FVector3 fn, pos;
+	int lightlevelflat = 128;
 	float r, g, b;
 	float current_boost;
 	const float invMul64 = 1.0f / 64.0f;
@@ -1285,17 +1339,24 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	const float invMul284 = 1.0f / 284.0f;
 	const float invMul322 = 1.0f / 322.0f;
 	const float invMul444 = 1.0f / 444.0f;
+	bool isTrueTranslucentFlat = false;
+
+	if (g_isCurrentlyGL1xDynlightFlatDrawing != nullptr)
+	{
+		lightlevelflat = g_isCurrentlyGL1xDynlightFlatDrawing->lightlevel;
+		isTrueTranslucentFlat = g_isCurrentlyGL1xDynlightFlatDrawing->alpha <= 0.99f;
+	}
 
 	DVector3 lpos = light->PosRelative(group);
 
-	float dist = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
+	distLight2Flat = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 	float radius = light->GetRadius();
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
 	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
 
 	if (radius <= 0.f) return false;
-	if (dist > radius) return false;
+	if (distLight2Flat > radius) return false;
 	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y))
 	{
 		return false;
@@ -1317,7 +1378,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	else if (radius >= 6000.0f && radius <= 12000.0f) distFactor = 0.67f;
 	else if (radius >= 12000.0f)                      distFactor = 0.64f;
 
-	scale = 1.0f / ((2.25f * radius) - (dist * distFactor));
+	scale = 1.0f / ((2.25f * radius) - (distLight2Flat * distFactor));
 
 	pos = { (float)lpos.X, (float)lpos.Z, (float)lpos.Y };
 	fn = p.Normal();
@@ -1442,40 +1503,64 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	}
 	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
 
-	FVector3 tmpVec = fn * dist;
+	FVector3 tmpVec = fn * distLight2Flat;
 	nearPt = pos + tmpVec;
 
 	float cs = 0.0f;
+
+	// We need this to tame down subtractive and other lights if needed.
+	// This is the only way to control their intensity for transluscent map geometry surfaces!
+	gl_dynlightHandleSpecialLightsLegacy(r, g, b, isTrueTranslucentFlat, light);
+
+	if (gl_legacy_dynlight_overbright && !g_isCurrentlyGL1xFlatsDynlightOverbrightPass)
+	{
+		if      (lightlevelflat <= 151)                         { cs *= 0.60f; }
+		else if (lightlevelflat >= 152 && lightlevelflat < 160) { cs *= 0.55f; }
+		else if (lightlevelflat >= 160 && lightlevelflat < 168) { cs *= 0.50f; }
+		else if (lightlevelflat >= 168 && lightlevelflat < 176) { cs *= 0.45f; }
+		else if (lightlevelflat >= 176 && lightlevelflat < 184) { cs *= 0.40f; }
+		else if (lightlevelflat >= 184 && lightlevelflat < 192) { cs *= 0.35f; }
+		else if (lightlevelflat >= 192 && lightlevelflat < 200) { cs *= 0.30f; }
+		else if (lightlevelflat >= 200 && lightlevelflat < 216) { cs *= 0.25f; }
+		else if (lightlevelflat >= 216 && lightlevelflat < 255) { cs *= 0.20f; }
+		else if (lightlevelflat >= 255)                         { cs *= 0.15f; }
+	}
+	if (g_isCurrentlyGL1xFlatsDynlightOverbrightPass)
+	{
+		// For regular modulated dynlights only as others don't need overbright
+		cs *= GL1x_light_intens_regular_cur;
+	}
+
 	// Compress range ONLY if CVAR is enabled AND dynlight is at least 10% colorful
 	// That can get you richer color saturation on farther surfaces and some ledges
 	if (gl_legacy_dynlight_compress_range && colorCtx.chroma >= 0.10f)
 	{
 		// Compress range and make darker lit surfaces brighter and saturated
-		float    lightRatio = dist / radius;
+		float    lightRatio = distLight2Flat / radius;
 		if      (lightRatio > 1.0f) lightRatio = 1.0f;
 		else if (lightRatio < 0.0f) lightRatio = 0.0f;
 		cs = 0.75f - powf(lightRatio, 2.75f);
 	}
 	else
 	{
-		cs = 1.0f - (dist / radius);
+		cs = 1.0f - (distLight2Flat / radius);
 	}
 	if (additive) cs *= 0.2f;
 	if (colorCtx.chroma >= 0.10f) cs *= gl_legacy_dynlight_brightness;
 
+	// Alternative way to extract lightlevel
 	// Dynamically look up the subsector at light source position to pull map light level
-	int surface_lightlevel = 255;
-	subsector_t *light_subsector = P_PointInSubsector(lpos.X, lpos.Y);
-	if (light_subsector && light_subsector->sector)
-	{
-		surface_lightlevel = light_subsector->sector->lightlevel;
-	}
+	//subsector_t *light_subsector = P_PointInSubsector(lpos.X, lpos.Y);
+	//if (light_subsector && light_subsector->sector)
+	//{
+	//	lightlevelflat = light_subsector->sector->lightlevel;
+	//}
 
 	// Calculate strict bounds for the smooth 64-unit transition window around the threshold
 	float lowerBound = (float)gl_legacy_dynlight_saturation_thresh - 32.0f;
 	float upperBound = (float)gl_legacy_dynlight_saturation_thresh + 32.0f;
 
-	if ((float)surface_lightlevel <= lowerBound)
+	if ((float)lightlevelflat <= lowerBound)
 	{
 		// 1. PURE DARK ZONE: 100% full original formula and full dark saturation boost
 		r = colorCtx.r * cs;
@@ -1484,7 +1569,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 		current_boost = gl_legacy_dynlight_saturation_dark;
 	}
-	else if ((float)surface_lightlevel >= upperBound)
+	else if ((float)lightlevelflat >= upperBound)
 	{
 		// 2. PURE BRIGHT ZONE: 100% tamed formulas and full bright saturation modifier
 		if (radius >= 384.0f && radius <= 800.0f)
@@ -1517,7 +1602,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	else
 	{
 		// 3. SMOOTH SMOOTH TRANSITION WINDOW (64 units span centered exactly at thresh)
-		float factor = ((float)surface_lightlevel - lowerBound) * invMul64; // 0.0 at lowerBound, 1.0 at upperBound
+		float factor = ((float)lightlevelflat - lowerBound) * invMul64; // 0.0 at lowerBound, 1.0 at upperBound
 
 		// Interpolate the saturation boost factor between dark and bright settings
 		current_boost = gl_legacy_dynlight_saturation_dark + (gl_legacy_dynlight_saturation_bright - gl_legacy_dynlight_saturation_dark) * factor;
@@ -1529,21 +1614,13 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 		float r_tame, g_tame, b_tame;
 		if (radius >= 384.0f && radius <= 800.0f)
-		{
-			r_tame = light->GetRed() * invMul284 * cs; g_tame = light->GetGreen() * invMul284 * cs; b_tame = light->GetBlue() * invMul284 * cs;
-		}
+		{ r_tame = light->GetRed() * invMul284 * cs; g_tame = light->GetGreen() * invMul284 * cs; b_tame = light->GetBlue() * invMul284 * cs; }
 		else if (radius >= 800.0f && radius <= 1600.0f)
-		{
-			r_tame = light->GetRed() * invMul322 * cs; g_tame = light->GetGreen() * invMul322 * cs; b_tame = light->GetBlue() * invMul322 * cs;
-		}
+		{ r_tame = light->GetRed() * invMul322 * cs; g_tame = light->GetGreen() * invMul322 * cs; b_tame = light->GetBlue() * invMul322 * cs; }
 		else if (radius >= 1600.0f)
-		{
-			r_tame = light->GetRed() * invMul444 * cs; g_tame = light->GetGreen() * invMul444 * cs; b_tame = light->GetBlue() * invMul444 * cs;
-		}
+		{ r_tame = light->GetRed() * invMul444 * cs; g_tame = light->GetGreen() * invMul444 * cs; b_tame = light->GetBlue() * invMul444 * cs; }
 		else
-		{
-			r_tame = r_full; g_tame = g_full; b_tame = b_full;
-		}
+		{ r_tame = r_full; g_tame = g_full; b_tame = b_full; }
 
 		// Blend them: closer to lowerBound means more full power color intensity
 		r = r_full + (r_tame - r_full) * factor;
@@ -1554,14 +1631,6 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// Route final pipeline colors into the custom saturation encapsulation pass with radius constraints
 	gl_dynlightSaturateLegacy(r, g, b, current_boost, radius, colorCtx);
 
-	bool isTrueTranslucentFlat = false;       // initialize the variable
-	if (g_isCurrentlyGL1xDynlightFlatDrawing != nullptr) // Safe extraction after non-null pointer assurance
-	{ isTrueTranslucentFlat = (g_isCurrentlyGL1xDynlightFlatDrawing->alpha <= 0.99f); }
-
-	// We need this to tame down subtractive and other lights if needed.
-	// This is the only way to control their intensity for transluscent map geometry surfaces!
-	gl_dynlightHandleSpecialLightsLegacy(r, g, b, isTrueTranslucentFlat, light);
-
 	// We need this for huge dynlights not to overexposure the flat mirrored surfaces
 	if (g_isCurrentlyGL1xDynlightFlatDrawing != nullptr)
 	{
@@ -1570,6 +1639,24 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radius, !isTrueTranslucentFlat);
 		}
 	}
+
+	//	// Alternative overbright implementation (slow and too much contrast)
+	//if(gl_legacy_dynlight_overbright && radius >= 468)
+	//{
+	//	if      (lightlevelflat <= 136)                          { r *= 1.00f; g *= 1.00f; b *= 1.00f; }
+	//	else if (lightlevelflat >= 137 && lightlevelflat < 144)  { r *= 0.95f; g *= 0.95f; b *= 0.95f; }
+	//	else if (lightlevelflat >= 144 && lightlevelflat < 152)  { r *= 0.85f; g *= 0.85f; b *= 0.85f; }
+	//	else if (lightlevelflat >= 152 && lightlevelflat < 160)  { r *= 0.75f; g *= 0.75f; b *= 0.75f; }
+	//	else if (lightlevelflat >= 160 && lightlevelflat < 168)  { r *= 0.71f; g *= 0.71f; b *= 0.71f; }
+	//	else if (lightlevelflat >= 168 && lightlevelflat < 176)  { r *= 0.69f; g *= 0.69f; b *= 0.69f; }
+	//	else if (lightlevelflat >= 176 && lightlevelflat < 184)  { r *= 0.67f; g *= 0.67f; b *= 0.67f; }
+	//	else if (lightlevelflat >= 184 && lightlevelflat < 192)  { r *= 0.65f; g *= 0.65f; b *= 0.65f; }
+	//	else if (lightlevelflat >= 192 && lightlevelflat < 200)  { r *= 0.62f; g *= 0.62f; b *= 0.62f; }
+	//	else if (lightlevelflat >= 200 && lightlevelflat < 216)  { r *= 0.60f; g *= 0.60f; b *= 0.60f; }
+	//	else if (lightlevelflat >= 216 && lightlevelflat < 232)  { r *= 0.57f; g *= 0.57f; b *= 0.57f; }
+	//	else if (lightlevelflat >= 232 && lightlevelflat < 248)  { r *= 0.55f; g *= 0.55f; b *= 0.55f; }
+	//	else if (lightlevelflat >= 255)                          { r *= 0.50f; g *= 0.50f; b *= 0.50f; }
+	//}
 
 	if (light->IsSubtractive())
 	{
@@ -1583,6 +1670,14 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	{
 		gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	}
+
+	if (g_isCurrentlyGL1xFlatsDynlightOverbrightPass)
+	{
+		r *= gl_legacy_dynlight_overbright_flats;
+		g *= gl_legacy_dynlight_overbright_flats;
+		b *= gl_legacy_dynlight_overbright_flats;
+	}
+
 	gl_RenderState.SetColor(r, g, b);
 	return true;
 }
@@ -1995,145 +2090,145 @@ bool gl_SetupLightTexture()
 // kept for further works)
 //
 //==========================================================================
-//bool gl_GetWallStaticLightmaps(seg_t *seg, float ztop, float zbottom, float *topLightmapColor, float *bottomLightmapColor)
-//{
-//	// STRICT CHECK: Run ONLY in legacy engine mode to protect shader pipelines
-//	if (!gl.legacyMode || !seg || !seg->sidedef || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
-//
-//	topLightmapColor[0] = topLightmapColor[1] = topLightmapColor[2] = 0.0f;
-//	bottomLightmapColor[0] = bottomLightmapColor[1] = bottomLightmapColor[2] = 0.0f;
-//
-//	bool hasStaticLight = false;
-//	FLightNode *node = seg->sidedef->lighthead;
-//
-//	while (node)
-//	{
-//		FDynamicLight *light = node->lightsource;
-//
-//		// Bake only large static/environmental emitters (radius >= 512)
-//		// Don't forget to turn off the "PrepareLight" method
-//		if (light && light->IsActive() && light->GetRadius() >= 512.0f)
-//		{
-//			float radius = light->GetRadius();
-//
-//			// Extract map positions using native DVector2 getters (.fX() and .fY())
-//			float wallMidX = (float)(seg->v1->fX() + seg->v2->fX()) * 0.5f;
-//			float wallMidY = (float)(seg->v1->fY() + seg->v2->fY()) * 0.5f;
-//
-//			DVector3 lpos = light->PosRelative(seg->frontsector->PortalGroup);
-//
-//			// Calculate 3D distance to Top Center of the wall segment
-//			float dxTop = wallMidX - (float)lpos.X;
-//			float dyTop = wallMidY - (float)lpos.Y;
-//			float dzTop = ztop - (float)lpos.Z;
-//			float distTop = sqrtf(dxTop * dxTop + dyTop * dyTop + dzTop * dzTop);
-//
-//			// Calculate 3D distance to Bottom Center of the wall segment
-//			float dxBot = wallMidX - (float)lpos.X;
-//			float dyBot = wallMidY - (float)lpos.Y;
-//			float dzBot = zbottom - (float)lpos.Z;
-//			float distBot = sqrtf(dxBot * dxBot + dyBot * dyBot + dzBot * dzBot);
-//
-//			if (distTop < radius || distBot < radius)
-//			{
-//				hasStaticLight = true;
-//
-//				float r_base = light->GetRed() / 255.0f;
-//				float g_base = light->GetGreen() / 255.0f;
-//				float b_base = light->GetBlue() / 255.0f;
-//
-//				if (distTop < radius)
-//				{
-//					float factorTop = 1.0f - (distTop / radius);
-//					topLightmapColor[0] += r_base * factorTop;
-//					topLightmapColor[1] += g_base * factorTop;
-//					topLightmapColor[2] += b_base * factorTop;
-//				}
-//
-//				if (distBot < radius)
-//				{
-//					float factorBot = 1.0f - (distBot / radius);
-//					bottomLightmapColor[0] += r_base * factorBot;
-//					bottomLightmapColor[1] += g_base * factorBot;
-//					bottomLightmapColor[2] += b_base * factorBot;
-//				}
-//			}
-//		}
-//		node = node->nextLight;
-//	}
-//
-//	// Dynamic hard-clamping to prevent fixed-function color overflows
-//	for (int c = 0; c < 3; c++)
-//	{
-//		if (topLightmapColor[c] > 1.0f) topLightmapColor[c] = 1.0f;
-//		if (bottomLightmapColor[c] > 1.0f) bottomLightmapColor[c] = 1.0f;
-//	}
-//
-//	return hasStaticLight;
-//}
-//
-//bool gl_GetFlatStaticLightmaps(subsector_t *sub, const GLSectorPlane &secPlane, float *lightmapColor)
-//{
-//	if (!gl.legacyMode || !sub || !sub->sector || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
-//
-//	lightmapColor[0] = lightmapColor[1] = lightmapColor[2] = 0.0f;
-//	bool hasStaticLight = false;
-//
-//	FLightNode *node = sub->sector->lighthead;
-//	while (node)
-//	{
-//		FDynamicLight *light = node->lightsource;
-//
-//		// Bake only large static/environmental emitters (radius >= 512)
-//		// Don't forget to turn off "DrawSubsectorLights" method
-//		if (light && light->IsActive() && light->GetRadius() >= 512.0f)
-//		{
-//			float radius = light->GetRadius();
-//			float radiusSq = radius * radius;
-//
-//			// Extract subsector center coordinate points natively
-//			float flatMidX = (float)sub->sector->centerspot.X;
-//			float flatMidY = (float)sub->sector->centerspot.Y;
-//
-//			// Calculate the exact vertical height of the floor/ceiling plane 
-//			// using engine's native secplane_t via the centerspot DVector2 structure!
-//			float flatMidZ = (float)sub->sector->floorplane.ZatPoint(sub->sector->centerspot);
-//
-//			DVector3 lpos = light->PosRelative(sub->sector->PortalGroup);
-//
-//			// Calculate 3D distance from large light center to flat polygon center spot
-//			float dx = flatMidX - (float)lpos.X;
-//			float dy = flatMidY - (float)lpos.Y;
-//			float dz = flatMidZ - (float)lpos.Z;
-//			float distSq = (dx * dx) + (dy * dy) + (dz * dz);
-//
-//			if (distSq < radiusSq)
-//			{
-//				hasStaticLight = true;
-//
-//				float r_base = light->GetRed() / 255.0f;
-//				float g_base = light->GetGreen() / 255.0f;
-//				float b_base = light->GetBlue() / 255.0f;
-//
-//				float dist = sqrtf(distSq);
-//				float factor = 1.0f - (dist / radius);
-//
-//				lightmapColor[0] += r_base * factor;
-//				lightmapColor[1] += g_base * factor;
-//				lightmapColor[2] += b_base * factor;
-//			}
-//		}
-//		node = node->nextLight;
-//	}
-//
-//	// Dynamic hard-clamping to prevent fixed-function color overflows
-//	for (int c = 0; c < 3; c++)
-//	{
-//		if (lightmapColor[c] > 1.0f) lightmapColor[c] = 1.0f;
-//	}
-//
-//	return hasStaticLight;
-//}
+bool gl_GetWallStaticLightmaps(seg_t *seg, float ztop, float zbottom, float *topLightmapColor, float *bottomLightmapColor)
+{
+	// STRICT CHECK: Run ONLY in legacy engine mode to protect shader pipelines
+	if (!gl.legacyMode || !seg || !seg->sidedef || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
+
+	topLightmapColor[0] = topLightmapColor[1] = topLightmapColor[2] = 0.0f;
+	bottomLightmapColor[0] = bottomLightmapColor[1] = bottomLightmapColor[2] = 0.0f;
+
+	bool hasStaticLight = false;
+	FLightNode *node = seg->sidedef->lighthead;
+
+	while (node)
+	{
+		FDynamicLight *light = node->lightsource;
+
+		// Bake only large static/environmental emitters (radius >= 468)
+		// Don't forget to turn off the "PrepareLight" method
+		if (light && light->IsActive() && light->GetRadius() >= 468.0f)
+		{
+			float radius = light->GetRadius();
+
+			// Extract map positions using native DVector2 getters (.fX() and .fY())
+			float wallMidX = (float)(seg->v1->fX() + seg->v2->fX()) * 0.5f;
+			float wallMidY = (float)(seg->v1->fY() + seg->v2->fY()) * 0.5f;
+
+			DVector3 lpos = light->PosRelative(seg->frontsector->PortalGroup);
+
+			// Calculate 3D distance to Top Center of the wall segment
+			float dxTop = wallMidX - (float)lpos.X;
+			float dyTop = wallMidY - (float)lpos.Y;
+			float dzTop = ztop - (float)lpos.Z;
+			float distTop = sqrtf(dxTop * dxTop + dyTop * dyTop + dzTop * dzTop);
+
+			// Calculate 3D distance to Bottom Center of the wall segment
+			float dxBot = wallMidX - (float)lpos.X;
+			float dyBot = wallMidY - (float)lpos.Y;
+			float dzBot = zbottom - (float)lpos.Z;
+			float distBot = sqrtf(dxBot * dxBot + dyBot * dyBot + dzBot * dzBot);
+
+			if (distTop < radius || distBot < radius)
+			{
+				hasStaticLight = true;
+
+				float r_base = light->GetRed() / 255.0f;
+				float g_base = light->GetGreen() / 255.0f;
+				float b_base = light->GetBlue() / 255.0f;
+
+				if (distTop < radius)
+				{
+					float factorTop = 1.0f - (distTop / radius);
+					topLightmapColor[0] += r_base * factorTop;
+					topLightmapColor[1] += g_base * factorTop;
+					topLightmapColor[2] += b_base * factorTop;
+				}
+
+				if (distBot < radius)
+				{
+					float factorBot = 1.0f - (distBot / radius);
+					bottomLightmapColor[0] += r_base * factorBot;
+					bottomLightmapColor[1] += g_base * factorBot;
+					bottomLightmapColor[2] += b_base * factorBot;
+				}
+			}
+		}
+		node = node->nextLight;
+	}
+
+	// Dynamic hard-clamping to prevent fixed-function color overflows
+	for (int c = 0; c < 3; c++)
+	{
+		if (topLightmapColor[c] > 1.0f) topLightmapColor[c] = 1.0f;
+		if (bottomLightmapColor[c] > 1.0f) bottomLightmapColor[c] = 1.0f;
+	}
+
+	return hasStaticLight;
+}
+
+bool gl_GetFlatStaticLightmaps(subsector_t *sub, const GLSectorPlane &secPlane, float *lightmapColor)
+{
+	if (!gl.legacyMode || !sub || !sub->sector || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
+
+	lightmapColor[0] = lightmapColor[1] = lightmapColor[2] = 0.0f;
+	bool hasStaticLight = false;
+
+	FLightNode *node = sub->sector->lighthead;
+	while (node)
+	{
+		FDynamicLight *light = node->lightsource;
+
+		// Bake only large static/environmental emitters (radius >= 468)
+		// Don't forget to turn off "DrawSubsectorLights" method
+		if (light && light->IsActive() && light->GetRadius() >= 468.0f)
+		{
+			float radius = light->GetRadius();
+			float radiusSq = radius * radius;
+
+			// Extract subsector center coordinate points natively
+			float flatMidX = (float)sub->sector->centerspot.X;
+			float flatMidY = (float)sub->sector->centerspot.Y;
+
+			// Calculate the exact vertical height of the floor/ceiling plane 
+			// using engine's native secplane_t via the centerspot DVector2 structure!
+			float flatMidZ = (float)sub->sector->floorplane.ZatPoint(sub->sector->centerspot);
+
+			DVector3 lpos = light->PosRelative(sub->sector->PortalGroup);
+
+			// Calculate 3D distance from large light center to flat polygon center spot
+			float dx = flatMidX - (float)lpos.X;
+			float dy = flatMidY - (float)lpos.Y;
+			float dz = flatMidZ - (float)lpos.Z;
+			float distSq = (dx * dx) + (dy * dy) + (dz * dz);
+
+			if (distSq < radiusSq)
+			{
+				hasStaticLight = true;
+
+				float r_base = light->GetRed() / 255.0f;
+				float g_base = light->GetGreen() / 255.0f;
+				float b_base = light->GetBlue() / 255.0f;
+
+				float dist = sqrtf(distSq);
+				float factor = 1.0f - (dist / radius);
+
+				lightmapColor[0] += r_base * factor;
+				lightmapColor[1] += g_base * factor;
+				lightmapColor[2] += b_base * factor;
+			}
+		}
+		node = node->nextLight;
+	}
+
+	// Dynamic hard-clamping to prevent fixed-function color overflows
+	for (int c = 0; c < 3; c++)
+	{
+		if (lightmapColor[c] > 1.0f) lightmapColor[c] = 1.0f;
+	}
+
+	return hasStaticLight;
+}
 
 //==========================================================================
 //
@@ -2345,8 +2440,18 @@ bool GLWall::PutWallCompat(int passflag)
 	// Block ONLY specific Skyhack if it's really a hurdle
 	if ((flags & GLWF_SKYHACK) && type == RENDERWALL_M2S) return false;
 
-	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE);
+
+	// Alternative overbright implementation (slow and too much contrast)
+	// Now foggy surfaces with dynlights are renderd almost like regular 
+	// modulated light and only then fog is applied on top (unlike doing them simply additive).
+	// Don't worry, additive dynlights are still rendered as a separate pass in RenderMultipassStuff,
+	// But only if by a mapper or modder request. Yes the previous versions did foggy lights as additives.
+	//bool overbright = gl_legacy_dynlight_overbright && lightlevel >= 96;
+	//bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || overbright;
+
 	bool masked = passflag == 2 && gltexture->isMasked();
+	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE);
+	//bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE);
 
 	if (gl.gl1path && gl.gl1_v1dot1)
 	{
@@ -2498,8 +2603,18 @@ bool GLFlat::PutFlatCompat(bool fog)
 	static int list_indices[2][2] =
 	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
 
+	// Alternative overbright implementation (slow and too much contrast)
+	// Now foggy surfaces with dynlights are renderd almost like regular 
+	// modulated light and only then fog is applied on top (unlike doing them simply additive).
+	// Don't worry, additive dynlights are still rendered as a separate pass in RenderMultipassStuff,
+	// But only if by a mapper or modder request. Yes the previous versions did foggy lights as additives.
+	//bool overbright = gl_legacy_dynlight_overbright && lightlevel >= 96;
+	//bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || overbright;
+
+
 	bool masked = gltexture->isMasked() && ((renderflags&SSRF_RENDER3DPLANES) || stack);
-	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
+	bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE);
+	//bool foggy = gl_CheckFog(&Colormap, lightlevel) || (level.flags&LEVEL_HASFADETABLE) || gl_lights_additive;
 
 	if (gl.gl1path && gl.gl1_v1dot1 && masked)
 	{
@@ -2582,6 +2697,13 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	{
 		FDynamicLight * light = node->lightsource;
 
+		//// Don't process big dynlights as we baked them
+		//if (light->GetRadius() > 468.0f && gl_legacy_dynlight_baked_huge)
+		//{
+		//	node = node->nextLight;
+		//	continue;
+		//}
+
 		// [Darkcrafter07] - THREE-PASS GEOMETRY FILTER GATES FOR FLATS
 		// Each branch of the cascade culls other dynlight types only passes their own kind!
 		if (!light->IsActive())
@@ -2639,7 +2761,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		}
 		g_isCurrentlyGL1xDynlightFlatDrawing = nullptr; // Clear immediately after evaluation!
 
-		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
+		if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY)
 		{
 			float overbrightFactor = clamp((float)gl_legacy_dynlight_overbright_flats, 0.0f, 0.2f);
 			if (overbrightFactor > 1.0f) overbrightFactor = 1.0f;
@@ -2664,7 +2786,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			t1 = { ptr->x, ptr->z, ptr->y };
 			FVector3 nearToVert = t1 - nearPt;
 
-			if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
+			if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY)
 			{
 				float radius = light->GetRadius();
 				if (radius <= 0.0f) radius = 1.0f;
@@ -2691,7 +2813,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		// FIRST PASS: Multiplies existing floor texture by the projected light mask shape
 		GLRenderer->mVBO->RenderCurrent(ptr, GL_TRIANGLE_FAN);
 
-		if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX)
+		if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY)
 		{
 			GLRenderer->mVBO->RenderCurrent(startPtr, GL_TRIANGLE_FAN);
 		}
@@ -2718,7 +2840,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 void GLFlat::DrawLightsCompat(int pass)
 {
 	// Set fog and global coloring for this pass
-	if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX || pass == GLPASS_LIGHTTEX_ADDITIVE)
+	if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY || pass == GLPASS_LIGHTTEX_ADDITIVE)
 	{
 		// Force-disable fixed hardware fog to fully eliminate the lipstick effect
 		gl_RenderState.EnableFog(false);
@@ -2739,7 +2861,7 @@ void GLFlat::DrawLightsCompat(int pass)
 		if (sub)
 		{
 			// Bypass ss_renderflags filter completely for our overbright pass!
-			if (pass == GLPASS_BRIGHTEN_LEGACY_LIGHTTEX || (gl_drawinfo->ss_renderflags[sub->Index()] & renderflags))
+			if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY || (gl_drawinfo->ss_renderflags[sub->Index()] & renderflags))
 			{
 				DrawSubsectorLights(sub, pass);
 			}
@@ -2785,7 +2907,7 @@ bool GLWall::PrepareLight(FDynamicLight * light, int pass)
 	//}
 
 	//	// No reason to draw it like usual if we bake huge radius lights
-	//if (gl_legacy_dynlight_baked_huge && light->GetRadius() >= 512.0f)
+	//if (gl_legacy_dynlight_baked_huge && light->GetRadius() >= 468.0f)
 	//{
 	//	return false;
 	//}
@@ -2851,6 +2973,14 @@ void GLWall::RenderLightsCompat(int pass)
 	while (node)
 	{
 		FDynamicLight * light = node->lightsource;
+
+		// Turn OFF big dynlights!
+		// Do NOT process big dynlights as we're going to bake them
+		if (light->GetRadius() > 468.0f && gl_legacy_dynlight_baked_huge)
+		{
+			node = node->nextLight;
+			continue;
+		}
 
 		// [Darkcrafter07] - THREE-PASS GEOMETRY FILTER GATES FOR WALLS
 		// Each branch of the cascade culls other dynlight types only passes their own kind!
@@ -3148,77 +3278,36 @@ void GLSceneDrawer::RenderMultipassStuff()
 		}
 	}
 
-	// Seventh pass: subtractive lights for regular geometry (not transluscent, even though the lists are).
-	// WHY THE WHOLE PASS IS DISABLED? BECAUSE SUBTRACTIVE LIGHTING IS DONE WITH MODULATED.
-	// We are NOT doing surfaces dynlights here because they live really short and won't get here.
-	// Instead we are DOING it in gl_drawinfo.cpp, DoDraw function. Why transluscent lists are here?
-	// Because we need them to allow lghting all OTHER surfaces with SUBTRACTIVE lights ...
-	// ... SIMULTANEOUSLY with the transluscent surfaces.
-	// But in case you wondered how to do it another way!
-	// Returning to the question, why 7th pass was done in the first place if engine did subtractives?
-	// Because DoDraw function handling of different dynlight types was separated and
-	// functions DrawSubsectorLights(flats) and RenderLightsCompat(Walls) handled them separately and
-	// one little BUG intruded: they SKIPPED processing subtractives! How? Here's the explanation:
-	//
-	//	// WRONG!!! The 7th pass is NEEDED!
-	//if (pass == GLPASS_LIGHTTEX)
-	//{
-	//	// Pass 1: Only regular modulated lights rendered
-	//	if (light->IsAdditive() && light->IsSubtractive())
-	//	{
-	//		node = node->nextLight;
-	//		continue; // pay attention
-	//	}
-	//}
-	//
-	//	// CORRECT - OK handling - 7th pass is NOT needed!
-	//if (pass == GLPASS_LIGHTTEX)
-	//{
-	//	// Pass 1: Regular modulated and subtractive dynlights (non-additive)
-	//	if (light->IsAdditive())
-	//	{
-	//		node = node->nextLight;
-	//		continue; // THAT MEANS: TURN OFF THESE TYPES OF LIGHTS!
-	//	}
-	//}
-	//
-	// So here comes disabled 7th pass, it works but it looks worse and must hog CPU!
-	//if (GLRenderer->mLightCount && !FixedColormap)
-	//{
-	//	if (gl_SetupLightTexture())
-	//	{
-	//
-	//		gl_RenderState.EnableTexture(true);
-	//		gl_RenderState.EnableBrightmap(false);
-	//		gl_RenderState.EnableFog(false);
-	//
-	//		glDepthFunc(GL_EQUAL);
-	//		glDepthMask(false);
-	//
-	//		// Hard lock hardware blending registers into inverse subtraction mode
-	//		glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-	//		glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-	//		glColor4f(0.40f, 0.40f, 0.40f, 1.0f); // useless
-	//
-	//		// Dynamic lights subsector loop filters out everything except IsSubtractive()!
-	//		// We pass GLPASS_TRANSLUCENT_LIGHTTEX to trigger the filtered low-level gates!
-	//		gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
-	//		gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
-	//		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
-	//		gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_TRANSLUCENT_LIGHTTEX);
-	//		gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
-	//		gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
-	//		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
-	//		gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_TRANSLUCENT_LIGHTTEX);
-	//
-	//		// Multi-pass restoration recovery
-	//		glBlendEquation(GL_FUNC_ADD);
-	//		glDepthMask(true);
-	//		glDepthFunc(GL_LESS);
-	//		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	//		gl_RenderState.Apply();
-	//	}
-	//}
+	// Seventh pass: overbright
+	if (gl_lights && gl_legacy_dynlight_overbright && GLRenderer->mLightCount && !FixedColormap)
+	{
+		if (gl_SetupLightTexture())
+		{
+			gl_RenderState.EnableTexture(true);
+			gl_RenderState.EnableBrightmap(false);
+			gl_RenderState.EnableFog(false); // Disengage fog to let photon glare burn crystal clean
+
+			glDepthFunc(GL_EQUAL); // Strictly lock vectors to existing geometry depth steps
+			glDepthMask(false);
+
+			// Engage true hardware overbright overlay blend curves
+			glBlendEquation(GL_FUNC_ADD);
+			glBlendFunc(GL_DST_COLOR, GL_ONE); // Pure photo-additive hardware stack
+
+			// Re-draw lightmaps strictly over standard visible surfaces to multiply brightness
+			g_isCurrentlyGL1xWallsDynlightOverbrightPass = true;
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
+			g_isCurrentlyGL1xWallsDynlightOverbrightPass = false;
+
+			g_isCurrentlyGL1xFlatsDynlightOverbrightPass = true;
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
+			g_isCurrentlyGL1xFlatsDynlightOverbrightPass = false;
+		}
+	}
 
 	glDepthMask(true);
 

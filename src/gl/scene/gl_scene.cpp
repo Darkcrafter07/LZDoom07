@@ -364,87 +364,87 @@ void GLSceneDrawer::RenderScene(int recursion)
 		{
 			RenderMultipassStuff();
 
-			// --- Legacy GL1x/GL2x overbright dynlights pass - START ---
-			if (gl_legacy_dynlight_overbright && GLRenderer && GLRenderer->mLightCount > 0 && !FixedColormap)
-			{
-				// Pure OpenGL 1.1 State Machine Lock - 100% isolated from gl_RenderState caches!
-				glDisable(GL_FOG);        // Ensure hardware fixed fog doesn't blow out our spots
-				glDepthMask(false);       // Lock Z-Buffer writing to eliminate depth-fighting seams
-				glDepthFunc(GL_EQUAL);    // Only draw pixels that perfectly match existing coordinates
-
-				glEnable(GL_BLEND);
-				glBlendFunc(GL_DST_COLOR, GL_ONE); // Multiplicative overbright blending window
-
-				// Push state machine matrix target cleanly before calling drawlists
-				glMatrixMode(GL_TEXTURE);
-
-				// Cache instance helper reference
-				GLDrawList* dlists = gl_drawinfo->dldrawlists;
-
-				// --- PART 1: WALLS OVERBRIGHT PIPELINE SPEED-UP ---
-				// We call DrawWalls ONLY if the specific list actually contains geometry to render!
-				if (dlists[GLLDL_WALLS_PLAIN].drawitems.Size() > 0)
-					dlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-				if (dlists[GLLDL_WALLS_MASKED].drawitems.Size() > 0)
-					dlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-				if (dlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
-					dlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-				if (dlists[GLLDL_WALLS_FOGMASKED].drawitems.Size() > 0)
-					dlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-
-				// --- PART 2: FLATS OVERBRIGHT PIPELINE SPEED-UP ---
-				// Replicate the identical zero-overhead size guarding for floors and ceilings!
-				if (dlists[GLLDL_FLATS_PLAIN].drawitems.Size() > 0)
-					dlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-				if (dlists[GLLDL_FLATS_MASKED].drawitems.Size() > 0)
-					dlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-				if (dlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
-					dlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-				if (dlists[GLLDL_FLATS_FOGMASKED].drawitems.Size() > 0)
-					dlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_BRIGHTEN_LEGACY_LIGHTTEX);
-
-
-				// FIXED-FUNCTION SYMMETRIC CONTEXT RESET
-				// Always pop the matrix target back to GL_MODELVIEW immediately to secure the sky rendering pipe!
-				glMatrixMode(GL_MODELVIEW);
-
-				// Restore raw OpenGL hardware states back cleanly immediately!
-				glEnable(GL_FOG);
-				glDepthMask(true);
-				glDepthFunc(GL_LESS);
-				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-				// Revert texture environment configuration back from custom overbright leaks
-				glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-
-				// SYNCHRONIZER FOR SKYBOX 3D MODELS
-				// THE MASTER SHIELD: Since vanilla raw OpenGL 1.1 states bypass the cacher, 
-				// we explicitly force gl_RenderState to flush and re-sync all hardware registers!
-				// This purges any hidden texture generation leaks and matrix drifts,
-				// instantly restoring full UV mapping and brightness on all 3D sky box models!
-				gl_RenderState.EnableFog(true);
-				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				gl_RenderState.SetTextureMode(TM_MODULATE);
-
-				// Force clear internal texture units generation slots straight in hardware
-				glActiveTexture(GL_TEXTURE1);
-				glDisable(GL_TEXTURE_GEN_S);
-				glDisable(GL_TEXTURE_GEN_T);
-				glActiveTexture(GL_TEXTURE0);
-				glDisable(GL_TEXTURE_GEN_S);
-				glDisable(GL_TEXTURE_GEN_T);
-
-				// THE MONOLITHIC SYNCHRONIZATION FLUSH
-				gl_RenderState.Apply();
-			}
-			// --- Legacy GL1x/GL2x overbright dynlights pass - FINISH ---
+			//	// --- Legacy GL1x/GL2x overbright dynlights pass - START ---
+			//if (gl_legacy_dynlight_overbright && GLRenderer && GLRenderer->mLightCount > 0 && !FixedColormap)
+			//{
+			//	// Pure OpenGL 1.1 State Machine Lock - 100% isolated from gl_RenderState caches!
+			//	glDisable(GL_FOG);        // Ensure hardware fixed fog doesn't blow out our spots
+			//	glDepthMask(false);       // Lock Z-Buffer writing to eliminate depth-fighting seams
+			//	glDepthFunc(GL_EQUAL);    // Only draw pixels that perfectly match existing coordinates
+			//
+			//	glEnable(GL_BLEND);
+			//	glBlendFunc(GL_DST_COLOR, GL_ONE); // Multiplicative overbright blending window
+			//
+			//	// Push state machine matrix target cleanly before calling drawlists
+			//	glMatrixMode(GL_TEXTURE);
+			//
+			//	// Cache instance helper reference
+			//	GLDrawList* dlists = gl_drawinfo->dldrawlists;
+			//
+			//	// --- PART 1: WALLS OVERBRIGHT PIPELINE SPEED-UP ---
+			//	// We call DrawWalls ONLY if the specific list actually contains geometry to render!
+			//	if (dlists[GLLDL_WALLS_PLAIN].drawitems.Size() > 0)
+			//		dlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//
+			//	if (dlists[GLLDL_WALLS_MASKED].drawitems.Size() > 0)
+			//		dlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//
+			//	if (dlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
+			//		dlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//
+			//	if (dlists[GLLDL_WALLS_FOGMASKED].drawitems.Size() > 0)
+			//		dlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//
+			//
+			//	// --- PART 2: FLATS OVERBRIGHT PIPELINE SPEED-UP ---
+			//	// Replicate the identical zero-overhead size guarding for floors and ceilings!
+			//	if (dlists[GLLDL_FLATS_PLAIN].drawitems.Size() > 0)
+			//		dlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//
+			//	if (dlists[GLLDL_FLATS_MASKED].drawitems.Size() > 0)
+			//		dlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//
+			//	if (dlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
+			//		dlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//
+			//	if (dlists[GLLDL_FLATS_FOGMASKED].drawitems.Size() > 0)
+			//		dlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//
+			//
+			//	// FIXED-FUNCTION SYMMETRIC CONTEXT RESET
+			//	// Always pop the matrix target back to GL_MODELVIEW immediately to secure the sky rendering pipe!
+			//	glMatrixMode(GL_MODELVIEW);
+			//
+			//	// Restore raw OpenGL hardware states back cleanly immediately!
+			//	glEnable(GL_FOG);
+			//	glDepthMask(true);
+			//	glDepthFunc(GL_LESS);
+			//	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			//
+			//	// Revert texture environment configuration back from custom overbright leaks
+			//	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+			//
+			//	// SYNCHRONIZER FOR SKYBOX 3D MODELS
+			//	// THE MASTER SHIELD: Since vanilla raw OpenGL 1.1 states bypass the cacher, 
+			//	// we explicitly force gl_RenderState to flush and re-sync all hardware registers!
+			//	// This purges any hidden texture generation leaks and matrix drifts,
+			//	// instantly restoring full UV mapping and brightness on all 3D sky box models!
+			//	gl_RenderState.EnableFog(true);
+			//	gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			//	gl_RenderState.SetTextureMode(TM_MODULATE);
+			//
+			//	// Force clear internal texture units generation slots straight in hardware
+			//	glActiveTexture(GL_TEXTURE1);
+			//	glDisable(GL_TEXTURE_GEN_S);
+			//	glDisable(GL_TEXTURE_GEN_T);
+			//	glActiveTexture(GL_TEXTURE0);
+			//	glDisable(GL_TEXTURE_GEN_S);
+			//	glDisable(GL_TEXTURE_GEN_T);
+			//
+			//	// THE MONOLITHIC SYNCHRONIZATION FLUSH
+			//	gl_RenderState.Apply();
+			//}
+			//	// --- Legacy GL1x/GL2x overbright dynlights pass - FINISH ---
 
 		}
 
@@ -541,22 +541,22 @@ void GLSceneDrawer::RenderScene(int recursion)
 		glDepthMask(false);
 
 		// 4. Draw Static Geometry Lists
-		gl_drawinfo->drawlists[GLDL_PLAINWALLS].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-		gl_drawinfo->drawlists[GLDL_PLAINFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-		gl_drawinfo->drawlists[GLDL_MASKEDWALLS].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-		gl_drawinfo->drawlists[GLDL_MASKEDFLATS].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+		gl_drawinfo->drawlists[GLDL_PLAINWALLS].DrawWalls(GLPASS_LIGHTEFFECTS_LEGACY);
+		gl_drawinfo->drawlists[GLDL_PLAINFLATS].DrawFlats(GLPASS_LIGHTEFFECTS_LEGACY);
+		gl_drawinfo->drawlists[GLDL_MASKEDWALLS].DrawWalls(GLPASS_LIGHTEFFECTS_LEGACY);
+		gl_drawinfo->drawlists[GLDL_MASKEDFLATS].DrawFlats(GLPASS_LIGHTEFFECTS_LEGACY);
 
 		// 5. Draw Dynamic/Multipass Geometry Lists
 		if (gl_drawinfo->dldrawlists != nullptr)
 		{
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_BRIGHTMAP_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTEFFECTS_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTEFFECTS_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTEFFECTS_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTEFFECTS_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTEFFECTS_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTEFFECTS_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTEFFECTS_LEGACY);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTEFFECTS_LEGACY);
 		}
 
 		// 6. Restore states

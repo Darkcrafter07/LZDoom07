@@ -85,43 +85,43 @@ extern F3DmdlDynlightUnifiedCacheEntry g_3DmdlDynlightActorUnifiedCache[UNIFIED_
 //     -------------=========================================------------------------------
 //                           -----------------------
 
-//class GLWall;
-//class GLFlat;
-//
-//// Struct to store baked wall segment parameters
-//struct FBakedWall
-//{
-//	GLWall* wallObj;
-//	int     masked;
-//	int     foggy;
-//};
-//
-//// Struct to store baked floor/ceiling flat parameters
-//struct FBakedFlat
-//{
-//	GLFlat* flatObj;
-//	int     masked;
-//	int     foggy;
-//};
-//
-//// Global high-speed linear cache descriptor
-//struct FGLBSPCache
-//{
-//	int lastCachedTime;
-//	bool isBakingActive;
-//
-//	TArray<FBakedWall> visibleWalls;
-//	TArray<FBakedFlat> visibleFlats;
-//
-//	void Clear()
-//	{
-//		visibleWalls.Clear();
-//		visibleFlats.Clear();
-//	}
-//};
-//
-//// Global cache instance variable shared across gl_bsp.cpp and gl_scene.cpp
-//extern FGLBSPCache g_BSPRenderCache;
+class GLWall;
+class GLFlat;
+
+// Struct to store baked wall segment parameters
+struct FBakedWall
+{
+	GLWall* wallObj;
+	int     masked;
+	int     foggy;
+};
+
+// Struct to store baked floor/ceiling flat parameters
+struct FBakedFlat
+{
+	GLFlat* flatObj;
+	int     masked;
+	int     foggy;
+};
+
+// Global high-speed linear cache descriptor
+struct FGLBSPCache
+{
+	int lastCachedTime;
+	bool isBakingActive;
+
+	TArray<FBakedWall> visibleWalls;
+	TArray<FBakedFlat> visibleFlats;
+
+	void Clear()
+	{
+		visibleWalls.Clear();
+		visibleFlats.Clear();
+	}
+};
+
+// Global cache instance variable shared across gl_bsp.cpp and gl_scene.cpp
+extern FGLBSPCache g_BSPRenderCache;
 
 //                           -----------------------
 //     -------------=========================================------------------------------

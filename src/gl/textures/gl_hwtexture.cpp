@@ -221,6 +221,206 @@ static void ManualScaleImage(GLenum format, GLint w, GLint h, GLenum type, const
 	}
 }
 
+//static void ManualScaleImageDeconv(GLenum format, GLint w, GLint h, GLenum type, const void *input, GLint rw, GLint rh, GLenum typeout, void *output)
+//{
+//	unsigned char *src = (unsigned char*)input;
+//	unsigned char *dst = (unsigned char*)output;
+//
+//	// RICHARDSON-LUCY OPTICAL CORE CONSOLE
+//	const float deconvAmount = 0.25f;
+//	const float kernelSizeMul = 0.85f;
+//
+//	int total_pixels = rw * rh;
+//
+//	float* mat_r = (float*)malloc(total_pixels * sizeof(float));
+//	float* mat_g = (float*)malloc(total_pixels * sizeof(float));
+//	float* mat_b = (float*)malloc(total_pixels * sizeof(float));
+//	float* mat_a = (float*)malloc(total_pixels * sizeof(float));
+//
+//	float* blur_r = (float*)malloc(total_pixels * sizeof(float));
+//	float* blur_g = (float*)malloc(total_pixels * sizeof(float));
+//	float* blur_b = (float*)malloc(total_pixels * sizeof(float));
+//	float* blur_a = (float*)malloc(total_pixels * sizeof(float));
+//
+//	if (!mat_r || !mat_g || !mat_b || !mat_a || !blur_r || !blur_g || !blur_b || !blur_a)
+//	{
+//		if (mat_r) free(mat_r); if (mat_g) free(mat_g); if (mat_b) free(mat_b); if (mat_a) free(mat_a);
+//		if (blur_r) free(blur_r); if (blur_g) free(blur_g); if (blur_b) free(blur_b); if (blur_a) free(blur_a);
+//		return;
+//	}
+//
+//	// -------------------------------------------------------------------------
+//	// STAGE 1: TRUE SOFTWARE BILINEAR INTERPOLATION BASELINE PASS
+//	// -------------------------------------------------------------------------
+//	float x_ratio = (float)w / (float)rw;
+//	float y_ratio = (float)h / (float)rh;
+//
+//	for (int y = 0; y < rh; y++)
+//	{
+//		float src_y_exact = (float)y * y_ratio;
+//		int src_y1 = (int)src_y_exact;
+//		int src_y2 = src_y1 + 1;
+//		if (src_y2 >= h) src_y2 = h - 1;
+//		float y_blend = src_y_exact - (float)src_y1;
+//
+//		int row1_offset = (src_y1 * w) * 4;
+//		int row2_offset = (src_y2 * w) * 4;
+//		int dst_pixel_offset = y * rw;
+//
+//		for (int x = 0; x < rw; x++)
+//		{
+//			float src_x_exact = (float)x * x_ratio;
+//			int src_x1 = (int)src_x_exact;
+//			int src_x2 = src_x1 + 1;
+//			if (src_x2 >= w) src_x2 = w - 1;
+//			float x_blend = src_x_exact - (float)src_x1;
+//
+//			int idx11 = row1_offset + (src_x1 * 4);
+//			int idx12 = row1_offset + (src_x2 * 4);
+//			int idx21 = row2_offset + (src_x1 * 4);
+//			int idx22 = row2_offset + (src_x2 * 4);
+//
+//			int dst_idx = dst_pixel_offset + x;
+//
+//			for (int i = 0; i < 4; i++)
+//			{
+//				float top_avg = src[idx11 + i] * (1.0f - x_blend) + src[idx12 + i] * x_blend;
+//				float bottom_avg = src[idx21 + i] * (1.0f - x_blend) + src[idx22 + i] * x_blend;
+//				float final_bilinear_pixel = top_avg * (1.0f - y_blend) + bottom_avg * y_blend;
+//
+//				if (i == 0) mat_r[dst_idx] = final_bilinear_pixel;
+//				if (i == 1) mat_g[dst_idx] = final_bilinear_pixel;
+//				if (i == 2) mat_b[dst_idx] = final_bilinear_pixel;
+//				if (i == 3) mat_a[dst_idx] = final_bilinear_pixel;
+//			}
+//		}
+//	}
+//
+//	// STAGE 2: INITIALIZE ANAMORPHIC ADAPTIVE DYNAMIC PSF BLUR MODEL (3x3)
+//	// Calculate Gaussian weights dynamically of the lens matrix on the fly,
+//	float psf[3][3];
+//	float psf_norm_sum = 0.0f;
+//
+//	for (int m = -1; m <= 1; m++)
+//	{
+//		for (int n = -1; n <= 1; n++)
+//		{
+//			// Analytical Gaussian distribution equation scaled by kernelSizeMul
+//			float dist_sq = (float)(m * m + n * n);
+//			float sigma = 0.85f * kernelSizeMul; // Tighten the lens radius context
+//
+//			// Prevent division by zero hardware exceptions
+//			if (sigma < 0.05f) sigma = 0.05f;
+//
+//			float weight = expf(-dist_sq / (2.0f * sigma * sigma));
+//			psf[m + 1][n + 1] = weight;
+//			psf_norm_sum += weight;
+//		}
+//	}
+//
+//	// Symmetrical normalization guard guarantees matrix energy balance equals exactly 1.0f
+//	float inv_psf_sum = 1.0f / psf_norm_sum;
+//	for (int m = 0; m < 3; m++)
+//	{
+//		for (int n = 0; n < 3; n++)
+//		{
+//			psf[m][n] *= inv_psf_sum;
+//		}
+//	}
+//
+//	// -------------------------------------------------------------------------
+//	// STAGE 3: RUN THREE-PASS RICHARDSON-LUCY ITERATION LOOPS
+//	// -------------------------------------------------------------------------
+//	for (int iter = 0; iter < 3; iter++)
+//	{
+//		for (int y = 0; y < rh; y++)
+//		{
+//			int current_row = y * rw;
+//			for (int x = 0; x < rw; x++)
+//			{
+//				float sum_r = 0.f, sum_g = 0.f, sum_b = 0.f, sum_a = 0.f;
+//				int center_idx = current_row + x;
+//
+//				for (int ky = -1; ky <= 1; ky++)
+//				{
+//					int sy = y + ky;
+//					if (sy < 0) sy = 0; else if (sy >= rh) sy = rh - 1;
+//					int sample_row = sy * rw;
+//
+//					for (int kx = -1; kx <= 1; kx++)
+//					{
+//						int sx = x + kx;
+//						if (sx < 0) sx = 0; else if (sx >= rw) sx = rw - 1;
+//
+//						float kernel_weight = psf[ky + 1][kx + 1];
+//						int sample_idx = sample_row + sx;
+//
+//						sum_r += mat_r[sample_idx] * kernel_weight;
+//						sum_g += mat_g[sample_idx] * kernel_weight;
+//						sum_b += mat_b[sample_idx] * kernel_weight;
+//						sum_a += mat_a[sample_idx] * kernel_weight;
+//					}
+//				}
+//				blur_r[center_idx] = sum_r;
+//				blur_g[center_idx] = sum_g;
+//				blur_b[center_idx] = sum_b;
+//				blur_a[center_idx] = sum_a;
+//			}
+//		}
+//
+//		// Calculate relative error deviation ratio and update buffers natively
+//		for (int i = 0; i < total_pixels; i++)
+//		{
+//			float div_r = blur_r[i] > 0.01f ? (mat_r[i] / blur_r[i]) : 1.0f;
+//			float div_g = blur_g[i] > 0.01f ? (mat_g[i] / blur_g[i]) : 1.0f;
+//			float div_b = blur_b[i] > 0.01f ? (mat_b[i] / blur_b[i]) : 1.0f;
+//			float div_a = blur_a[i] > 0.01f ? (mat_a[i] / blur_a[i]) : 1.0f;
+//
+//			if (div_r > 3.0f) div_r = 3.0f; else if (div_r < 0.1f) div_r = 0.1f;
+//			if (div_g > 3.0f) div_g = 3.0f; else if (div_g < 0.1f) div_g = 0.1f;
+//			if (div_b > 3.0f) div_b = 3.0f; else if (div_b < 0.1f) div_b = 0.1f;
+//			if (div_a > 3.0f) div_a = 3.0f; else if (div_a < 0.1f) div_a = 0.1f;
+//
+//			// Symmetrical step relaxation engine
+//			mat_r[i] *= (1.0f + (div_r - 1.0f) * deconvAmount);
+//			mat_g[i] *= (1.0f + (div_g - 1.0f) * deconvAmount);
+//			mat_b[i] *= (1.0f + (div_b - 1.0f) * deconvAmount);
+//			mat_a[i] *= (1.0f + (div_a - 1.0f) * deconvAmount);
+//		}
+//	}
+//
+//	// -------------------------------------------------------------------------
+//	// STAGE 4: CLIP AND PACK BACK INTO HARDWARE BYTE REGISTERS
+//	// -------------------------------------------------------------------------
+//	for (int y = 0; y < rh; y++)
+//	{
+//		int dst_row_offset = (y * rw) * 4;
+//		int pixel_row_offset = y * rw;
+//
+//		for (int x = 0; x < rw; x++)
+//		{
+//			int pixel_idx = pixel_row_offset + x;
+//			int dst_idx = dst_row_offset + (x * 4);
+//
+//			int r = (int)(mat_r[pixel_idx] + 0.5f);
+//			int g = (int)(mat_g[pixel_idx] + 0.5f);
+//			int b = (int)(mat_b[pixel_idx] + 0.5f);
+//			int a = (int)(mat_a[pixel_idx] + 0.5f);
+//
+//			dst[dst_idx + 0] = (unsigned char)(r < 0 ? 0 : (r > 255 ? 255 : r));
+//			dst[dst_idx + 1] = (unsigned char)(g < 0 ? 0 : (g > 255 ? 255 : g));
+//			dst[dst_idx + 2] = (unsigned char)(b < 0 ? 0 : (b > 255 ? 255 : b));
+//			dst[dst_idx + 3] = (unsigned char)(a < 0 ? 0 : (a > 255 ? 255 : a));
+//		}
+//	}
+//
+//	// -------------------------------------------------------------------------
+//	// STAGE 5: SYSTEM CLEANUP
+//	// -------------------------------------------------------------------------
+//	free(mat_r); free(mat_g); free(mat_b); free(mat_a);
+//	free(blur_r); free(blur_g); free(blur_b); free(blur_a);
+//}
+
 unsigned int FHardwareTexture::CreateTexture(unsigned char * buffer, int w, int h, int texunit, bool mipmap, int translation, const FString &name)
 {
 	int rh, rw;
