@@ -67,6 +67,7 @@
 #include "gl/system/gl_interface.h"
 
 #include "win32glvid.h"
+#include "gl/system/gl_cvars.h"
 
 
 
@@ -944,6 +945,38 @@ bool Win32GLVideo::InitHardware(HWND Window, int multisample)
 	int prof = WGL_CONTEXT_CORE_PROFILE_BIT_ARB;
 	const char *version = Args->CheckValue("-glversion");
 
+	if (version == nullptr || version[0] == '\0') // If command line arg is absent...
+	{
+		if (gl_usegl1mode) // ...check ini-launcher checkbox
+		{
+			version = "1"; // Force-override the token to boot into clean legacy fixed-function path!
+		}
+	}
+
+	// Double-lock explicit gl1path flags right here before window frames populate
+	if (version != nullptr && version[0] == '1')
+	{
+		m_hRC = wglCreateContext(m_hDC); // Create native clean legacy context
+
+		if (m_hRC != NULL)
+		{
+			wglMakeCurrent(m_hDC, m_hRC); // Bind the active rendering thread context
+
+			// Hard-lock the engine global variables instantly to force correct routing scopes
+			gl.legacyMode = true;
+			gl.gl1path = true;
+
+			// Safe setup texture units configurations and reset matrix states baseline
+			glMatrixMode(GL_PROJECTION); glLoadIdentity();
+			glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+			glDisable(GL_BLEND);
+			glDisable(GL_ALPHA_TEST);
+			glDisable(GL_DEPTH_TEST);
+
+			return true; // Instant safe release return!
+		}
+	}
+
 	if (version != nullptr && strtod(version, nullptr) < 3.0) prof = WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
 
 	for (; prof <= WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB; prof++)
@@ -951,8 +984,6 @@ bool Win32GLVideo::InitHardware(HWND Window, int multisample)
 		m_hRC = NULL;
 		if (myWglCreateContextAttribsARB != NULL)
 		{
-			// let's try to get the best version possible. Some drivers only give us the version we request
-			// which breaks all version checks for feature support. The highest used features we use are from version 4.4, and 3.0 is a requirement.
 			static int versions[] = { 46, 45, 44, 43, 42, 41, 40, 33, 32, 31, 30, -1 };
 
 			for (int i = 0; versions[i] > 0; i++)
@@ -988,7 +1019,6 @@ bool Win32GLVideo::InitHardware(HWND Window, int multisample)
 			return true;
 		}
 	}
-	// We get here if the driver doesn't support the modern context creation API which always means an old driver.
 	vid_renderer = 0;
 	I_Error("R_OPENGL: Unable to create an OpenGL render context. Insufficient driver support for context creation. Reverting to software mode...\n");
 	return false;
