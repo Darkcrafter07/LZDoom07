@@ -1,3 +1,5 @@
+// gl_drawinfo.h
+
 #ifndef __GL_DRAWINFO_H
 #define __GL_DRAWINFO_H
 

@@ -999,12 +999,36 @@ void C_FlushDisplay ()
 	}
 }
 
-void C_AdjustBottom ()
+//void C_AdjustBottom ()
+//{
+//	if (gamestate == GS_FULLCONSOLE || gamestate == GS_STARTUP)
+//		ConBottom = SCREENHEIGHT;
+//	else if (ConBottom > SCREENHEIGHT / 2 || ConsoleState == c_down)
+//		ConBottom = SCREENHEIGHT / 2;
+//}
+
+void C_AdjustBottom()
 {
+	// Instead of calling local menu arrays, link the global token 'DisplayHeight'
+	// pre-allocated inside v_video.cpp which remains 100% stable during mid-game window switches.
+	// This guarantees that screen->GetHeight() never triggers a 0xC0000005 crash!
+	int safeScreenHeight = 768; // Safe fallback setup baseline
+
+	if (screen != nullptr) // If the primary framebuffer object pointer is alive and active in RAM...
+	{
+		safeScreenHeight = screen->GetHeight(); // Use vanilla macro blueprint
+	}
+	else // If screen is currently NULL during live OpenGL context recreation...
+	{
+		// Extract the physical window height directly from the un-corrupted global display registry
+		safeScreenHeight = (DisplayHeight > 0) ? DisplayHeight : 768;
+	}
+
+	// Execute original console tracking loops using our secured safeScreenHeight parameter
 	if (gamestate == GS_FULLCONSOLE || gamestate == GS_STARTUP)
-		ConBottom = SCREENHEIGHT;
-	else if (ConBottom > SCREENHEIGHT / 2 || ConsoleState == c_down)
-		ConBottom = SCREENHEIGHT / 2;
+		ConBottom = safeScreenHeight; // shouldn't crash anymore
+	else if (ConBottom > safeScreenHeight / 2 || ConsoleState == c_down)
+		ConBottom = safeScreenHeight / 2;
 }
 
 void C_NewModeAdjust ()

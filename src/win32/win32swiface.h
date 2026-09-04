@@ -1,3 +1,5 @@
+// win32swiface.h
+
 #pragma once
 
 #ifndef DIRECTDRAW_VERSION

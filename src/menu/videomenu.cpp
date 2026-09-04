@@ -57,6 +57,8 @@
 #include "r_videoscale.h"
 #include "i_time.h"
 
+#include "win32glvid.h"
+
 /*=======================================
  *
  * Video Modes Menu
@@ -132,12 +134,12 @@ DOptionMenuDescriptor *GetVideoModeMenu()
 //
 //=============================================================================
 
-static void BuildModesList (int hiwidth, int hiheight, int hi_bits)
+static void BuildModesList(int hiwidth, int hiheight, int hi_bits)
 {
 	char strtemp[32];
 	int	 i, c;
 	int	 width, height, showbits;
-	bool letterbox=false;
+	bool letterbox = false;
 	int  ratiomatch;
 
 	if (menu_screenratios >= 0 && menu_screenratios <= 6)
@@ -150,15 +152,22 @@ static void BuildModesList (int hiwidth, int hiheight, int hi_bits)
 	}
 	showbits = BitTranslate[DummyDepthCvar];
 
+	// If screen is NULL during mid-game resolution switches, 
+	// calling screen->IsFullscreen() triggers a fatal Access Violation crash (0xC0000005).
+	// Replace it with a safe ternary operator checking against the standalone
+	// global 'fullscreen' CVAR or checking the state-machine fallback template
 	if (Video != NULL)
 	{
-		Video->StartModeIterator (showbits, screen->IsFullscreen());
+		// Safe pointer check fork: if screen is null, fall back to the native global 'fullscreen' token
+		bool isCurrentlyFullscreen = (screen != nullptr) ? screen->IsFullscreen() : (bool)fullscreen;
+
+		Video->StartModeIterator(showbits, isCurrentlyFullscreen); // Shouldn't crash again
 	}
 
 	DOptionMenuDescriptor *opt = GetVideoModeMenu();
 	if (opt != NULL)
 	{
-		for (i = NAME_res_0; i<= NAME_res_9; i++)
+		for (i = NAME_res_0; i <= NAME_res_9; i++)
 		{
 			DMenuItemBase *it = opt->GetItem((ENamedName)i);
 			if (it != NULL)
@@ -170,11 +179,11 @@ static void BuildModesList (int hiwidth, int hiheight, int hi_bits)
 
 					if (Video != NULL)
 					{
-						while ((haveMode = Video->NextMode (&width, &height, &letterbox)) &&
+						while ((haveMode = Video->NextMode(&width, &height, &letterbox)) &&
 							ratiomatch >= 0)
 						{
 							int ratio;
-							CheckRatio (width, height, &ratio);
+							CheckRatio(width, height, &ratio);
 							if (ratio == ratiomatch)
 								break;
 						}
@@ -187,13 +196,13 @@ static void BuildModesList (int hiwidth, int hiheight, int hi_bits)
 							it->SetValue(OptionMenuItemScreenResolution::SRL_SELECTION, c);
 							it->SetValue(OptionMenuItemScreenResolution::SRL_HIGHLIGHT, c);
 						}
-						
-						mysnprintf (strtemp, countof(strtemp), "%dx%d%s", width, height, letterbox?TEXTCOLOR_BROWN" LB":"");
-						it->SetString(OptionMenuItemScreenResolution::SRL_INDEX+c, strtemp);
+
+						mysnprintf(strtemp, countof(strtemp), "%dx%d%s", width, height, letterbox ? TEXTCOLOR_BROWN" LB" : "");
+						it->SetString(OptionMenuItemScreenResolution::SRL_INDEX + c, strtemp);
 					}
 					else
 					{
-						it->SetString(OptionMenuItemScreenResolution::SRL_INDEX+c, "");
+						it->SetString(OptionMenuItemScreenResolution::SRL_INDEX + c, "");
 					}
 				}
 			}
@@ -208,24 +217,48 @@ static void BuildModesList (int hiwidth, int hiheight, int hi_bits)
 //
 //=============================================================================
 
-void M_RestoreMode ()
+void M_RestoreMode()
 {
+	// We are going to restore the old resolution immediately
 	NewWidth = OldWidth;
 	NewHeight = OldHeight;
 	NewBits = OldBits;
-	setmodeneeded = true;
+
+	// Recreate the context RIGHT NOW, don't wait for the next frame.
+	// If screen is null, we've lost the context. Restore using the old values.
+	if (!screen)
+	{
+		Printf("R_OPENGL: Screen is null. Recreating OpenGL context with old resolution.\n");
+		static_cast<Win32GLVideo*>(Video)->RecreateOpenGLContext(OldWidth, OldHeight, OldBits);
+	}
+
+	// Now that the context is (hopefully) restored, update the menu
+	setmodeneeded = true; // This will be handled by D_ProcessEvents next frame, but the critical work is done.
 	testingmode = 0;
-	SetModesMenu (OldWidth, OldHeight, OldBits);
+	SetModesMenu(OldWidth, OldHeight, OldBits);
 }
 
-void M_SetDefaultMode ()
+void M_SetDefaultMode()
 {
-	// Make current resolution the default
-	vid_defwidth = screen->VideoWidth;
-	vid_defheight = screen->VideoHeight;
-	vid_defbits = DisplayBits;
+	// We are going to apply the new resolution immediately
+	NewWidth = screen ? screen->VideoWidth : vid_defwidth; // Fallback
+	NewHeight = screen ? screen->VideoHeight : vid_defheight;
+	NewBits = DisplayBits;
+
+	// Recreate the context RIGHT NOW.
+	// If screen is null, we've lost the context. Use the intended resolution.
+	if (!screen)
+	{
+		Printf("R_OPENGL: Screen is null. Recreating OpenGL context with last known resolution.\n");
+		static_cast<Win32GLVideo*>(Video)->RecreateOpenGLContext(NewWidth, NewHeight, NewBits);
+	}
+
+	// Now update the defaults and the menu
+	vid_defwidth = NewWidth;
+	vid_defheight = NewHeight;
+	vid_defbits = NewBits;
 	testingmode = 0;
-	SetModesMenu (screen->VideoWidth, screen->VideoHeight, DisplayBits);
+	SetModesMenu(NewWidth, NewHeight, DisplayBits);
 }
 
 
@@ -398,7 +431,33 @@ static void SetModesMenu (int w, int h, int bits)
 	BuildModesList (w, h, bits);
 }
 
+//void M_InitVideoModes()
+//{
+//	SetModesMenu (screen->VideoWidth, screen->VideoHeight, DisplayBits);
+//}
+
 void M_InitVideoModes()
 {
-	SetModesMenu (screen->VideoWidth, screen->VideoHeight, DisplayBits);
+	// If screen is NULL during mid-game resolution switches, 
+	// accessing screen->VideoWidth triggers a fatal Access Violation crash (0xC0000005).
+	// Intercept it with a safe fallback parsing stable global DisplayWidth / DisplayHeight.
+	int safeWidth = 640;   // Safe fallback setup baseline width
+	int safeHeight = 400;  // Safe fallback setup baseline height
+
+	if (screen != nullptr) // If the primary framebuffer object pointer is alive and active in RAM...
+	{
+		safeWidth = screen->VideoWidth;   // Use vanilla property
+		safeHeight = screen->VideoHeight; // Use vanilla property
+	}
+	else // If screen is currently NULL during live OpenGL context recreation...
+	{
+		// Extract the physical window sizes directly from the un-corrupted global display registry
+		safeWidth = (DisplayWidth > 0) ? DisplayWidth : vid_defwidth;
+		safeHeight = (DisplayHeight > 0) ? DisplayHeight : vid_defheight;
+	}
+
+	// Force execute SetModesMenu using verified hardware layout parameters
+	SetModesMenu(safeWidth, safeHeight, DisplayBits);
 }
+
+

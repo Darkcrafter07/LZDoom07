@@ -31,6 +31,7 @@
 #include "c_cvars.h"
 #include "r_defs.h"
 #include "r_data/r_translate.h"
+#include "gl/system/gl_load.h"
 
 class FVertexBuffer;
 class FShader;

@@ -1,3 +1,5 @@
+// win32glvid.h
+
 #ifndef WIN32GLVID_H
 #define WIN32GLVID_H
 

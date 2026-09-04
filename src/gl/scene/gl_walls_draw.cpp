@@ -18,7 +18,7 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/
 //
 //--------------------------------------------------------------------------
-//
+// gl_walls_draw.cpp
 
 #include "gl/system/gl_system.h"
 #include "p_local.h"
@@ -495,26 +495,6 @@ void GLWall::Draw(int pass)
 
 	g_isCurrentlyGLWallDrawing = this; // we're drawing walls now
 
-	//	// Alternative overbright implementation (slow and too much contrast)
-	//bool isGL1xWallDynlightPass = false;
-	//if (g_isCurrentlyGL1xDynlightWallDrawing != nullptr) isGL1xWallDynlightPass = true;
-	//if (gl.legacyMode && gl_legacy_dynlight_overbright && isGL1xWallDynlightPass)
-	//{
-	//	if      (lightlevel <= 136)                     { lightlevel = 0.98f; }
-	//	else if (lightlevel >= 137 && lightlevel < 144) { lightlevel = 0.97f; }
-	//	else if (lightlevel >= 144 && lightlevel < 152) { lightlevel = 0.95f; }
-	//	else if (lightlevel >= 152 && lightlevel < 160) { lightlevel = 0.90f; }
-	//	else if (lightlevel >= 160 && lightlevel < 168) { lightlevel = 0.85f; }
-	//	else if (lightlevel >= 168 && lightlevel < 176) { lightlevel = 0.78f; }
-	//	else if (lightlevel >= 176 && lightlevel < 184) { lightlevel = 0.74f; }
-	//	else if (lightlevel >= 184 && lightlevel < 192) { lightlevel = 0.70f; }
-	//	else if (lightlevel >= 192 && lightlevel < 200) { lightlevel = 0.67f; }
-	//	else if (lightlevel >= 200 && lightlevel < 216) { lightlevel = 0.65f; }
-	//	else if (lightlevel >= 216 && lightlevel < 232) { lightlevel = 0.64f; }
-	//	else if (lightlevel >= 232 && lightlevel < 248) { lightlevel = 0.62f; }
-	//	else if (lightlevel >= 255)                     { lightlevel = 0.60f; }
-	//}
-
 	gl_RenderState.SetNormal(glseg.Normal());
 	switch (pass)
 	{
@@ -558,120 +538,6 @@ void GLWall::Draw(int pass)
 		lightlevel = backupLight;
 		break;
 	}
-
-	//case GLPASS_TRANSLUCENT:
-	//{
-	//	if (gl.legacyMode && seg && seg->frontsector)
-	//	{
-	//		// In GL1x/GL2x very dark translucent surfaces disappear, 
-	//		// ... thus we can't make them darker than this
-	//		if (lightlevel < 100) lightlevel = 100;
-	//	}
-
-	//	int backupLight = lightlevel;
-	//	int adjustedLightLevel = lightlevel;
-	//	const float brightnessBoost = 0.55f;
-	//	const int darkSurfLightlevelThresh = 150;
-	//	float reduceBoostOnDarkSurf = 0.75f;
-
-	//	if (gl.legacyMode && seg && seg->frontsector && seg->frontsector->lighthead)
-	//	{
-	//		// 1. Detect a mirrored - reflected surface by an overlay style or wall matrix type
-	//		bool isTrueMirrorOverlay = (RenderStyle == STYLE_Add || type == RENDERWALL_MIRRORSURFACE);
-
-	//		// 2. Detect a mirrored - reflected surface by "reflect" arrays on front map sector
-	//		int realSectorIndex = seg->frontsector->sectornum;
-	//		if (!isTrueMirrorOverlay && realSectorIndex >= 0 && realSectorIndex < (int)level.sectors.Size())
-	//		{
-	//			sector_t* realSector = &level.sectors[realSectorIndex];
-	//			if (realSector && (realSector->reflect[0] > 0.0f || realSector->reflect[1] > 0.0f))
-	//			{
-	//				isTrueMirrorOverlay = true;
-	//			}
-	//		}
-
-	//		// So far, this is for transluscent 3D floors.
-	//		// Do NOT use boost or turn it OFF for mirrored - reflected surface
-	//		// Handle mirrored surfaces brightness in gl_20.cpp, "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy"
-	//		if (!isTrueMirrorOverlay)
-	//		{
-	//			float totalWallCpuIntensity = 0.0f;
-
-	//			// Inject the secure reduceBoostOnDarkSurf factor based on threshold constraints
-	//			float activeDarkDamp = 1.0f;
-	//			if (lightlevel < darkSurfLightlevelThresh)
-	//			{
-	//				activeDarkDamp = reduceBoostOnDarkSurf;
-	//			}
-
-	//			float baseFactor = 0.15f * brightnessBoost * activeDarkDamp;
-
-	//			// Standalone software wall projection line data setup
-	//			float wallZTop = (float)ztop[0];
-	//			float wallZBottom = (float)zbottom[0];
-	//			float wallCenterZ = wallZBottom + ((wallZTop - wallZBottom) * 0.5f);
-
-	//			// Read active dynlights from the alive front sector buffer
-	//			FLightNode *node = seg->frontsector->lighthead;
-
-	//			// Scan distances from dynlights to wall geometry center on a CPU
-	//			while (node)
-	//			{
-	//				FDynamicLight *light = node->lightsource;
-	//				if (light && light->IsActive() && light->GetRadius() > 0.0f)
-	//				{
-	//					float radius = light->GetRadius();
-
-	//					// Calc distance to translucent wall plane center by X, Y, Z axes
-	//					float dx = (float)glseg.x1 - (float)light->X();
-	//					float dy = (float)glseg.y1 - (float)light->Y();
-	//					float dz = wallCenterZ - (float)light->Z();
-	//					float wallDist2 = (dx * dx) + (dy * dy) + (dz * dz);
-
-	//					if (wallDist2 < (radius * radius))
-	//					{
-	//						float dist = sqrtf(wallDist2);
-	//						// Soft light CPU fade curve for wall primitives
-	//						totalWallCpuIntensity += (1.0f - (dist / radius)) * baseFactor * 5.0f;
-	//					}
-	//				}
-	//				node = node->nextLight;
-	//			}
-
-	//			if (totalWallCpuIntensity > 0.0f)
-	//			{
-	//				// Protective plateau
-	//				if (totalWallCpuIntensity > 0.75f) totalWallCpuIntensity = 0.75f;
-
-	//				// Convert software intensity to byte based engine lightlevel (0-255)
-	//				adjustedLightLevel += (int)(totalWallCpuIntensity * 255.0f);
-	//				if (adjustedLightLevel > 255) adjustedLightLevel = 255;
-	//			}
-	//		}
-	//	}
-
-	//	// Inject software calculated intensity directly into the active wall scope lightlevel
-	//	lightlevel = adjustedLightLevel;
-
-	//	switch (type)
-	//	{
-	//	case RENDERWALL_MIRRORSURFACE:
-	//		RenderMirrorSurface();
-	//		break;
-
-	//	case RENDERWALL_FOGBOUNDARY:
-	//		RenderFogBoundary();
-	//		break;
-
-	//	default:
-	//		RenderTranslucentWall();
-	//		break;
-	//	}
-
-	//	// Restore the native original lightlevel before context leaves the pass scope
-	//	lightlevel = backupLight;
-	//	break;
-	//}
 
 	case GLPASS_LIGHTTEX:
 	case GLPASS_LIGHTTEX_ADDITIVE:

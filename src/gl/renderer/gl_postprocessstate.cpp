@@ -41,21 +41,55 @@
 
 FGLPostProcessState::FGLPostProcessState()
 {
-	glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTex);
-	glActiveTexture(GL_TEXTURE0);
-	SaveTextureBindings(1);
+	if (!gl.gl1path) // GL2+ path
+	{
+		glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTex);
+		glActiveTexture(GL_TEXTURE0);
+		SaveTextureBindings(1);
+	}
+	else // GL1x path
+	{
+		// Force unbind any multi-texturing footprint and lock unit 0
+		activeTex = GL_TEXTURE0;
+
+		// Secure legacy texture state tracking
+		GLint texture;
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+		textureBinding.Push(texture);
+	}
 
 	glGetBooleanv(GL_BLEND, &blendEnabled);
 	glGetBooleanv(GL_SCISSOR_TEST, &scissorEnabled);
 	glGetBooleanv(GL_DEPTH_TEST, &depthEnabled);
 	glGetBooleanv(GL_MULTISAMPLE, &multisampleEnabled);
-	glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
-	glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
-	glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
-	glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
-	glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
-	glGetIntegerv(GL_BLEND_DST_RGB, &blendDestRgb);
-	glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDestAlpha);
+
+	// Do NOT call modern context creation states in GL1x mode.
+	// Prevent 'blendSrcAlpha' and 'blendEquation' from filling arrays with garbage
+	if (!gl.gl1path)
+	{
+		// GL2x+ constructor
+		glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
+		glGetIntegerv(GL_BLEND_EQUATION_RGB, &blendEquationRgb);
+		glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEquationAlpha);
+		glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+		glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+		glGetIntegerv(GL_BLEND_DST_RGB, &blendDestRgb);
+		glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDestAlpha);
+	}
+	else
+	{
+		// GL1x constructor fallback
+		currentProgram = 0;
+		blendEquationRgb = 0;
+		blendEquationAlpha = 0;
+
+		// Query strictly the single-channel factors supported natively by hardware
+		glGetIntegerv(GL_BLEND_SRC, &blendSrcRgb);
+		glGetIntegerv(GL_BLEND_DST, &blendDestRgb);
+
+		blendSrcAlpha = blendSrcRgb;
+		blendDestAlpha = blendDestRgb;
+	}
 
 	glDisable(GL_MULTISAMPLE);
 	glDisable(GL_DEPTH_TEST);
@@ -151,48 +185,19 @@ FGLPostProcessState::~FGLPostProcessState()
 	else
 		glDisable(GL_MULTISAMPLE);
 
-	// GL1.x: Fallback to basic blending
+	// Clean tableless fallback routing
 	if (gl.gl1path)
 	{
-		int srcFactor = GL_SRC_ALPHA;
-		int destFactor = GL_ONE_MINUS_SRC_ALPHA;
-		bool found = false;
-
-		// *** CRITICAL FIX: Check for common combinations ***
-		if (blendSrcRgb == GL_SRC_ALPHA && blendDestRgb == GL_ONE_MINUS_SRC_ALPHA)
-		{
-			// Standard Translucency: Already set as default
-			found = true;
-		}
-		else if (blendSrcRgb == GL_SRC_ALPHA && blendDestRgb == GL_ONE)
-		{
-			// Additive: STYLE_Add
-			srcFactor = GL_SRC_ALPHA;
-			destFactor = GL_ONE;
-			found = true;
-		}
-		// Add more checks here if you know the exact blend modes causing texture issues!
-
-		// If found, apply the simple glBlendFunc
-		if (found)
-		{
-			glBlendFunc(srcFactor, destFactor);
-		}
-		else
-		{
-			// If the requested modern blend mode (e.g., GL_DST_COLOR) isn't supported 
-			// by glBlendFunc, fall back to standard alpha blending.
-			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		}
+		// Force direct restoral of the factors cached safely inside constructor
+		glBlendFunc(blendSrcRgb, blendDestRgb);
 	}
-	else
+	else // Modern path for GL2+ architectures
 	{
-		// Modern GL: Use full blending
 		glBlendEquationSeparate(blendEquationRgb, blendEquationAlpha);
 		glBlendFuncSeparate(blendSrcRgb, blendDestRgb, blendSrcAlpha, blendDestAlpha);
 	}
 
-	// **GL1.x: Restore textures but skip shaders/samplers**
+	// **GL1.x: Safe single-texture unit 0 sanitation restoral loop**
 	if (!gl.gl1path)
 	{
 		glUseProgram(currentProgram);
@@ -213,22 +218,22 @@ FGLPostProcessState::~FGLPostProcessState()
 			glActiveTexture(GL_TEXTURE0 + i);
 			glBindTexture(GL_TEXTURE_2D, textureBinding[i]);
 		}
-		
+
 		glActiveTexture(activeTex);
 	}
-	else
+	else // GL1x CLEANUP
 	{
-		// **GL1.x: Only bind the first texture (if any)**
+		// Force unit 0 active state to ensure sprites buffer coordinates align
+		glActiveTexture(GL_TEXTURE0);
+
 		if (textureBinding.Size() > 0 && textureBinding[0] != 0)
 		{
 			glBindTexture(GL_TEXTURE_2D, textureBinding[0]);
 		}
 
-		// **CRITICAL: Restore texture unit 0**
-		// Some sprites may assume unit 0 is active
-		if (gl.gl1path)
-		{
-			glActiveTexture(GL_TEXTURE0);
-		}
+		// Reset states to default modulate settings to keep menus alive
+		gl_RenderState.SetTextureMode(TM_MODULATE);
+		gl_RenderState.SetObjectColor(0xffffffff);
+		gl_RenderState.Apply();
 	}
 }

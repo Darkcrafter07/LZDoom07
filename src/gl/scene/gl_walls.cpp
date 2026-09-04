@@ -18,7 +18,7 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/
 //
 //--------------------------------------------------------------------------
-//
+// gl_walls.cpp
 
 #include "gl/system/gl_system.h"
 #include "p_local.h"

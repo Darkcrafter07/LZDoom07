@@ -364,7 +364,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 		{
 			RenderMultipassStuff();
 
-			//	// --- Legacy GL1x/GL2x overbright dynlights pass - START ---
+			//// --- Legacy GL1x/GL2x overbright dynlights pass - START ---
 			//if (gl_legacy_dynlight_overbright && GLRenderer && GLRenderer->mLightCount > 0 && !FixedColormap)
 			//{
 			//	// Pure OpenGL 1.1 State Machine Lock - 100% isolated from gl_RenderState caches!
@@ -444,7 +444,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 			//	// THE MONOLITHIC SYNCHRONIZATION FLUSH
 			//	gl_RenderState.Apply();
 			//}
-			//	// --- Legacy GL1x/GL2x overbright dynlights pass - FINISH ---
+			//// --- Legacy GL1x/GL2x overbright dynlights pass - FINISH ---
 
 		}
 

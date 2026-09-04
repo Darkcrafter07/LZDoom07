@@ -1,3 +1,5 @@
+// gl_wall.h - both for walls and flats
+
 #ifndef __GL_WALL_H
 #define __GL_WALL_H
 //==========================================================================

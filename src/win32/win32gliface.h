@@ -1,3 +1,5 @@
+// win32gliface.h
+
 #ifndef __WIN32GLIFACE_H__
 #define __WIN32GLIFACE_H__
 

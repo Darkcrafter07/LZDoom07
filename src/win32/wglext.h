@@ -1,3 +1,5 @@
+// wglext.h
+
 #ifndef __wglext_h_
 #define __wglext_h_ 1
 

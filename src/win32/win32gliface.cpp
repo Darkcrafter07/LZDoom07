@@ -1,4 +1,4 @@
-/*
+/* win32gliface.cpp
 **
 **
 **---------------------------------------------------------------------------
@@ -456,13 +456,13 @@ DFrameBuffer *Win32GLVideo::CreateFrameBuffer(int width, int height, bool bgra, 
 
 //==========================================================================
 //
-// Underimplemented and unused
+// Underimplemented, still hangs on GL1
 //
 //==========================================================================
 
 void Win32GLVideo::RecreateOpenGLContext(int width, int height, int bits)
 {
-	// Destroy the old context
+	// Destroy the old context safely
 	if (m_hRC)
 	{
 		wglMakeCurrent(NULL, NULL);
@@ -470,10 +470,35 @@ void Win32GLVideo::RecreateOpenGLContext(int width, int height, int bits)
 		m_hRC = NULL;
 	}
 
-	// For GL1 mode (FX5500), use the old context creation method
-	if (gl.gl1path)
+	// Grab the active live focus Window directly via Win32 API and link it back to the global 'Window' extern token
+	HWND hActiveWindow = ::GetActiveWindow(); // Grab the live newly-created OS window handle
+	if (hActiveWindow != NULL)
+	{
+		// Force synchronize the master window pointers scopes
+		m_Window = hActiveWindow;
+		::Window = hActiveWindow; // Update the global extern token declared in win32glvid.h
+	}
+
+	// Re-grab the pristine un-corrupted Device Context directly from the validated active window!
+	m_hDC = ::GetDC(m_Window);
+
+	// For GL1 mode use the old context creation method
+	if (gl.gl1path) // maybe it's still not changed to "true"?
 	{
 		m_hRC = wglCreateContext(m_hDC);
+
+		if (m_hRC != NULL)
+		{
+			// Force link the active rendering thread context straight into the fresh m_hDC slot
+			wglMakeCurrent(m_hDC, m_hRC);
+
+			// Safe clean setup texture projection units maps to block viewport leaks
+			glMatrixMode(GL_PROJECTION); glLoadIdentity();
+			glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+			glDisable(GL_BLEND);
+			glDisable(GL_ALPHA_TEST);
+			glDisable(GL_DEPTH_TEST);
+		}
 	}
 	else
 	{
@@ -481,7 +506,8 @@ void Win32GLVideo::RecreateOpenGLContext(int width, int height, int bits)
 		if (myWglCreateContextAttribsARB != NULL)
 		{
 			int prof = WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
-			int ctxAttribs[] = {
+			int ctxAttribs[] =
+			{
 				WGL_CONTEXT_MAJOR_VERSION_ARB, 2,
 				WGL_CONTEXT_MINOR_VERSION_ARB, 0,
 				WGL_CONTEXT_FLAGS_ARB, 0,
@@ -494,11 +520,15 @@ void Win32GLVideo::RecreateOpenGLContext(int width, int height, int bits)
 		{
 			m_hRC = wglCreateContext(m_hDC);
 		}
+
+		if (m_hRC != NULL)
+		{
+			wglMakeCurrent(m_hDC, m_hRC);
+		}
 	}
 
 	// Reinitialize OpenGL extensions
 	gl_LoadExtensions();
-
 }
 
 //==========================================================================
@@ -901,9 +931,9 @@ bool Win32GLVideo::SetupPixelFormat(int multisample)
 //
 //==========================================================================
 
-bool Win32GLVideo::InitHardware (HWND Window, int multisample)
+bool Win32GLVideo::InitHardware(HWND Window, int multisample)
 {
-	m_Window=Window;
+	m_Window = Window;
 	m_hDC = GetDC(Window);
 
 	if (!SetupPixelFormat(multisample))
@@ -927,7 +957,8 @@ bool Win32GLVideo::InitHardware (HWND Window, int multisample)
 
 			for (int i = 0; versions[i] > 0; i++)
 			{
-				int ctxAttribs[] = {
+				int ctxAttribs[] =
+				{
 					WGL_CONTEXT_MAJOR_VERSION_ARB, versions[i] / 10,
 					WGL_CONTEXT_MINOR_VERSION_ARB, versions[i] % 10,
 					WGL_CONTEXT_FLAGS_ARB, gl_debug ? WGL_CONTEXT_DEBUG_BIT_ARB : 0,
@@ -959,7 +990,7 @@ bool Win32GLVideo::InitHardware (HWND Window, int multisample)
 	}
 	// We get here if the driver doesn't support the modern context creation API which always means an old driver.
 	vid_renderer = 0;
-	I_Error ("R_OPENGL: Unable to create an OpenGL render context. Insufficient driver support for context creation. Reverting to software mode...\n");
+	I_Error("R_OPENGL: Unable to create an OpenGL render context. Insufficient driver support for context creation. Reverting to software mode...\n");
 	return false;
 }
 

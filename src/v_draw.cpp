@@ -78,24 +78,67 @@ CUSTOM_CVAR(Int, uiscale, 0, CVAR_ARCHIVE | CVAR_NOINITCALL)
 	setsizeneeded = true;
 }
 
+//int GetUIScale(int altval)
+//{
+//	int scaleval;
+//	if (altval > 0) scaleval = altval;
+//	else if (uiscale == 0)
+//	{
+//		// Default should try to scale to 640x400
+//
+//		int vscale = screen->GetHeight() / 400;
+//		int hscale = screen->GetWidth() / 640;
+//		scaleval = clamp(vscale, 1, hscale);
+//	}
+//	else scaleval = uiscale;
+//
+//	// block scales that result in something larger than the current screen.
+//	int vmax = screen->GetHeight() / 200;
+//	int hmax = screen->GetWidth() / 320;
+//	int max = MAX(vmax, hmax);
+//	return MAX(1,MIN(scaleval, max));
+//}
+
 int GetUIScale(int altval)
 {
 	int scaleval;
+
+	// If screen is NULL during mid-game resolution switches, 
+	// using screen->GetHeight() or screen->GetWidth() triggers a fatal 
+	// Access Violation crash (0xC0000005). Intercept it with a safe 
+	// fallback parsing stable global DisplayWidth / DisplayHeight registries
+	int safeWidth = 640;   // Safe fallback setup baseline width
+	int safeHeight = 400;  // Safe fallback setup baseline height
+
+	if (screen != nullptr) // If the primary framebuffer object pointer is alive and active in RAM...
+	{
+		safeWidth = screen->GetWidth();   // Use vanilla layout
+		safeHeight = screen->GetHeight(); // Use vanilla layout
+	}
+	else // If screen is currently NULL during live OpenGL context recreation...
+	{
+		// Extract the physical window sizes directly from the un-corrupted global display registry
+		safeWidth = (DisplayWidth > 0) ? DisplayWidth : 640;
+		safeHeight = (DisplayHeight > 0) ? DisplayHeight : 400;
+	}
+
 	if (altval > 0) scaleval = altval;
 	else if (uiscale == 0)
 	{
 		// Default should try to scale to 640x400
-		int vscale = screen->GetHeight() / 400;
-		int hscale = screen->GetWidth() / 640;
+		// Secured using safe localized dimensions registers instead of naked screen pointers
+		int vscale = safeHeight / 400;
+		int hscale = safeWidth / 640;
 		scaleval = clamp(vscale, 1, hscale);
 	}
 	else scaleval = uiscale;
 
 	// block scales that result in something larger than the current screen.
-	int vmax = screen->GetHeight() / 200;
-	int hmax = screen->GetWidth() / 320;
+	// Secured using safe synchronized hardware layout limits!
+	int vmax = safeHeight / 200;
+	int hmax = safeWidth / 320;
 	int max = MAX(vmax, hmax);
-	return MAX(1,MIN(scaleval, max));
+	return MAX(1, MIN(scaleval, max));
 }
 
 // [RH] Stretch values to make a 320x200 image best fit the screen
