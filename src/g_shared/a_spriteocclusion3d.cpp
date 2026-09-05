@@ -2480,30 +2480,31 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool &out
 
 	// 1. UNIVERSAL SIZE ADAPTATION (STATIC BACKUP)
 	const float spriteSize = (thing->radius + thing->Height) * 0.5f;
-	const bool  isMicroSprite = (spriteSize < 12.0f);
-	const bool  isTinySprite = (spriteSize >= 12.0f && spriteSize < 18.0f);
-	const bool  isSmallSprite = (spriteSize >= 18.0f && spriteSize < 38.0f);
+
+	const bool  isMicroSprite  = (spriteSize < 12.0f);
+	const bool  isTinySprite   = (spriteSize >= 12.0f && spriteSize < 18.0f);
+	const bool  isSmallSprite  = (spriteSize >= 18.0f && spriteSize < 38.0f);
 	const bool  isMediumSprite = (spriteSize >= 38.0f && spriteSize < 45.0f);
-	const bool  isLargeSprite = (spriteSize >= 45.0f && spriteSize < 60.0f);
-	const bool  isHugeSprite = (spriteSize >= 60.0f);
+	const bool  isLargeSprite  = (spriteSize >= 45.0f && spriteSize < 60.0f);
+	const bool  isHugeSprite   = (spriteSize >= 60.0f);
 
 	// Base Scales for test point offsets - kept static for reliable deep niche capture
-	float                      spriteScale = 12.5f;
-	if      (isTinySprite)     spriteScale = 9.5f;
-	else if (isSmallSprite)    spriteScale = 8.5f;
-	else if (isMediumSprite)   spriteScale = 7.7f;
-	else if (isLargeSprite)    spriteScale = 5.4f;
-	else if (isHugeSprite)     spriteScale = 2.15f;
+	float                      spriteScale = 5.5f;  // 12.5f old val
+	if      (isTinySprite)     spriteScale = 4.5f;   // 9.5f old val
+	else if (isSmallSprite)    spriteScale = 3.5f;   // 8.5f old val
+	else if (isMediumSprite)   spriteScale = 2.7f;   // 7.7f old val
+	else if (isLargeSprite)    spriteScale = 1.4f;   // 5.4 old val
+	else if (isHugeSprite)     spriteScale = 0.75f;  // 2.15f old val
 
 	float adjustedRadius = thing->radius * spriteScale;
 
 	// Scale for the "Kill Zone"
-	float                      strictZoneScale = 12.5f;
-	if      (isTinySprite)     strictZoneScale = 9.5f;
-	else if (isSmallSprite)    strictZoneScale = 7.5f;
-	else if (isMediumSprite)   strictZoneScale = 5.7f;
-	else if (isLargeSprite)    strictZoneScale = 4.4f;
-	else if (isHugeSprite)     strictZoneScale = 2.15f;
+	float                      strictZoneScale = 5.5f; // 12.5f old val
+	if      (isTinySprite)     strictZoneScale = 4.5f;  // 9.5f old val
+	else if (isSmallSprite)    strictZoneScale = 3.5f;  // 7.5f old val
+	else if (isMediumSprite)   strictZoneScale = 2.7f;  // 5.7 old val
+	else if (isLargeSprite)    strictZoneScale = 1.4f;  // 4.4f old val
+	else if (isHugeSprite)     strictZoneScale = 0.75f; // 2.15f old val
 
 	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
 
@@ -2582,13 +2583,56 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool &out
 				float dyToThing = evalY - thingY;
 				float distToThingSq = (dxToThing * dxToThing) + (dyToThing * dyToThing);
 
+
+				// --- The old agressive block --------------------------------------------------
+				//	// Culls too much in narrow spaces on walls that are parallel to the view.
+				//if (distToThingSq > strictZoneSq)
+				//{
+				//	continue;
+				//}
+				//	// Only count those 2S lines that got in the responsibility zone
+				//totalLinesEvaluated++;
+				// ------------------------------------------------------------------------------
+
+				// --- The new dot crossed based block ------------------------------------------
 				if (distToThingSq > strictZoneSq)
+				{
+					continue;
+				}
+
+				// --- NARROW CORRIDOR VECTOR FILTER ---
+				// Eliminate side walls that run parallel to the line of sight and do not obstruct the view.
+				float dirX = thingX - viewerX;
+				float dirY = thingY - viewerY;
+				float len = sqrtf(dirX * dirX + dirY * dirY);
+				if (len > 0.0f) { dirX /= len; dirY /= len; }
+
+				// Vector from viewer to the evaluated midpoint of the 2-sided line
+				float toWallX = evalX - viewerX;
+				float toWallY = evalY - viewerY;
+
+				// Reject lines that are located deep behind the sprite relative to the viewer's position
+				float proj = (toWallX * dirX) + (toWallY * dirY);
+				if (proj > len + 16.0f)
+				{
+					continue;
+				}
+
+				// Evaluate perpendicular offset distance to isolate flanking hallway walls
+				float normX = -dirY;
+				float normY = dirX;
+				float crossDist = fabsf((toWallX * normX) + (toWallY * normY));
+
+				// If the line is further to the side than the actual sprite radius, it's a side wall
+				if (crossDist > (thing->radius + 8.0f))
 				{
 					continue;
 				}
 
 				// Only count those 2S lines that got in the responsibility zone
 				totalLinesEvaluated++;
+				// ------------------------------------------------------------------------------
+
 
 				// 4. ADVANCED MID-TEXTURE PROXIMITY CULL FILTER
 				bool lineContainsValidMidTex = false;
@@ -4535,8 +4579,8 @@ bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thin
 static int resetCounter = -1;
 void ResetAnamorphCache()
 {
-	// Only reset 1-8 caches per frame to spread out the cost
-	switch (resetCounter % 8)
+	// Only reset 1-9 caches per frame to spread out the cost
+	switch (resetCounter % 9)
 	{
 	case 0:
 		Visibility1sidedCache.Clear(0);
