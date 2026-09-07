@@ -280,11 +280,12 @@ CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 GLFlat* g_isCurrentlyGL1xDynlightFlatDrawing = nullptr;        // for GL1x/GL2x modes only
 GLWall* g_isCurrentlyGL1xDynlightWallDrawing = nullptr;        // for GL1x/GL2x modes only
 bool g_isCurrentlyGL1xFlatsDynlightOverbrightPass = false;     // for GL1x/GL2x modes only
-bool g_isCurrentlyGL1xWallsDynlightOverbrightPass = false;     // for GL1x/GL2x modes only 
+bool g_isCurrentlyGL1xWallsDynlightOverbrightPass = false;     // for GL1x/GL2x modes only
+bool g_isGL1xDynlightAcamglow = false;                         // for GL1x/GL2x modes only
 extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes (in gl_flats.cpp, Draw method)
 extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes (in gl_walls_draw.cpp, Draw method)
 
-float distLight2Wall, distLight2Flat = 0.0f;
+float distLight2Wall, distLight2Flat, radiusWalls, radiusFlats = 0.0f;
 
 
 //==========================================================================
@@ -1053,13 +1054,13 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	DVector3 lpos = light->PosRelative(group);
 
 	distLight2Wall = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
-	float radius = light->GetRadius();
+	radiusWalls = light->GetRadius();
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+	if (light != nullptr && light->IsCamGlowStraight()) { radiusWalls *= 0.5f; g_isGL1xDynlightAcamglow = true; }
 
-	if (radius <= 0.f) return false;
-	if (distLight2Wall > radius) return false;
+	if (radiusWalls <= 0.f) return false;
+	if (distLight2Wall > radiusWalls) return false;
 	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y))
 	{
 		return false;
@@ -1073,15 +1074,15 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	FLightColorContext colorCtx(light);
 
 	// Decrease distance to dynlight to have a richer color saturation in the far
-	float                                             distFactor = 1.0f;
-	if      (radius >= 384.0f && radius <= 800.0f)    distFactor = 0.88f;
-	else if (radius >= 800.0f && radius <= 1600.0f)   distFactor = 0.77f;
-	else if (radius >= 1600.0f && radius <= 3000.0f)  distFactor = 0.74f;
-	else if (radius >= 3000.0f && radius <= 6000.0f)  distFactor = 0.72f;
-	else if (radius >= 6000.0f && radius <= 12000.0f) distFactor = 0.67f;
-	else if (radius >= 12000.0f)                      distFactor = 0.64f;
+	float                                                       distFactor = 1.0f;
+	if      (radiusWalls >= 384.0f && radiusWalls <= 800.0f)    distFactor = 0.88f;
+	else if (radiusWalls >= 800.0f && radiusWalls <= 1600.0f)   distFactor = 0.77f;
+	else if (radiusWalls >= 1600.0f && radiusWalls <= 3000.0f)  distFactor = 0.74f;
+	else if (radiusWalls >= 3000.0f && radiusWalls <= 6000.0f)  distFactor = 0.72f;
+	else if (radiusWalls >= 6000.0f && radiusWalls <= 12000.0f) distFactor = 0.67f;
+	else if (radiusWalls >= 12000.0f)                           distFactor = 0.64f;
 
-	scale = 1.0f / ((2.25f * radius) - (distLight2Wall * distFactor));
+	scale = 1.0f / ((2.25f * radiusWalls) - (distLight2Wall * distFactor));
 
 	pos = { (float)lpos.X, (float)lpos.Z, (float)lpos.Y };
 	fn = p.Normal();
@@ -1184,14 +1185,14 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	if (gl_legacy_dynlight_compress_range && colorCtx.chroma >= 0.10f)
 	{
 		// Compress range and make darker lit surfaces brighter and saturated
-		float lightRatio = distLight2Wall / radius;
+		float lightRatio = distLight2Wall / radiusWalls;
 		if      (lightRatio > 1.0f) lightRatio = 1.0f;
 		else if (lightRatio < 0.0f) lightRatio = 0.0f;
 		cs = 0.75f - powf(lightRatio, 2.75f);
 	}
 	else
 	{
-		cs = 1.0f - (distLight2Wall / radius);
+		cs = 1.0f - (distLight2Wall / radiusWalls);
 	}
 	if (additive) cs *= 0.2f;
 	if (colorCtx.chroma >= 0.10f) cs *= gl_legacy_dynlight_brightness;
@@ -1220,19 +1221,19 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	else if ((float)lightlevelwall >= upperBound)
 	{
 		// 2. PURE BRIGHT ZONE: 100% tamed formulas and full bright saturation modifier
-		if (radius >= 384.0f && radius <= 800.0f)
+		if (radiusWalls >= 384.0f && radiusWalls <= 800.0f)
 		{
 			r = light->GetRed() * invMul286 * cs;
 			g = light->GetGreen() * invMul286 * cs;
 			b = light->GetBlue() * invMul286 * cs;
 		}
-		else if (radius >= 800.0f && radius <= 1600.0f)
+		else if (radiusWalls >= 800.0f && radiusWalls <= 1600.0f)
 		{
 			r = light->GetRed() * invMul322 * cs;
 			g = light->GetGreen() * invMul322 * cs;
 			b = light->GetBlue() * invMul322 * cs;
 		}
-		else if (radius >= 1600.0f)
+		else if (radiusWalls >= 1600.0f)
 		{
 			r = light->GetRed() * invMul424 * cs;
 			g = light->GetGreen() * invMul424 * cs;
@@ -1261,11 +1262,11 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		float b_full = colorCtx.b * cs;
 
 		float r_tame, g_tame, b_tame;
-		if (radius >= 384.0f && radius <= 800.0f)
+		if (radiusWalls >= 384.0f && radiusWalls <= 800.0f)
 		{ r_tame = light->GetRed() * invMul286 * cs; g_tame = light->GetGreen() * invMul286 * cs; b_tame = light->GetBlue() * invMul286 * cs; }
-		else if (radius >= 800.0f && radius <= 1600.0f)
+		else if (radiusWalls >= 800.0f && radiusWalls <= 1600.0f)
 		{ r_tame = light->GetRed() * invMul322 * cs; g_tame = light->GetGreen() * invMul322 * cs; b_tame = light->GetBlue() * invMul322 * cs; }
-		else if (radius >= 1600.0f)
+		else if (radiusWalls >= 1600.0f)
 		{ r_tame = light->GetRed() * invMul424 * cs; g_tame = light->GetGreen() * invMul424 * cs; b_tame = light->GetBlue() * invMul424 * cs; }
 		else
 		{ r_tame = r_full; g_tame = g_full; b_tame = b_full; }
@@ -1277,14 +1278,14 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	}
 
 	// Route final pipeline colors with pre-calculated context and radius constraints
-	gl_dynlightSaturateLegacy(r, g, b, current_boost, radius, colorCtx);
+	gl_dynlightSaturateLegacy(r, g, b, current_boost, radiusWalls, colorCtx);
 
 	// We need this for huge dynlights not to overexposure the walls mirrored surfaces
 	if (g_isCurrentlyGL1xDynlightWallDrawing != nullptr)
 	{
 		if (isTrueTranslucentWall)
 		{
-			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radius, !isTrueTranslucentWall);
+			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radiusWalls, !isTrueTranslucentWall);
 		}
 	}
 
@@ -1350,13 +1351,13 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	DVector3 lpos = light->PosRelative(group);
 
 	distLight2Flat = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
-	float radius = light->GetRadius();
+	radiusFlats = light->GetRadius();
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+	if (light != nullptr && light->IsCamGlowStraight()) { radiusFlats *= 0.5f; g_isGL1xDynlightAcamglow = true; }
 
-	if (radius <= 0.f) return false;
-	if (distLight2Flat > radius) return false;
+	if (radiusFlats <= 0.f) return false;
+	if (distLight2Flat > radiusFlats) return false;
 	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y))
 	{
 		return false;
@@ -1370,15 +1371,15 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	FLightColorContext colorCtx(light);
 
 	// Decrease distance to dynlight to have a richer color saturation in the far
-	float                                             distFactor = 1.0f;
-	if      (radius >= 384.0f && radius <= 800.0f)    distFactor = 0.88f;
-	else if (radius >= 800.0f && radius <= 1600.0f)   distFactor = 0.77f;
-	else if (radius >= 1600.0f && radius <= 3000.0f)  distFactor = 0.74f;
-	else if (radius >= 3000.0f && radius <= 6000.0f)  distFactor = 0.72f;
-	else if (radius >= 6000.0f && radius <= 12000.0f) distFactor = 0.67f;
-	else if (radius >= 12000.0f)                      distFactor = 0.64f;
+	float                                                       distFactor = 1.0f;
+	if      (radiusFlats >= 384.0f && radiusFlats <= 800.0f)    distFactor = 0.88f;
+	else if (radiusFlats >= 800.0f && radiusFlats <= 1600.0f)   distFactor = 0.77f;
+	else if (radiusFlats >= 1600.0f && radiusFlats <= 3000.0f)  distFactor = 0.74f;
+	else if (radiusFlats >= 3000.0f && radiusFlats <= 6000.0f)  distFactor = 0.72f;
+	else if (radiusFlats >= 6000.0f && radiusFlats <= 12000.0f) distFactor = 0.67f;
+	else if (radiusFlats >= 12000.0f)                           distFactor = 0.64f;
 
-	scale = 1.0f / ((2.25f * radius) - (distLight2Flat * distFactor));
+	scale = 1.0f / ((2.25f * radiusFlats) - (distLight2Flat * distFactor));
 
 	pos = { (float)lpos.X, (float)lpos.Z, (float)lpos.Y };
 	fn = p.Normal();
@@ -1536,14 +1537,14 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	if (gl_legacy_dynlight_compress_range && colorCtx.chroma >= 0.10f)
 	{
 		// Compress range and make darker lit surfaces brighter and saturated
-		float    lightRatio = distLight2Flat / radius;
+		float    lightRatio = distLight2Flat / radiusFlats;
 		if      (lightRatio > 1.0f) lightRatio = 1.0f;
 		else if (lightRatio < 0.0f) lightRatio = 0.0f;
 		cs = 0.75f - powf(lightRatio, 2.75f);
 	}
 	else
 	{
-		cs = 1.0f - (distLight2Flat / radius);
+		cs = 1.0f - (distLight2Flat / radiusFlats);
 	}
 	if (additive) cs *= 0.2f;
 	if (colorCtx.chroma >= 0.10f) cs *= gl_legacy_dynlight_brightness;
@@ -1572,19 +1573,19 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	else if ((float)lightlevelflat >= upperBound)
 	{
 		// 2. PURE BRIGHT ZONE: 100% tamed formulas and full bright saturation modifier
-		if (radius >= 384.0f && radius <= 800.0f)
+		if (radiusFlats >= 384.0f && radiusFlats <= 800.0f)
 		{
 			r = light->GetRed() * invMul284 * cs;
 			g = light->GetGreen() * invMul284 * cs;
 			b = light->GetBlue() * invMul284 * cs;
 		}
-		else if (radius >= 800.0f && radius <= 1600.0f)
+		else if (radiusFlats >= 800.0f && radiusFlats <= 1600.0f)
 		{
 			r = light->GetRed() * invMul322 * cs;
 			g = light->GetGreen() * invMul322 * cs;
 			b = light->GetBlue() * invMul322 * cs;
 		}
-		else if (radius >= 1600.0f)
+		else if (radiusFlats >= 1600.0f)
 		{
 			r = light->GetRed() * invMul444 * cs;
 			g = light->GetGreen() * invMul444 * cs;
@@ -1613,11 +1614,11 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		float b_full = colorCtx.b * cs;
 
 		float r_tame, g_tame, b_tame;
-		if (radius >= 384.0f && radius <= 800.0f)
+		if (radiusFlats >= 384.0f && radiusFlats <= 800.0f)
 		{ r_tame = light->GetRed() * invMul284 * cs; g_tame = light->GetGreen() * invMul284 * cs; b_tame = light->GetBlue() * invMul284 * cs; }
-		else if (radius >= 800.0f && radius <= 1600.0f)
+		else if (radiusFlats >= 800.0f && radiusFlats <= 1600.0f)
 		{ r_tame = light->GetRed() * invMul322 * cs; g_tame = light->GetGreen() * invMul322 * cs; b_tame = light->GetBlue() * invMul322 * cs; }
-		else if (radius >= 1600.0f)
+		else if (radiusFlats >= 1600.0f)
 		{ r_tame = light->GetRed() * invMul444 * cs; g_tame = light->GetGreen() * invMul444 * cs; b_tame = light->GetBlue() * invMul444 * cs; }
 		else
 		{ r_tame = r_full; g_tame = g_full; b_tame = b_full; }
@@ -1629,14 +1630,14 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	}
 
 	// Route final pipeline colors into the custom saturation encapsulation pass with radius constraints
-	gl_dynlightSaturateLegacy(r, g, b, current_boost, radius, colorCtx);
+	gl_dynlightSaturateLegacy(r, g, b, current_boost, radiusFlats, colorCtx);
 
 	// We need this for huge dynlights not to overexposure the flat mirrored surfaces
 	if (g_isCurrentlyGL1xDynlightFlatDrawing != nullptr)
 	{
 		if (isTrueTranslucentFlat)
 		{
-			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radius, !isTrueTranslucentFlat);
+			gl_dynlightTameBigLightsOnMirroredSurfacesLegacy(light, r, g, b, radiusFlats, !isTrueTranslucentFlat);
 		}
 	}
 
@@ -2092,8 +2093,8 @@ bool gl_SetupLightTexture()
 //==========================================================================
 bool gl_GetWallStaticLightmaps(seg_t *seg, float ztop, float zbottom, float *topLightmapColor, float *bottomLightmapColor)
 {
-	// STRICT CHECK: Run ONLY in legacy engine mode to protect shader pipelines
-	if (!gl.legacyMode || !seg || !seg->sidedef || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
+	if (g_isGL1xDynlightAcamglow) return false;
+	if (!seg || !seg->sidedef || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
 
 	topLightmapColor[0] = topLightmapColor[1] = topLightmapColor[2] = 0.0f;
 	bottomLightmapColor[0] = bottomLightmapColor[1] = bottomLightmapColor[2] = 0.0f;
@@ -2169,7 +2170,8 @@ bool gl_GetWallStaticLightmaps(seg_t *seg, float ztop, float zbottom, float *top
 
 bool gl_GetFlatStaticLightmaps(subsector_t *sub, const GLSectorPlane &secPlane, float *lightmapColor)
 {
-	if (!gl.legacyMode || !sub || !sub->sector || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
+	if (g_isGL1xDynlightAcamglow) return false;
+	if (!sub || !sub->sector || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
 
 	lightmapColor[0] = lightmapColor[1] = lightmapColor[2] = 0.0f;
 	bool hasStaticLight = false;
@@ -2596,9 +2598,14 @@ bool GLFlat::PutFlatCompat(bool fog)
 
 	// Are lights possible?
 	// remove "|| sector->lighthead == NULL" from the condition, otherwise distant foggy dynlight surfaces
-	// lose fog intensity abrub
+	// lose fog intensity abruptly.
+	//if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent ||
+	//	alpha < 1.f - FLT_EPSILON || sector->lighthead == NULL) return false;
+
+	// That made game slower by 20-30% on regular maps without big radius dynlights, so
+	bool skiplightprocessing = sector->lighthead == NULL && (radiusFlats <= 256.0f || !g_isGL1xDynlightAcamglow);
 	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent ||
-		alpha < 1.f - FLT_EPSILON) return false;
+		alpha < 1.f - FLT_EPSILON || skiplightprocessing) return false;
 
 	static int list_indices[2][2] =
 	{ { GLLDL_FLATS_PLAIN, GLLDL_FLATS_FOG },{ GLLDL_FLATS_MASKED, GLLDL_FLATS_FOGMASKED } };
