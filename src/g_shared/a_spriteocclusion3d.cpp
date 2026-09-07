@@ -2793,21 +2793,20 @@ struct ObstructionData2Sided
 		isProjectileBehindObstacle = false;
 	}
 
-	void Update2sidedTallObstructions(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point)
+	void ResetObstructionData2Sided()
 	{
-		// Determine sprite classification
-		// Must be done via "AND" but "OR" works better
-		const bool isLegacyProjectile =
-			(thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
-			(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
-			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
+		minFloor = FLT_MAX;
+		maxFloor = -FLT_MAX;       // Start with absolute empty abyss (-FLT_MAX)
+		minCeiling = FLT_MAX;      // Start with absolute open sky (FLT_MAX)
+		maxCeiling = -FLT_MAX;
+		valid = false;
+		isTightSector = false;
+		isPlatformTooHigh = false;
+		isProjectileBehindObstacle = false;
+	}
 
-		float spriteSize = (thing->radius + thing->Height) * 0.5f;
-		const bool isSmallSprite = (spriteSize <= 18.0f);
-		const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 40.0f);
-		const bool isLargeSprite = (spriteSize > 40.0f);
-		const bool isRegularMonster = !isSmallSprite && !isLegacyProjectile;
-
+	void Update2sObstrProjectiles(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point)
+	{
 		float EyeHeight = 41.0f;
 		if (viewer->player && viewer->player->mo)
 		{
@@ -2834,8 +2833,6 @@ struct ObstructionData2Sided
 		float sprTopAdj = spriteTop + Ztolerance2sided;
 		float spriteMid = spriteBottom + ((spriteTop - spriteBottom) * 0.5f);
 
-		//Printf("Viewer Info -> Bottom: %.2f | Top: %.2f | EyeHeight: %.2f | Class: %s\n", viewerBottom, viewerTop, EyeHeight, viewer->GetClass()->TypeName.GetChars());
-
 		const FVector2 clamped =
 		{
 			clamp<float>(point.X, MINCOORD2SIDED, MAXCOORD2SIDED),
@@ -2845,18 +2842,12 @@ struct ObstructionData2Sided
 		float ceilingHeightInitial = sector->ceilingplane.ZatPoint(clamped.X, clamped.Y);
 		float floorHeightInitial = sector->floorplane.ZatPoint(clamped.X, clamped.Y);
 
-		// If the sector clearance is tightly shut or restricted within 8 units,
-		// we flag it to prevent extreme anamorphic scaling from breaching closed doors/lifts.
 		if ((ceilingHeightInitial - floorHeightInitial) <= 8.0f)
 		{
-			isTightSector = true;
+			this->isTightSector = true;
 		}
 
-		// ==========================================================================
 		// 3D-FLOOR LEDGE & CEILING BEAM OVERRIDE
-		// Fixes both vertical extremes:
-		// 1. When a 3D floor sits directly on the sector floor (solid steps).
-		// 2. When a 3D floor is flush with the sector ceiling (hanging architectural beams).
 		if (sector->e && sector->e->XFloor.ffloors.Size() > 0)
 		{
 			for (auto& floor : sector->e->XFloor.ffloors)
@@ -2867,94 +2858,126 @@ struct ObstructionData2Sided
 				float f3d_bottom = floor->bottom.plane->ZatPoint(clamped.X, clamped.Y);
 				float f3d_top = floor->top.plane->ZatPoint(clamped.X, clamped.Y);
 
-				// Case A: 3D floor is flush with the sector FLOOR (Solid step/ledge)
 				if (fabs(f3d_bottom - floorHeightInitial) <= 1.0f)
 				{
-					if (f3d_top > viewerTopAdj)
-					{
-						// Forcefully lift the mathematical floor obstruction to the top of the 3D slab
-						floorHeightInitial = MAX(floorHeightInitial, f3d_top);
-					}
+					if (f3d_top > viewerTopAdj) floorHeightInitial = MAX(floorHeightInitial, f3d_top);
 				}
 
-				// Case B: 3D floor is flush with the sector CEILING (Hanging solid beam/roof)
 				if (fabs(f3d_top - ceilingHeightInitial) <= 1.0f)
 				{
-					if (f3d_bottom < viewerBottomAdj)
-					{
-						// Forcefully push the mathematical ceiling obstruction down to the bottom of the 3D slab
-						ceilingHeightInitial = MIN(ceilingHeightInitial, f3d_bottom);
-					}
+					if (f3d_bottom < viewerBottomAdj) ceilingHeightInitial = MIN(ceilingHeightInitial, f3d_bottom);
 				}
 			}
 		}
-		// ==========================================================================
 
-		if (isLegacyProjectile)
+		// What this block also does is that in case projectile
+		// is exploded in FRONT OF YOU and NOT an obstacle - uncull it too
+		FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
+		FVector2 tP = { (float)thing->X(), (float)thing->Y() };
+
+		float d2LineSq = (vP - clamped).LengthSquared();
+		float d2ThingSq = (vP - tP).LengthSquared();
+
+		// 1. SKIP if the line is BEHIND the sprite
+		if (d2LineSq > (d2ThingSq + 16.0f)) return;
+
+		// 2. NEW: SKIP if the line is NOT an actual vertical obstruction
+		bool blocksFloor = (floorHeightInitial > sprBottomAdj + 2.0f);
+		bool blocksCeil = (ceilingHeightInitial < sprTopAdj - 2.0f);
+
+		if (!blocksFloor && !blocksCeil) return; // Path is clear, skip this line
+
+		// 3. REST OF THE LOGIC
+		maxFloor = MAX(maxFloor, floorHeightInitial);
+		minCeiling = MIN(minCeiling, ceilingHeightInitial);
+		valid = true;
+
+		float diffToFloor = (float)fabs(sprBottomAdj - floorHeightInitial);
+		float diffToCeil = (float)fabs(sprTopAdj - ceilingHeightInitial);
+
+		float d2LineCenterSq = (tP - clamped).LengthSquared();
+
+		if (d2LineCenterSq < 64.0f)
 		{
-			// What this block also does is that in case projectile
-			// is exploded in FRONT OF YOU and NOT an obstacle - uncull it too
-			FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
-			FVector2 tP = { (float)thing->X(), (float)thing->Y() };
-
-			float d2LineSq = (vP - clamped).LengthSquared();
-			float d2ThingSq = (vP - tP).LengthSquared();
-
-			// 1. SKIP if the line is BEHIND the sprite
-			if (d2LineSq > (d2ThingSq + 16.0f)) return;
-
-			// 2. NEW: SKIP if the line is NOT an actual vertical obstruction
-			bool blocksFloor = (floorHeightInitial > sprBottomAdj + 2.0f);
-			bool blocksCeil = (ceilingHeightInitial < sprTopAdj - 2.0f);
-
-			if (!blocksFloor && !blocksCeil) return; // Path is clear, skip this line
-
-			// --- PRINTF: TRIGGER DATA ---
-			// We only get here if the line is BETWEEN you and the sprite AND it has a height gap
-			//Printf("PROJ_SCAN: %s | Floor: %.2f | SprAdjBtm: %.2f | blocksF: %d\n", 
-			//       thing->GetClass()->TypeName.GetChars(), floorHeightInitial, sprBottomAdj, blocksFloor);
-
-			// 3. REST OF THE LOGIC
-			this->maxFloor = MAX(this->maxFloor, floorHeightInitial);
-			this->minCeiling = MIN(this->minCeiling, ceilingHeightInitial);
-
-			float diffToFloor = (float)fabs(sprBottomAdj - floorHeightInitial);
-			float diffToCeil = (float)fabs(sprTopAdj - ceilingHeightInitial);
-
-			float d2LineCenterSq = (tP - clamped).LengthSquared();
-
-			if (d2LineCenterSq < 64.0f)
+			if (diffToFloor > 32.0f || diffToCeil > 32.0f)
 			{
-				// Now it will only trigger if there's a real ledge (> 32 units)
-				if (diffToFloor > 32.0f || diffToCeil > 32.0f)
-				{
-					isProjectileBehindObstacle = true;
+				isProjectileBehindObstacle = true;
+			}
+		}
+	}
 
-					// --- PRINTF: CULLING EVENT ---
-					// This is what actually hides your explosion
-					// Printf("!!! CULLED !!! %s at [%.2f, %.2f] | DiffFloor: %.2f\n", 
-					//	thing->GetClass()->TypeName.GetChars(), (float)thing->X(), (float)thing->Y(), diffToFloor);
+	void Update2sObstrMisc(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point, float spriteTop)
+	{
+		float EyeHeight = 41.0f;
+		if (viewer->player && viewer->player->mo)
+		{
+			EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+		}
+
+		float viewerBottom = viewer->Z();
+		float viewerTop = viewerBottom + EyeHeight;
+		float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
+		float viewerTopAdj = viewerTop + Ztolerance2sided;
+
+		float spriteBottom;
+		if (thing->flags & MF_SPAWNCEILING)
+		{
+			spriteBottom = (float)thing->Z() - (float)thing->Height;
+		}
+		else
+		{
+			spriteBottom = (float)thing->Z();
+		}
+
+		const FVector2 clamped =
+		{
+			clamp<float>(point.X, MINCOORD2SIDED, MAXCOORD2SIDED),
+			clamp<float>(point.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
+		};
+
+		float ceilingHeightInitial = sector->ceilingplane.ZatPoint(clamped.X, clamped.Y);
+		float floorHeightInitial = sector->floorplane.ZatPoint(clamped.X, clamped.Y);
+
+		if ((ceilingHeightInitial - floorHeightInitial) <= 8.0f)
+		{
+			isTightSector = true;
+		}
+
+		// 3D-FLOOR LEDGE & CEILING BEAM OVERRIDE
+		if (sector->e && sector->e->XFloor.ffloors.Size() > 0)
+		{
+			for (auto& floor : sector->e->XFloor.ffloors)
+			{
+				if (!(floor->flags & FF_SOLID)) continue;
+				if (!floor->bottom.plane || !floor->top.plane) continue;
+
+				float f3d_bottom = floor->bottom.plane->ZatPoint(clamped.X, clamped.Y);
+				float f3d_top = floor->top.plane->ZatPoint(clamped.X, clamped.Y);
+
+				if (fabs(f3d_bottom - floorHeightInitial) <= 1.0f)
+				{
+					if (f3d_top > viewerTopAdj) floorHeightInitial = MAX(floorHeightInitial, f3d_top);
+				}
+
+				if (fabs(f3d_top - ceilingHeightInitial) <= 1.0f)
+				{
+					if (f3d_bottom < viewerBottomAdj) ceilingHeightInitial = MIN(ceilingHeightInitial, f3d_bottom);
 				}
 			}
 		}
 
 		float highestGameStep = 24.0f;
 		float diffOfHigestStepAndHorizon = EyeHeight - highestGameStep;
-		bool isPlatformTooHigh = (sprTopAdj - diffOfHigestStepAndHorizon + Ztolerance2sided) <= floorHeightInitial ||
-			(sprBottomAdj + diffOfHigestStepAndHorizon + Ztolerance2sided) >= ceilingHeightInitial;
+		isPlatformTooHigh = (spriteTop + Ztolerance2sided - diffOfHigestStepAndHorizon) <= floorHeightInitial ||
+			(spriteBottom + Ztolerance2sidedBot + diffOfHigestStepAndHorizon) >= ceilingHeightInitial;
 
-		
-		// This block below fixes leaks on Doom2 Remake Map12
-		// Calculate exact quadratic distances from the viewer to the intersection line and to the sprite
 		FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
 		FVector2 tP = { (float)thing->X(), (float)thing->Y() };
 		float d2LineSq = (vP - clamped).LengthSquared();
 		float d2ThingSq = (vP - tP).LengthSquared();
 
-		// RULE 1: YOU MUST NOT CULL IF THE TWO-SIDED LINE IS LOCATED BEHIND THE SPRITE
 		if (d2LineSq > (d2ThingSq + 16.0f)) return;
 
-		// Calculate linear percentage (t) of where the intersection line sits along the sight ray (0.0 to 1.0)
 		float t_intersect = 0.0f;
 		if (d2ThingSq > 0.1f)
 		{
@@ -2962,36 +2985,39 @@ struct ObstructionData2Sided
 			t_intersect = clamp<float>(t_intersect, 0.0f, 1.0f);
 		}
 
-		// Linearly interpolate the exact mathematical height of the view ray at the intersection point.
+		float spriteMid = spriteBottom + ((spriteTop - spriteBottom) * 0.5f);
 		float rayAbsoluteZAtLine = viewerTop + (spriteMid - viewerTop) * t_intersect;
 		float highestFloor = floorHeightInitial;
 
 		bool rayIsBlockedByFloorLedge = (highestFloor >= rayAbsoluteZAtLine - 8.0f);
 		bool rayIsBlockedByCeilingBeam = (ceilingHeightInitial <= rayAbsoluteZAtLine + 8.0f);
 
-		// ============================================================================================
-		// Coplanar Ledge Gate] - Bypasses Blind Spots on Map19 Ceiling Steps (C320 vs C288)
-		// When the ceiling abruptly jumps up (e.g. from 288 to 320), the loose rayIsBlocked checks 
-		// evaluate the line as completely transparent, leaving 'valid' as false and skipping occlusion.
-		// We enforce a hard structural law: if the line's floor layout (highestFloor) stands physically 
-		// HIGHER than the viewer's absolute feet (viewerBottom) AND we are inside the target's proximity,
-		// it represents a solid lower barrier that blocks expanded bounding box edges. We FORCE register it.
-		// ============================================================================================
 		bool isCoplanarLedgeObstructingBottom = (highestFloor > (viewerBottom + Ztolerance2sidedBot)) &&
 			(highestFloor >= (spriteBottom - 16.0f));
 
 		if (rayIsBlockedByFloorLedge || rayIsBlockedByCeilingBeam || isCoplanarLedgeObstructingBottom)
 		{
-			// Calculate distance from the line intersect to the target sprite center
 			float lineToThingDistSq = (clamped - tP).LengthSquared();
 
-			// Only allow the line to lock a hard permanent obstruction if it sits near the target's portal cluster.
-			// 16384.0f equals a stable 128-unit radius envelope around the actor.
 			if (lineToThingDistSq <= 16384.0f || (thing->Sector == sector))
 			{
-				this->maxFloor = MAX(this->maxFloor, floorHeightInitial);
-				this->minCeiling = MIN(this->minCeiling, ceilingHeightInitial);
-				this->valid = true;
+				float thingFloor = (float)thing->Sector->floorplane.ZatPoint(thing->X(), thing->Y());
+				float viewerFloor = (float)viewer->Sector->floorplane.ZatPoint(viewer->X(), viewer->Y());
+				float baseTolerance = 4.0f;
+
+				// Empty space injection mapping
+				if (floorHeightInitial > (thingFloor + baseTolerance) || floorHeightInitial > (viewerFloor + baseTolerance))
+				{
+					maxFloor = MAX(maxFloor, floorHeightInitial);
+					minFloor = MIN(minFloor, floorHeightInitial);
+					valid = true;
+				}
+				if (ceilingHeightInitial < (spriteTop - baseTolerance))
+				{
+					minCeiling = MIN(minCeiling, ceilingHeightInitial);
+					maxCeiling = MAX(maxCeiling, ceilingHeightInitial);
+					valid = true;
+				}
 			}
 		}
 	}
@@ -3138,6 +3164,142 @@ static const FVector2 directionVectors[4] =
 	{-1.0f, 0.0f},  // West
 	{0.0f, -1.0f}   // North
 };
+
+void ResetObstructionData2Sided(ObstructionData2Sided& obs)
+{
+	obs.minFloor = FLT_MAX;
+	obs.maxFloor = -FLT_MAX;       // Start with absolute empty abyss (-FLT_MAX)
+	obs.minCeiling = FLT_MAX;      // Start with absolute open sky (FLT_MAX)
+	obs.maxCeiling = -FLT_MAX;
+	obs.valid = false;
+	obs.isTightSector = false;
+	obs.isPlatformTooHigh = false;
+	obs.isProjectileBehindObstacle = false;
+}
+
+void Update2sObstrMisc(ObstructionData2Sided& obs, AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point, float spriteTop)
+{
+	const bool islegacyversionprojectile =
+		(thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
+		(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
+		(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
+
+	if (islegacyversionprojectile) return;
+
+	float EyeHeight = 41.0f;
+	if (viewer->player && viewer->player->mo)
+	{
+		EyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+	}
+
+	float viewerBottom = viewer->Z();
+	float viewerTop = viewerBottom + EyeHeight;
+	float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
+	float viewerTopAdj = viewerTop + Ztolerance2sided;
+
+	float spriteBottom;
+	if (thing->flags & MF_SPAWNCEILING)
+	{
+		spriteBottom = (float)thing->Z() - (float)thing->Height;
+	}
+	else
+	{
+		spriteBottom = (float)thing->Z();
+	}
+
+	const FVector2 clamped =
+	{
+		clamp<float>(point.X, MINCOORD2SIDED, MAXCOORD2SIDED),
+		clamp<float>(point.Y, MINCOORD2SIDED, MAXCOORD2SIDED)
+	};
+
+	float ceilingHeightInitial = sector->ceilingplane.ZatPoint(clamped.X, clamped.Y);
+	float floorHeightInitial = sector->floorplane.ZatPoint(clamped.X, clamped.Y);
+
+	if ((ceilingHeightInitial - floorHeightInitial) <= 8.0f)
+	{
+		obs.isTightSector = true;
+	}
+
+	// 3D-FLOOR LEDGE & CEILING BEAM OVERRIDE
+	if (sector->e && sector->e->XFloor.ffloors.Size() > 0)
+	{
+		for (auto& floor : sector->e->XFloor.ffloors)
+		{
+			if (!(floor->flags & FF_SOLID)) continue;
+			if (!floor->bottom.plane || !floor->top.plane) continue;
+
+			float f3d_bottom = floor->bottom.plane->ZatPoint(clamped.X, clamped.Y);
+			float f3d_top = floor->top.plane->ZatPoint(clamped.X, clamped.Y);
+
+			if (fabs(f3d_bottom - floorHeightInitial) <= 1.0f)
+			{
+				if (f3d_top > viewerTopAdj) floorHeightInitial = MAX(floorHeightInitial, f3d_top);
+			}
+
+			if (fabs(f3d_top - ceilingHeightInitial) <= 1.0f)
+			{
+				if (f3d_bottom < viewerBottomAdj) ceilingHeightInitial = MIN(ceilingHeightInitial, f3d_bottom);
+			}
+		}
+	}
+
+	float highestGameStep = 24.0f;
+	float diffOfHigestStepAndHorizon = EyeHeight - highestGameStep;
+	obs.isPlatformTooHigh = (spriteTop + Ztolerance2sided - diffOfHigestStepAndHorizon) <= floorHeightInitial ||
+		(spriteBottom + Ztolerance2sidedBot + diffOfHigestStepAndHorizon) >= ceilingHeightInitial;
+
+	FVector2 vP = { (float)viewer->X(), (float)viewer->Y() };
+	FVector2 tP = { (float)thing->X(), (float)thing->Y() };
+	float d2LineSq = (vP - clamped).LengthSquared();
+	float d2ThingSq = (vP - tP).LengthSquared();
+
+	if (d2LineSq > (d2ThingSq + 16.0f)) return;
+
+	float t_intersect = 0.0f;
+	if (d2ThingSq > 0.1f)
+	{
+		t_intersect = sqrtf(d2LineSq / d2ThingSq);
+		t_intersect = clamp<float>(t_intersect, 0.0f, 1.0f);
+	}
+
+	float spriteMid = spriteBottom + ((spriteTop - spriteBottom) * 0.5f);
+	float rayAbsoluteZAtLine = viewerTop + (spriteMid - viewerTop) * t_intersect;
+	float highestFloor = floorHeightInitial;
+
+	bool rayIsBlockedByFloorLedge = (highestFloor >= rayAbsoluteZAtLine - 8.0f);
+	bool rayIsBlockedByCeilingBeam = (ceilingHeightInitial <= rayAbsoluteZAtLine + 8.0f);
+
+	bool isCoplanarLedgeObstructingBottom = (highestFloor > (viewerBottom + Ztolerance2sidedBot)) &&
+		(highestFloor >= (spriteBottom - 16.0f));
+
+	if (rayIsBlockedByFloorLedge || rayIsBlockedByCeilingBeam || isCoplanarLedgeObstructingBottom)
+	{
+		float lineToThingDistSq = (clamped - tP).LengthSquared();
+
+		if (lineToThingDistSq <= 16384.0f || (thing->Sector == sector))
+		{
+			float thingFloor = (float)thing->Sector->floorplane.ZatPoint(thing->X(), thing->Y());
+			float viewerFloor = (float)viewer->Sector->floorplane.ZatPoint(viewer->X(), viewer->Y());
+			float baseTolerance = 4.0f;
+
+			// Empty space injection mapping
+			if (floorHeightInitial > (thingFloor + baseTolerance) || floorHeightInitial > (viewerFloor + baseTolerance))
+			{
+				obs.maxFloor = MAX(obs.maxFloor, floorHeightInitial);
+				obs.minFloor = MIN(obs.minFloor, floorHeightInitial);
+				obs.valid = true;
+			}
+
+			if (ceilingHeightInitial < (spriteTop - baseTolerance))
+			{
+				obs.minCeiling = MIN(obs.minCeiling, ceilingHeightInitial);
+				obs.maxCeiling = MAX(obs.maxCeiling, ceilingHeightInitial);
+				obs.valid = true;
+			}
+		}
+	}
+}
 
 // Optimized Implementation of CheckLineOfSight2sided with extended radius
 static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
@@ -3318,12 +3480,15 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 
 							if (line->flags & ML_TWOSIDED)
 							{
-								if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
-								if (line->backsector) obsData.Update2sidedTallObstructions(thing, viewer, line->backsector, clamped);
+								if (line->frontsector) obsData.Update2sObstrProjectiles(thing, viewer, line->frontsector, clamped);
+								if (line->backsector) obsData.Update2sObstrProjectiles(thing, viewer, line->backsector, clamped);
+								if (line->frontsector) Update2sObstrMisc(obsData, thing, viewer, line->frontsector, clamped, spriteTop);
+								if (line->backsector)  Update2sObstrMisc(obsData, thing, viewer, line->backsector, clamped, spriteTop);
 							}
 							else if (line->frontsector)
 							{
-								obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+								obsData.Update2sObstrProjectiles(thing, viewer, line->frontsector, clamped);
+								Update2sObstrMisc(obsData, thing, viewer, line->frontsector, clamped, spriteTop);
 							}
 						}
 					}
@@ -3367,12 +3532,15 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 
 							if (line->flags & ML_TWOSIDED)
 							{
-								if (line->frontsector) obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
-								if (line->backsector) obsData.Update2sidedTallObstructions(thing, viewer, line->backsector, clamped);
+								if (line->frontsector) obsData.Update2sObstrProjectiles(thing, viewer, line->frontsector, clamped);
+								if (line->backsector) obsData.Update2sObstrProjectiles(thing, viewer, line->backsector, clamped);
+								if (line->frontsector) Update2sObstrMisc(obsData, thing, viewer, line->frontsector, clamped, spriteTop);
+								if (line->backsector)  Update2sObstrMisc(obsData, thing, viewer, line->backsector, clamped, spriteTop);
 							}
 							else if (line->frontsector)
 							{
-								obsData.Update2sidedTallObstructions(thing, viewer, line->frontsector, clamped);
+								obsData.Update2sObstrProjectiles(thing, viewer, line->frontsector, clamped);
+								Update2sObstrMisc(obsData, thing, viewer, line->frontsector, clamped, spriteTop);
 							}
 						}
 					}
@@ -3396,16 +3564,56 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	return true; // Clear line of sight
 }
 
-struct Visibility2sidedObstrCacheEntry
-{
-	int  lastMapTimeUpdateTick = -1;
-	bool cached2sidedObstrResult = true;
-};
-static TMap<AActor *, Visibility2sidedObstrCacheEntry> Visibility2sidedObstrCache;
+//struct Visibility2sidedObstrCacheEntry
+//{
+//	int  lastMapTimeUpdateTick = -1;
+//	bool cached2sidedObstrResult = true;
+//};
+//static TMap<AActor *, Visibility2sidedObstrCacheEntry> Visibility2sidedObstrCache;
 
 // this function determines visibility of sprites behind tall enough 2-sided-linedef based obstructions, call it like
 // that: bool visible2sideTallEnoughObstr =
 // IsSpriteVisibleBehind2sidedLinedefbasedSectorObstructions(r_viewpoint.camera, thing);
+
+//bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AActor *thing)
+//{
+//	if (!viewer || !thing || viewer == thing) return false;
+//	// !!! GEOMETRY RADAR IS NOT NEEDED HERE AS IT'S ONLY FOR LINE CROSSING CHECKS !!!
+//	// This function is called with "!" in front, that's why "return true" for early exit
+//	if (!IsSpriteInActivePortalGroup(thing, viewer)) return true;
+//	//if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_2SIDED_WALL)) return true;
+//
+//	// 1. Occlusion test - choose implementation based on toggle
+//	if (enableAnamorphCache)
+//	{
+//		// CACHED VERSION
+//		const int           currentMapTimeTick = level.maptime;
+//		Visibility2sidedObstrCacheEntry &entry = Visibility2sidedObstrCache[viewer, thing];
+//
+//		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 8)
+//		{
+//			return entry.cached2sidedObstrResult;
+//		}
+//
+//		entry.cached2sidedObstrResult = CheckLineOfSight2sided(viewer, thing);
+//		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+//		return entry.cached2sidedObstrResult;
+//	}
+//	else
+//	{
+//		// UNCACHED VERSION
+//		return CheckLineOfSight2sided(viewer, thing);
+//	}
+//}
+
+struct Visibility2sidedObstrCacheEntry
+{
+	int   lastMapTimeUpdateTick = -1;
+	bool  cached2sidedObstrResult = true;
+	float lastViewerEyeZ = 0.0f;
+};
+static TMap<AActor *, Visibility2sidedObstrCacheEntry> Visibility2sidedObstrCache;
+
 bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AActor *thing)
 {
 	if (!viewer || !thing || viewer == thing) return false;
@@ -3418,16 +3626,46 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AA
 	if (enableAnamorphCache)
 	{
 		// CACHED VERSION
-		const int           currentMapTimeTick = level.maptime;
+		const int currentMapTimeTick = level.maptime;
 		Visibility2sidedObstrCacheEntry &entry = Visibility2sidedObstrCache[viewer, thing];
 
-		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 8)
+		// Calculate exact raw camera eye height right now
+		float eyeHeight = 41.0f;
+		if (viewer->player && viewer->player->mo)
+		{
+			eyeHeight = (viewer->player->mo->FloatVar(NAME_ViewHeight) + viewer->player->crouchviewdelta);
+		}
+		float currentViewerEyeZ = (float)viewer->Z() + eyeHeight;
+
+		// ============================================================================================
+		// CPU-SAVING VERTICAL HYSTERESIS GATE (THE 48-UNIT THRESHOLD OVERRIDE)
+		// Evaluates sudden vertical camera spikes. To protect the CPU from aggressive recalculations 
+		// on minor ground bumps, stairs, or smooth crouching (e.g., 47 units), we retain the stable cache.
+		// We FORCE drop the lifespan to 0 ONLY during extreme, atypical vertical warps EXCEEDING 48 units.
+		// ============================================================================================
+		int dynamicTickLifespan = 8; // Default ultra-performance optimization window
+
+		if (entry.lastMapTimeUpdateTick != -1)
+		{
+			float verticalHeightDelta = fabsf(currentViewerEyeZ - entry.lastViewerEyeZ);
+
+			// Only accelerate the cache if a massive vertical shift occurs (> 48 units)
+			// Small bumps, standard stairs, and shallow crouches are completely ignored to save CPU cycles!
+			if (verticalHeightDelta > 48.0f)
+			{
+				dynamicTickLifespan = 0; // Force immediate cache invalidation on extreme vertical warps
+			}
+		}
+
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < dynamicTickLifespan)
 		{
 			return entry.cached2sidedObstrResult;
 		}
 
+		// Perform full geometric sweep and update the height-tracking registry
 		entry.cached2sidedObstrResult = CheckLineOfSight2sided(viewer, thing);
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		entry.lastViewerEyeZ = currentViewerEyeZ; // Seal current 3D vertical height context into the cache line
 		return entry.cached2sidedObstrResult;
 	}
 	else
