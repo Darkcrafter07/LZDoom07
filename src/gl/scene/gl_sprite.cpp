@@ -1171,15 +1171,13 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		float viewerBottom = viewer->Z(); float viewerTop = viewerBottom + EyeHeight;
 		float spriteBottom = thing->Z(); float spriteTop = thing->Top();
 
-		ExpandUndersizedSpriteDimensions(this, thing); // Mods have tiny radius on big sprites - LZDoom07 way
-		//ExpandUndersizedSpriteDimensions(thing); // Mods have tiny radius on big sprites - UZDoom way
 		extern bool hasSignificantNegativeOffset, isExpSprWorthMoreCull;
 		extern bool isMicroSprDimExp, isTinySprDimExp, isSmallSprDimExp, isMedSprDimExp, isOtherSprDimExp;
-		extern float spriteSizeExp, spriteRadiusExp; // MAKE SURE that it ASLO expands vanilla -
 		extern int spriteRasterXdimen, spriteRasterYdimen; // - sprites like bonus items (USEFUL)
-		if (spriteSizeExp > spriteSize) spriteSize = spriteSizeExp;         // - expand spriteSize
-		if (spriteRadiusExp > spriteRadius) spriteRadius = spriteRadiusExp; // - expand spriteRadius
+		extern float spriteSizeExp, spriteRadiusExp; // MAKE SURE that it ASLO expands vanilla sprites!
 
+		EvaluateSpritePropertiesFP(this, thing); // Mods have tiny radius on big sprites - LZDoom07 way
+		//EvaluateSpritePropertiesFP(thing); // Mods have tiny radius on big sprites - UZDoom way
 		// =*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*
 		// ******* REGULAR FP sprite projecting routine for SMALL NONCORPSE sprites OPTIMIZATION START *******
 		bool useRegularForcedPerspective(modelframe || isfloatingsprite || spriteRadius <= 12.0f &&
@@ -1230,6 +1228,11 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		else
 		{
 			// =================================== START TRUE Hybrid Forced-Perspective ===========================
+			ExpandUndersizedSpriteDimensions(this, thing); // Mods have tiny radius on big sprites - LZDoom07 way
+			//ExpandUndersizedSpriteDimensions(thing); // Mods have tiny radius on big sprites - UZDoom way
+			if (spriteSizeExp > spriteSize) spriteSize = spriteSizeExp;         // - expand spriteSize
+			if (spriteRadiusExp > spriteRadius) spriteRadius = spriteRadiusExp; // - expand spriteRadius
+
 			const float FP_CLOSER_LIMIT = 384.0f;  // Where Forced-Perspective coordinates without lift-up end (close-up)
 			const float SMART_START_DISTANCE = 1200.0f; // Where Smart-clip starts coordinates start to lift-up (far-side)
 			const float TRANSITION_WIDTH = SMART_START_DISTANCE - FP_CLOSER_LIMIT; // Calculate length of transition
@@ -1378,24 +1381,34 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				// is for reducing leaks on regular cases where regular sizes sprites stand
 				// close to 2S obstrc and especially when viewer is coplanar to them, like
 				// Doom2 Map06, the final bunker door between yellow key and teleporter.
+				bool thingCrossedAllKindsOf2sLine = thingCrossed2sBboxWall || thingCrossed2sBboxFacing;
 				bool isSpriteOccluded = (!visible1sidesInfTallObstr ||
 					(thingCrossedAllKindsOf1sLine && isonsteepsurf) ||
 					!visible2sideMidTex || !visible3dfloorSides ||
-					(!visible2sideTallEnoughObstr ||
+					(!visible2sideTallEnoughObstr));
 					// "thingCrossed2sBboxWall" culls too much but we're good without it now
 					// thanks to improved "visible2sideTallEnoughObstr" to bust leaks on
 					// D2Re Map12 and Doom 2 Map19 RedStone, well some leaks are still there, so reactivate
 					//((thingCrossed2sBboxWall || thingCrossed2sBboxFacing))));
-					((thingCrossed2sBboxWall || thingCrossed2sBboxFacing) && ismildsteep)));
+					//((thingCrossed2sBboxWall || thingCrossed2sBboxFacing) && ismildsteep)));
+
+				bool thingX2sAndSteep = thingCrossedAllKindsOf2sLine && ismildsteep;
+
 				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;
 				else if (!visible2sideMidTex)      smallsprtncrps_factor = 0.25f;
-				else                               smallsprtncrps_factor = 3.4f;      // unculled
+				else                               smallsprtncrps_factor = 3.4f;       // UNCULLED VALUE
+				if      (thingX2sAndSteep)         smallsprtncrps_factor *= 0.88f;     // cull slightly more
+
 				if      (isSpriteOccluded)         projectiles_factor = 1.0f;
 				else if (!visible2sideMidTex)      projectiles_factor = 0.25f;
-				else                               projectiles_factor = 8.0f;         // unculled
+				else                               projectiles_factor = 8.0f;          // UNCULLED VALUE
+				if      (thingX2sAndSteep)         projectiles_factor *= 0.88f;        // cull slightly more
+
 				if      (isSpriteOccluded)         regularsizmonster_factor1 = 1.0f;
 				else if (!visible2sideMidTex)      regularsizmonster_factor1 = 0.25f;
-				else                               regularsizmonster_factor1 = 3.64f; // unculled
+				else                               regularsizmonster_factor1 = 3.64f;  // UNCULLED VALUE
+				if      (thingX2sAndSteep)         regularsizmonster_factor1 *= 0.88f; // cull slightly more
+
 				smallsprtncrps_factor *= (sprPrxFctr * 15.0f); regularsizmonster_factor1 *= (sprPrxFctr * 3.0f);
 				regularsizmonster_factor2 = (isaregularsizedmonster) ?
 					regularsizmonster_factor1 :
@@ -1414,14 +1427,23 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				// void detection is still important for "CrossedAnyWall" besides it was already used in "Anamorphosis culling pass 1"
 				bool CrossedAnyWall = thingCrossed1sVoidLine || thingFacingBboxCrossed1sided || thingCrossed2sBboxFacing;
 
+				// ---===*** THE MAIN OCCLUSION FORMULA - START ***===---
 				if (isSpriteOccluded) // thingX1sVoidLine must be here, otherwise it's useless below (needed as OR in CrossedAnyWall)
 				{
 					// Regular Forced-Perspective way
-					radius_for_bias = thing->radius; regularsizmonster_factor2 = 0.75f;
+					radius_for_bias = thing->radius;
+					regularsizmonster_factor2 = 0.75f;
 				}
+				// ---===*** THE MAIN OCCLUSION FORMULA - FINISH ***===---
+
 				else if (isactorsmallbutnotcorpse || islegacyversionprojectile)
 					     radius_for_bias = extended_radius2;
 				else     radius_for_bias = spriteSize;
+				if (thingX2sAndSteep) // this filter is a bit too agressive...
+				{
+					// ...so don't cull that hard with it, just a slight touch!
+					radius_for_bias *= 0.88f; regularsizmonster_factor2 *= 0.88f;
+				}
 
 				if (!(r_debug_nolimitanamorphoses))
 				{
@@ -1549,6 +1571,11 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			nonanam_z1 = clamp<float>(original_z1 - z1, 0.0f, (sprSizeLight * sprAnamLightAmount));
 			nonanam_z2 = clamp<float>(original_z2 - z2, 0.0f, (sprSizeLight * sprAnamLightAmount));
 		}
+
+		// Nullifying these variables prevents some crashes
+		hasSignificantNegativeOffset, isExpSprWorthMoreCull = false;
+		spriteRasterXdimen, spriteRasterYdimen = 0;
+		spriteSizeExp, spriteRadiusExp = 0.0f;
 	}
 	//==========================================================================
 	// Finish Hybrid Anamorphic Forced-Perspective - Smart projection

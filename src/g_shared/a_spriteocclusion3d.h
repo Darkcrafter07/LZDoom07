@@ -90,6 +90,8 @@
 extern bool anyWallBefore2Sline;
 extern float Ztolerance2sided, Ztolerance2sidedBot;
 
+void EvaluateSpritePropertiesFP(GLSprite * spr, AActor *thing); // LZDoom07 signature
+//void EvaluateSpritePropertiesFP(AActor *thing); // UZDoom signature
 void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing); // LZDoom07 signature
 //void ExpandUndersizedSpriteDimensions(AActor *thing); // UZDoom signature
 

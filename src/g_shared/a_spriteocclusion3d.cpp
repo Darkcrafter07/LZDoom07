@@ -609,10 +609,11 @@ bool isMicroSprDimExp, isTinySprDimExp, isSmallSprDimExp, isMedSprDimExp, isOthe
 float spriteSizeExp, spriteRadiusExp; // declare them here and extern in gl_sprite.cpp/hw_sprites.cpp
 bool hasSignificantNegativeOffset; int spriteRasterXdimen, spriteRasterYdimen;
 
-void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing) // LZDoom07 signature
-//void ExpandUndersizedSpriteDimensions(AActor *thing) // UZDoom signature
+void EvaluateSpritePropertiesFP(GLSprite * spr, AActor *thing) // LZDoom07 signature
+//void EvaluateSpritePropertiesFP(AActor *thing) // UZDoom signature
 {
-	if (!thing) return;
+	if (spr == nullptr) return; // LZDoom07 line only, comment out if in UZDoom mode
+	if (!thing || thing == nullptr) return;
 
 	spriteRadiusExp = (float)thing->radius;
 	spriteSizeExp = (thing->radius + thing->Height) * 0.5f;
@@ -696,6 +697,14 @@ void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing) // LZDoom07 
 	//	}
 	//}
 	// === UZDoom way - FINISH ====================================================================
+}
+
+// Make sure: it also expands vanilla sprites, not just mods!
+void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor *thing) // LZDoom07 signature
+//void ExpandUndersizedSpriteDimensions(AActor *thing) // UZDoom signature
+{
+	if (spr == nullptr) return; // LZDoom07 line only, comment out if in UZDoom mode
+	if (!thing || thing == nullptr) return;
 
 	const bool isMicroSprite = (spriteSizeExp <= 12.0f);
 	const bool isTinySprite = (spriteSizeExp > 12.0f  && spriteSizeExp <= 18.0f);
@@ -737,7 +746,7 @@ void ExpandUndersizedSpriteDimensions(GLSprite* spr, AActor* thing) // LZDoom07 
 	{
 		if (smalDimSprExpansionSafeMode)
 		{
-			// Light expansion mode
+			// Lite expansion mode
 			if (isMicroSprite)
 			{
 				if (spriteRasterXdimen >= 64.0f || spriteRasterYdimen >= 64.0f)
@@ -3991,16 +4000,17 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 	// else
 	//{
 	//     Printf("Using standard detection ranges: SOLID=%.1f, MASKED=%.1f\n", MAX_DIST_SOLID, MAX_DIST_MASKED);
-	// }
+	//}
 
 	// Adaptive type calculation inside Paragraph 7 to keep distances perfectly synched
 	bool isSolid = false;
+	bool hasValidMidTextureInSector = false; // --- TRACKER FOR THE COPLANAR BYPASS GATE ---
 	if (thing->Sector)
 	{
 		for (auto line : thing->Sector->Lines)
 		{
 			if (!line) continue;
-			for (int sideno = 0; !isSolid && sideno < 2; sideno++)
+			for (int sideno = 0; sideno < 2; sideno++)
 			{
 				if (sideno == 1 && line->backsector == nullptr) continue;
 				if (line->sidedef[sideno] == nullptr) continue;
@@ -4012,20 +4022,53 @@ static float CheckFacingMidTextureProximity(AActor *thing, const AActor *viewer,
 					if (TexMan[midtex])
 					{
 						FTexture* tex = TexMan[midtex];
-						if (tex && !tex->bMasked) isSolid = true;
+						if (tex && !tex->bMasked)
+						{
+							isSolid = true;
+							hasValidMidTextureInSector = true;
+						}
 						break;
 					}
 					// === LZDoom07 way FINISH =============================================================
-
 					// === UZDoom way START ================================================================
 					//FGameTexture *gtex = TexMan.GameTexture(midtex);
 					//if (gtex && gtex->isValid() && gtex->GetTexture() != nullptr && !gtex->GetName().IsEmpty())
 					//{
-					//	if (!gtex->isMasked()) isSolid = true;
+					//	if (!gtex->isMasked())
+					//	{
+					//		isSolid = true;
+					//		hasValidMidTextureInSector = true;
+					//	}
 					//	break;
 					//}
 					// === UZDoom way FINISH ===============================================================
 				}
+			}
+		}
+	}
+
+	// ==========================================================================
+	// COPLANAR COONEY KICKSTRIKE BYPASS
+	// Hard-culls sprites instantly if they stand inside a fencing zone and align 
+	// coplanarly to active viewport horizon boundaries within Ztolerance2sided (2.0f).
+	// Completely silences dynamic vertex flickering caused by flat-ray subsector hops.
+	// ==========================================================================
+	if (hasValidMidTextureInSector)
+	{
+		if (thing->flags & MF_SPAWNCEILING)
+		{
+			// Ceiling mounted case: viewer feet aligns flush with sprite's expanded top ceiling anchor
+			if (fabsf(viewerBottom - spriteTop) <= Ztolerance2sided)
+			{
+				return 0.0f; // Force hard occlusion drop
+			}
+		}
+		else
+		{
+			// Floor step case: viewer eye level aligns flush with sprite's baseline feet floor height
+			if (fabsf(viewerTop - spriteBottom) <= Ztolerance2sided)
+			{
+				return 0.0f; // Force hard occlusion drop
 			}
 		}
 	}
