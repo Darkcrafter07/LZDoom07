@@ -623,79 +623,79 @@ void EvaluateSpritePropertiesFP(GLSprite * spr, AActor *thing) // LZDoom07 signa
 	spriteRasterXdimen = 0;        // Total texture width (including blank columns)
 	spriteRasterYdimen = 0;        // Total texture height (including blank rows)
 	hasSignificantNegativeOffset = false; // Reset the output reference directly
-	//
+	
 	// ----------- OpenGL legacy way (faster) - START --------------
-	if (spr->gltexture && spr->gltexture->tex)
-	{
-		FTexture* tex = spr->gltexture->tex;
-		if (tex)
+		if (spr->gltexture && spr->gltexture->tex)
 		{
-			spriteRasterXdimen = tex->GetWidth();
-			spriteRasterYdimen = tex->GetHeight();
-			spriteFileOffset = tex->TopOffset;
-			// Calculate visible sprite height (actual drawn pixels)
-			const int visibleSpriteHeight = spriteRasterYdimen - spriteFileOffset;
-			hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
+			FTexture* tex = spr->gltexture->tex;
+			if (tex)
+			{
+				spriteRasterXdimen = tex->GetWidth();
+				spriteRasterYdimen = tex->GetHeight();
+				spriteFileOffset = tex->TopOffset;
+				// Calculate visible sprite height (actual drawn pixels)
+				const int visibleSpriteHeight = spriteRasterYdimen - spriteFileOffset;
+				hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
+			}
 		}
-	}
 	// ----------- OpenGL legacy way (faster) - FINISH --------------
 	//
 	// ----------- Renderer independed way (slower) - START --------------
-	//if (TexMan.NumTextures() > 0)
-	//{
-	//	FTexture* tex = TexMan.ByIndex(thing->sprite); // Safe resource resolution pass
-	//	if (tex)
-	//	{
-	//		spriteRasterXdimen = tex->GetWidth();
-	//		spriteRasterYdimen = tex->GetHeight();
-	//		spriteFileOffset = tex->TopOffset;
-	//		// Calculate visible sprite height (actual drawn pixels)
-	//		const int visibleSpriteHeight = spriteRasterYdimen - spriteFileOffset;
-	//		hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
-	//	}
-	//}
+		//if (TexMan.NumTextures() > 0)
+		//{
+		//	FTexture* tex = TexMan.ByIndex(thing->sprite); // Safe resource resolution pass
+		//	if (tex)
+		//	{
+		//		spriteRasterXdimen = tex->GetWidth();
+		//		spriteRasterYdimen = tex->GetHeight();
+		//		spriteFileOffset = tex->TopOffset;
+		//		// Calculate visible sprite height (actual drawn pixels)
+		//		const int visibleSpriteHeight = spriteRasterYdimen - spriteFileOffset;
+		//		hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
+		//	}
+		//}
 	// ----------- Renderer independed way (slower) - FINISH --------------
 	// === LZDoom07 way - FINISH===================================================================
 
 	// === UZDoom way - START =====================================================================
-	//int           spriteFileOffset = 0; // Blank rows at top of texture (from file)
-	//int           spriteRasterXdimen = 0; // Total texture width (including blank columns)
-	//int           spriteRasterYdimen = 0; // Total texture height (including blank rows)
-	//bool          hasSignificantNegativeOffset = false;
-	//FGameTexture *gtex = nullptr;
-	//
-	//// First, check for a direct texture override (picnum)
-	//if (thing->picnum.isValid())
-	//{
-	//	gtex = TexMan.GetGameTexture(thing->picnum);
-	//}
-	//else
-	//{
-	//	// In UZDoom, sprites are handled by the Texture Manager using their ID and frame.
-	//	// We fetch the game texture using the sprite index and frame from the actor.
-	//	// thing->sprite is the sprite ID, thing->frame is the frame index.
-	//	gtex = TexMan.GameByIndex(thing->sprite, true); // true for animation check
-	//}
-	//
-	//if (gtex)
-	//{
-	//	// Access the underlying FTexture object
-	//	FTexture *tex = gtex->GetTexture();
-	//
-	//	if (tex)
-	//	{
-	//		// GetWidth/Height automatically account for Scale.X/Scale.Y
-	//		spriteRasterXdimen = tex->GetWidth();
-	//		spriteRasterYdimen = tex->GetHeight();
-	//		spriteFileOffset = tex->TopOffset;
-	//		// Calculate visible sprite height (actual drawn pixels)
-	//		int visibleSpriteHeight = spriteRasterYdimen - spriteFileOffset;
-	//		hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
-	//		// Debug output to verify dimensions
-	//		//Printf("Sprite Resolve: %s | RasterH: %d | TopOff: %d | Visible: %d\n", gtex->GetName().GetChars(),
-	//		//       spriteRasterYdimen, spriteFileOffset, visibleSpriteHeight);
-	//	}
-	//}
+		//int           spriteFileOffset = 0; // Blank rows at top of texture (from file)
+		//spriteRasterXdimen = 0; // Total texture width (including blank columns)
+		//spriteRasterYdimen = 0; // Total texture height (including blank rows)
+		//hasSignificantNegativeOffset = false;
+		//FGameTexture *gtex = nullptr;
+		//
+		//// First, check for a direct texture override (picnum)
+		//if (thing->picnum.isValid())
+		//{
+		//	gtex = TexMan.GetGameTexture(thing->picnum);
+		//}
+		//else
+		//{
+		//	// In UZDoom, sprites are handled by the Texture Manager using their ID and frame.
+		//	// We fetch the game texture using the sprite index and frame from the actor.
+		//	// thing->sprite is the sprite ID, thing->frame is the frame index.
+		//	gtex = TexMan.GameByIndex(thing->sprite, true); // true for animation check
+		//}
+		//
+		//if (gtex)
+		//{
+		//	// Access the underlying FTexture object
+		//	FTexture *tex = gtex->GetTexture();
+		//
+		//	if (tex)
+		//	{
+		//		// GetWidth/Height automatically account for Scale.X/Scale.Y
+		//		spriteRasterXdimen = tex->GetWidth();
+		//		spriteRasterYdimen = tex->GetHeight();
+		//		spriteFileOffset = tex->TopOffset;
+		//		// Calculate visible sprite height (actual drawn pixels)
+		//		int visibleSpriteHeight = spriteRasterYdimen - spriteFileOffset;
+		//		hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
+		//		// Debug output to verify dimensions
+		//		//Printf("Sprite Resolve: %s | RasterH: %d | TopOff: %d | Visible: %d\n", gtex->GetName().GetChars(),
+		//		//       spriteRasterYdimen, spriteFileOffset, visibleSpriteHeight);
+		//	}
+		//}
 	// === UZDoom way - FINISH ====================================================================
 }
 
