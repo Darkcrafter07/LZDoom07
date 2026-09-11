@@ -619,12 +619,12 @@ void EvaluateSpritePropertiesFP(GLSprite * spr, AActor *thing) // LZDoom07 signa
 	spriteSizeExp = (thing->radius + thing->Height) * 0.5f;
 
 	// === LZDoom07 way - START ===================================================================
-	int spriteFileOffset = 0;      // Blank rows at top of texture (from file)
-	spriteRasterXdimen = 0;        // Total texture width (including blank columns)
-	spriteRasterYdimen = 0;        // Total texture height (including blank rows)
-	hasSignificantNegativeOffset = false; // Reset the output reference directly
+		int spriteFileOffset = 0;      // Blank rows at top of texture (from file)
+		spriteRasterXdimen = 0;        // Total texture width (including blank columns)
+		spriteRasterYdimen = 0;        // Total texture height (including blank rows)
+		hasSignificantNegativeOffset = false; // Reset the output reference directly
 	
-	// ----------- OpenGL legacy way (faster) - START --------------
+		// ----------- OpenGL legacy way (faster) - START --------------
 		if (spr->gltexture && spr->gltexture->tex)
 		{
 			FTexture* tex = spr->gltexture->tex;
@@ -638,9 +638,9 @@ void EvaluateSpritePropertiesFP(GLSprite * spr, AActor *thing) // LZDoom07 signa
 				hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
 			}
 		}
-	// ----------- OpenGL legacy way (faster) - FINISH --------------
-	//
-	// ----------- Renderer independed way (slower) - START --------------
+		// ----------- OpenGL legacy way (faster) - FINISH --------------
+		//
+		// ----------- Renderer independed way (slower) - START --------------
 		//if (TexMan.NumTextures() > 0)
 		//{
 		//	FTexture* tex = TexMan.ByIndex(thing->sprite); // Safe resource resolution pass
@@ -654,7 +654,7 @@ void EvaluateSpritePropertiesFP(GLSprite * spr, AActor *thing) // LZDoom07 signa
 		//		hasSignificantNegativeOffset = (visibleSpriteHeight >= 1);
 		//	}
 		//}
-	// ----------- Renderer independed way (slower) - FINISH --------------
+		// ----------- Renderer independed way (slower) - FINISH --------------
 	// === LZDoom07 way - FINISH===================================================================
 
 	// === UZDoom way - START =====================================================================
@@ -2498,22 +2498,44 @@ bool SpriteCrossed2sBboxFaceWallLinedef(AActor *thing, AActor *viewer, bool &out
 	const bool  isHugeSprite   = (spriteSize >= 60.0f);
 
 	// Base Scales for test point offsets - kept static for reliable deep niche capture
-	float                      spriteScale = 5.5f;  // 12.5f old val
-	if      (isTinySprite)     spriteScale = 4.5f;   // 9.5f old val
-	else if (isSmallSprite)    spriteScale = 3.5f;   // 8.5f old val
-	else if (isMediumSprite)   spriteScale = 2.7f;   // 7.7f old val
-	else if (isLargeSprite)    spriteScale = 1.4f;   // 5.4 old val
-	else if (isHugeSprite)     spriteScale = 0.75f;  // 2.15f old val
+	float                                                spriteScale = 5.5f;
+
+	if      (isTinySprite)                               spriteScale = 4.5f;
+	else if (isTinySprDimExp  && isExpSprWorthMoreCull)  spriteScale = 12.5f;
+
+	else if (isSmallSprite)                              spriteScale = 3.5f;
+	else if (isSmallSprDimExp && isExpSprWorthMoreCull)  spriteScale = 8.5f;
+
+	else if (isMediumSprite)                             spriteScale = 2.7f;
+	else if (isMedSprDimExp   && isExpSprWorthMoreCull)  spriteScale = 7.5f;
+
+	else if (isLargeSprite)                              spriteScale = 1.4f;
+	else if (isLargeSprite && isOtherSprDimExp && isExpSprWorthMoreCull)
+	                                                     spriteScale = 2.4f;
+	else if (isHugeSprite)                               spriteScale = 1.4f;
+	else if (isHugeSprite && isOtherSprDimExp && isExpSprWorthMoreCull)
+	                                                     spriteScale = 2.4f;
 
 	float adjustedRadius = thing->radius * spriteScale;
 
 	// Scale for the "Kill Zone"
-	float                      strictZoneScale = 5.5f; // 12.5f old val
-	if      (isTinySprite)     strictZoneScale = 4.5f;  // 9.5f old val
-	else if (isSmallSprite)    strictZoneScale = 3.5f;  // 7.5f old val
-	else if (isMediumSprite)   strictZoneScale = 2.7f;  // 5.7 old val
-	else if (isLargeSprite)    strictZoneScale = 1.4f;  // 4.4f old val
-	else if (isHugeSprite)     strictZoneScale = 0.75f; // 2.15f old val
+	float                                                strictZoneScale = 5.5f;
+
+	if      (isTinySprite)                               strictZoneScale = 4.5f;
+	else if (isTinySprDimExp  && isExpSprWorthMoreCull)  strictZoneScale = 6.5f;
+
+	else if (isSmallSprite)                              strictZoneScale = 3.5f;
+	else if (isSmallSprDimExp && isExpSprWorthMoreCull)  strictZoneScale = 5.5f;
+
+	else if (isMediumSprite)                             strictZoneScale = 2.7f;
+	else if (isMedSprDimExp   && isExpSprWorthMoreCull)  strictZoneScale = 4.5f;
+
+	else if (isLargeSprite)                              strictZoneScale = 1.4f;
+	else if (isLargeSprite && isOtherSprDimExp && isExpSprWorthMoreCull)
+	                                                     strictZoneScale = 2.4f;
+	else if (isHugeSprite)                               strictZoneScale = 0.75f;
+	else if (isHugeSprite && isOtherSprDimExp && isExpSprWorthMoreCull)
+	                                                     strictZoneScale = 1.75f;
 
 	float strictZoneSq = (thing->radius * strictZoneScale) * (thing->radius * strictZoneScale);
 
@@ -3106,7 +3128,7 @@ struct ObstructionData2Sided
 		}
 	}
 
-	void Update2sObstrPass2nd(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point, float spriteTop)
+	void Update2sObstrPass2nd(AActor* thing, AActor* viewer, const sector_t* sector, const FVector2& point, float spriteTopArg)
 	{
 		const bool islegacyversionprojectile =
 			(thing->flags & MF_MISSILE) || (thing->flags & MF_NOBLOCKMAP) ||
@@ -3114,7 +3136,7 @@ struct ObstructionData2Sided
 			(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
 		if (islegacyversionprojectile) return;
 
-		const float cullAgressiveness = 0.285f; // this way it unculls as soon as full sprite height fits the gap
+		const float cullAgressiveness = 0.125f; // this way it unculls as soon as full sprite height fits the gap
 
 		float EyeHeight = 41.0f;
 		if (viewer->player && viewer->player->mo)
@@ -3127,14 +3149,20 @@ struct ObstructionData2Sided
 		float viewerBottomAdj = viewerBottom - Ztolerance2sidedBot;
 		float viewerTopAdj = viewerTop + Ztolerance2sided;
 
-		float spriteBottom;
+		// =====================================================================================
+		// SPREAD PROFILE FIX: CORRECTLY INITIALIZE BOTH EXTREMES INSIDE FUNCTION SCOPE
+		// Uses the incoming spriteTopArg but aligns it contextually with spawn ceiling flags.
+		// =====================================================================================
+		float spriteBottom, spriteTop;
 		if (thing->flags & MF_SPAWNCEILING)
 		{
-			spriteBottom = (float)thing->Z() - (float)thing->Height;
+			spriteTop = (float)thing->Z();
+			spriteBottom = spriteTop - (float)thing->Height;
 		}
 		else
 		{
 			spriteBottom = (float)thing->Z();
+			spriteTop = spriteBottom + (float)thing->Height;
 		}
 
 		const FVector2 clamped =
@@ -3207,7 +3235,7 @@ struct ObstructionData2Sided
 		{
 			float lineToThingDistSq = (clamped - tP).LengthSquared();
 
-			if (lineToThingDistSq <= 16384.0f || (thing->Sector == sector))
+			if (lineToThingDistSq < 16384.0f || (thing->Sector == sector))
 			{
 				float thingFloor = (float)thing->Sector->floorplane.ZatPoint(thing->X(), thing->Y());
 				float viewerFloor = (float)viewer->Sector->floorplane.ZatPoint(viewer->X(), viewer->Y());
@@ -3223,6 +3251,7 @@ struct ObstructionData2Sided
 					valid = true;
 				}
 
+				// Fix: Now uses the properly synchronized local spriteTop value bound to the baseTolerance multiplier!
 				if (ceilingHeightInitial < (spriteTop - baseTolerance))
 				{
 					minCeiling = MIN(minCeiling, ceilingHeightInitial);

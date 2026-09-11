@@ -1385,29 +1385,24 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				bool isSpriteOccluded = (!visible1sidesInfTallObstr ||
 					(thingCrossedAllKindsOf1sLine && isonsteepsurf) ||
 					!visible2sideMidTex || !visible3dfloorSides ||
-					(!visible2sideTallEnoughObstr));
-					// "thingCrossed2sBboxWall" culls too much but we're good without it now
-					// thanks to improved "visible2sideTallEnoughObstr" to bust leaks on
-					// D2Re Map12 and Doom 2 Map19 RedStone, well some leaks are still there, so reactivate
-					//((thingCrossed2sBboxWall || thingCrossed2sBboxFacing))));
-					//((thingCrossed2sBboxWall || thingCrossed2sBboxFacing) && ismildsteep)));
+					(!visible2sideTallEnoughObstr || thingCrossedAllKindsOf2sLine));
 
 				bool thingX2sAndSteep = thingCrossedAllKindsOf2sLine && ismildsteep;
 
 				if      (isSpriteOccluded)         smallsprtncrps_factor = 1.0f;
 				else if (!visible2sideMidTex)      smallsprtncrps_factor = 0.25f;
 				else                               smallsprtncrps_factor = 3.4f;       // UNCULLED VALUE
-				if      (thingX2sAndSteep)         smallsprtncrps_factor *= 0.88f;     // cull slightly more
+				//if      (thingX2sAndSteep)         smallsprtncrps_factor *= 0.65f;     // cull slightly more
 
 				if      (isSpriteOccluded)         projectiles_factor = 1.0f;
 				else if (!visible2sideMidTex)      projectiles_factor = 0.25f;
 				else                               projectiles_factor = 8.0f;          // UNCULLED VALUE
-				if      (thingX2sAndSteep)         projectiles_factor *= 0.88f;        // cull slightly more
+				//if      (thingX2sAndSteep)         projectiles_factor *= 0.65f;        // cull slightly more
 
 				if      (isSpriteOccluded)         regularsizmonster_factor1 = 1.0f;
 				else if (!visible2sideMidTex)      regularsizmonster_factor1 = 0.25f;
 				else                               regularsizmonster_factor1 = 3.64f;  // UNCULLED VALUE
-				if      (thingX2sAndSteep)         regularsizmonster_factor1 *= 0.88f; // cull slightly more
+				//if      (thingX2sAndSteep)         regularsizmonster_factor1 *= 0.65f; // cull slightly more
 
 				smallsprtncrps_factor *= (sprPrxFctr * 15.0f); regularsizmonster_factor1 *= (sprPrxFctr * 3.0f);
 				regularsizmonster_factor2 = (isaregularsizedmonster) ?
@@ -1439,11 +1434,11 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 				else if (isactorsmallbutnotcorpse || islegacyversionprojectile)
 					     radius_for_bias = extended_radius2;
 				else     radius_for_bias = spriteSize;
-				if (thingX2sAndSteep) // this filter is a bit too agressive...
-				{
-					// ...so don't cull that hard with it, just a slight touch!
-					radius_for_bias *= 0.88f; regularsizmonster_factor2 *= 0.88f;
-				}
+				//if (thingX2sAndSteep) // this filter is a bit too agressive...
+				//{
+				//	// ...so don't cull that hard with it, just a slight touch!
+				//	radius_for_bias *= 0.88f; regularsizmonster_factor2 *= 0.88f;
+				//}
 
 				if (!(r_debug_nolimitanamorphoses))
 				{
