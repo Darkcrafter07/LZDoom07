@@ -372,34 +372,87 @@ bool FClipRect::Intersect(int ix, int iy, int iw, int ih)
 // True Color texture copy function
 //
 //===========================================================================
-void FBitmap::CopyPixelDataRGB(int originx, int originy, const uint8_t *patch, int srcwidth, 
-							   int srcheight, int step_x, int step_y, int rotate, int ct, FCopyInfo *inf,
-							   int r, int g, int b)
+//void FBitmap::CopyPixelDataRGB(int originx, int originy, const uint8_t *patch, int srcwidth, 
+//							   int srcheight, int step_x, int step_y, int rotate, int ct, FCopyInfo *inf,
+//							   int r, int g, int b)
+//{
+//	if (ClipCopyPixelRect(&ClipRect, originx, originy, patch, srcwidth, srcheight, step_x, step_y, rotate))
+//	{
+//		uint8_t *buffer = data + 4 * originx + Pitch * originy;
+//		int op = inf==NULL? OP_COPY : inf->op;
+//		for (int y=0;y<srcheight;y++)
+//		{
+//			copyfuncs[op][ct](&buffer[y*Pitch], &patch[y*step_y], srcwidth, step_x, inf, r, g, b);
+//		}
+//	}
+//}
+
+void FBitmap::CopyPixelDataRGB(int originx, int originy, const uint8_t *patch, int srcwidth,
+	int srcheight, int step_x, int step_y, int rotate, int ct, FCopyInfo *inf,
+	int r, int g, int b)
 {
+	// ALERT: Guard against empty texture source pointer to prevent crash
+	if (patch == NULL) return;
+
 	if (ClipCopyPixelRect(&ClipRect, originx, originy, patch, srcwidth, srcheight, step_x, step_y, rotate))
 	{
 		uint8_t *buffer = data + 4 * originx + Pitch * originy;
-		int op = inf==NULL? OP_COPY : inf->op;
-		for (int y=0;y<srcheight;y++)
+		int op = inf == NULL ? OP_COPY : inf->op;
+		for (int y = 0; y < srcheight; y++)
 		{
 			copyfuncs[op][ct](&buffer[y*Pitch], &patch[y*step_y], srcwidth, step_x, inf, r, g, b);
 		}
 	}
 }
 
+//template<class TDest, class TBlend> 
+//void iCopyPaletted(uint8_t *buffer, const uint8_t * patch, int srcwidth, int srcheight, int Pitch,
+//					int step_x, int step_y, int rotate, PalEntry * palette, FCopyInfo *inf)
+//{
+//	int x,y,pos;
+//
+//	for (y=0;y<srcheight;y++)
+//	{
+//		pos = y*Pitch;
+//		for (x=0;x<srcwidth;x++,pos+=4)
+//		{
+//			int v=(unsigned char)patch[y*step_y+x*step_x];
+//			int a = palette[v].a;
+//
+//			if (TBlend::ProcessAlpha0() || a)
+//			{
+//				TBlend::OpC(buffer[pos + TDest::RED], palette[v].r, a, inf);
+//				TBlend::OpC(buffer[pos + TDest::GREEN], palette[v].g, a, inf);
+//				TBlend::OpC(buffer[pos + TDest::BLUE], palette[v].b, a, inf);
+//				TBlend::OpA(buffer[pos + TDest::ALPHA], a, inf);
+//			}
+//		}
+//	}
+//}
 
-template<class TDest, class TBlend> 
+template<class TDest, class TBlend>
 void iCopyPaletted(uint8_t *buffer, const uint8_t * patch, int srcwidth, int srcheight, int Pitch,
-					int step_x, int step_y, int rotate, PalEntry * palette, FCopyInfo *inf)
+	int step_x, int step_y, int rotate, PalEntry * palette, FCopyInfo *inf)
 {
-	int x,y,pos;
+	// ALERT: Guard against empty texture source pointer to prevent crash
+	if (patch == NULL || buffer == NULL) return;
 
-	for (y=0;y<srcheight;y++)
+	int x, y, pos;
+
+	// ALERT: Fallback to an empty stack-allocated palette if it comes as NULL
+	PalEntry safe_palette_fallback[256];
+	if (palette == NULL)
 	{
-		pos = y*Pitch;
-		for (x=0;x<srcwidth;x++,pos+=4)
+		memset(safe_palette_fallback, 0, sizeof(safe_palette_fallback));
+		palette = safe_palette_fallback;
+	}
+
+	for (y = 0; y < srcheight; y++)
+	{
+		pos = y * Pitch;
+		for (x = 0; x < srcwidth; x++, pos += 4)
 		{
-			int v=(unsigned char)patch[y*step_y+x*step_x];
+			int v = (unsigned char)patch[y*step_y + x * step_x];
 			int a = palette[v].a;
 
 			if (TBlend::ProcessAlpha0() || a)
@@ -456,6 +509,14 @@ void FBitmap::CopyPixelData(int originx, int originy, const uint8_t * patch, int
 			{
 				palette = inf->palette;
 			}
+			else if (palette == NULL)
+			{
+				palette = penew;
+			}
+		}
+		else if (palette == NULL)
+		{
+			palette = penew;
 		}
 
 		copypalettedfuncs[inf==NULL? OP_COPY : inf->op](buffer, patch, srcwidth, srcheight, Pitch, 
