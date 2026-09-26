@@ -548,64 +548,106 @@ void GLWall::Draw(int pass)
 
 	case GLPASS_TEXONLY:
 	{
-		if (gl.legacyMode)  // GL1x/GL2x way
+		if (gl.legacyMode) // GL1x/GL2x way
 		{
-			// DOOM64 GRADIENT WALLS LIGHT EFFECTS MODULATOR
 			auto side = seg->sidedef;
 			auto tierndx = renderwalltotier[type];
 
-			// Check if a unique Doom 64 lighting gradient is defined for the current wall slot
+			// Extract colors strictly assigned by Doom 64 sector/wall definitions
 			PalEntry color1 = (side != nullptr) ? side->GetSpecialColor(tierndx, side_t::walltop, frontsector) : PalEntry(255, 255, 255);
 			PalEntry color2 = (side != nullptr) ? side->GetSpecialColor(tierndx, side_t::wallbottom, frontsector) : PalEntry(255, 255, 255);
 
-			if (color1 != color2 && side != nullptr)
-			// Set the hardware blend mode to standard texture modulation
-			gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
-			gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-			gl_RenderState.Apply();
+			// --- Detect Doom64 gradient lit walls in the sector ---
+			// Verify that the colors are not only different, but also ensure that we are NOT 
+			// processing a regula wall where both colors default to standard white (255,255,255).
+			// If both colors return default white, it means NO Doom 64 lighting properties are present.
+			bool hasDoom64Gradient = 
+				(side != nullptr && color1 != color2 && (color1 != PalEntry(255, 255, 255) || color2 != PalEntry(255, 255, 255)));
 
-			glDepthFunc(GL_EQUAL);
-			glDepthMask(false);
+			if (hasDoom64Gradient)
+			{
+				// Enforce discrete multiplicative blending for hardware Gouraud shading engine
+				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
+				gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
+				gl_RenderState.Apply();
 
-			// Force hardware vertex interpolation layer to SMOOTH (Gouraud shading engine)
-			glShadeModel(GL_SMOOTH);
+				// Enforce pixel depth matching to protect multi-pass layout sync
+				glDepthFunc(GL_EQUAL);
+				glDepthMask(false);
+				glShadeModel(GL_SMOOTH);
 
-			float r1 = color1.r * invMul255; float g1 = color1.g * invMul255; float b1 = color1.b * invMul255;
-			float r2 = color2.r * invMul255; float g2 = color2.g * invMul255; float b2 = color2.b * invMul255;
+				float r1 = color1.r * invMul255; float g1 = color1.g * invMul255; float b1 = color1.b * invMul255;
+				float r2 = color2.r * invMul255; float g2 = color2.g * invMul255; float b2 = color2.b * invMul255;
 
-			// Extract current geometry limits from the live wall allocation snapshots
-			float x1 = (float)glseg.x1;    float y1 = (float)glseg.y1;
-			float x2 = (float)glseg.x2;    float y2 = (float)glseg.y2;
-			float zb0 = (float)zbottom[0]; float zte = (float)ztop[0];
-			float zt1 = (float)ztop[1];    float zb1 = (float)zbottom[1];
+				// Reset counter to safely compile the exact same seamless VBO mesh nodes for this pass
+				vertcount = 0;
+				MakeVertices(false);
 
-			glBegin(GL_QUADS);
-			// Vertex 0: bottom-left boundary fades into Color2
-			glTexCoord2f(tcs[LOLFT].u, tcs[LOLFT].v);
-			glColor4f(r2, g2, b2, 1.0f);
-			glVertex3f(x1, zb0, y1);
+				// Extract compiled buffer layout pointer natively via memory address shifting links
+				int currentIndex = 0;
+				GLRenderer->mVBO->Alloc(0, &currentIndex);
+				FFlatVertex *globalVBOBase = GLRenderer->mVBO->GetBuffer();
+				FFlatVertex *activeWallVerts = (globalVBOBase - currentIndex) + vertindex;
 
-			// Vertex 1: top-left upper edge fades into Color1
-			glTexCoord2f(tcs[UPLFT].u, tcs[UPLFT].v);
-			glColor4f(r1, g1, b1, 1.0f);
-			glVertex3f(x1, zte, y1);
+				glBegin(GL_QUADS);
+				for (int i = 0; i < vertcount; i++)
+				{
+					float vx = activeWallVerts[i].x;
+					float vz = activeWallVerts[i].z;
+					float vy = activeWallVerts[i].y;
 
-			// Vertex 2: top-right upper edge fades into Color1
-			glTexCoord2f(tcs[UPRGT].u, tcs[UPRGT].v);
-			glColor4f(r1, g1, b1, 1.0f);
-			glVertex3f(x2, zt1, y2);
+					// --- Slope Interpolation ---
+					// Calculate vertex interpolation factor along the wall length (from X1/Y1 to X2/Y2)
+					// This makes the gradient to follow sloped ceilings/floors without clipping.
+					float horizontalFactor = 0.0f;
+					float wallLengthX = glseg.x2 - glseg.x1;
+					float wallLengthY = glseg.y2 - glseg.y1;
+					float totalWallLengthSq = (wallLengthX * wallLengthX) + (wallLengthY * wallLengthY);
 
-			// Vertex 3: bottom-right boundary fades into Color2
-			glTexCoord2f(tcs[LORGT].u, tcs[LORGT].v);
-			glColor4f(r2, g2, b2, 1.0f);
-			glVertex3f(x2, zb1, y2);
-			glEnd();
+					if (totalWallLengthSq > 0.0f)
+					{
+						horizontalFactor = ((vx - glseg.x1) * wallLengthX + (vy - glseg.y1) * wallLengthY) / totalWallLengthSq;
+						if (horizontalFactor > 1.0f) horizontalFactor = 1.0f;
+						if (horizontalFactor < 0.0f) horizontalFactor = 0.0f;
+					}
 
-			// Clean hardware recovery gate back to standard states
-			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-			vertexcount += 4;
+					// Linearly calculate the exact floor and ceiling boundaries at the current vertex position
+					float currentWallBottom = zbottom[0] + (zbottom[1] - zbottom[0]) * horizontalFactor;
+					float currentWallTop = ztop[0] + (ztop[1] - ztop[0]) * horizontalFactor;
+
+					float heightFactor = 0.0f;
+					float totalHeight = currentWallTop - currentWallBottom;
+					if (totalHeight > 0.0f)
+					{
+						heightFactor = (vz - currentWallBottom) / totalHeight;
+						if (heightFactor > 1.0f) heightFactor = 1.0f;
+						if (heightFactor < 0.0f) heightFactor = 0.0f;
+					}
+
+					// Blend colors safely between bottom (color2) and top (color1) bounds
+					float r = r2 + (r1 - r2) * heightFactor;
+					float g = g2 + (g1 - g2) * heightFactor;
+					float b = b2 + (b1 - b2) * heightFactor;
+
+					glTexCoord2f(activeWallVerts[i].u, activeWallVerts[i].v);
+					glColor4f(r, g, b, 1.0f);
+					glVertex3f(vx, vz, vy);
+				}
+				glEnd();
+
+				// Hardware registry recovery reset
+				glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+			}
+			else
+			{
+				// Regular walls without Doom64 sector gradient lighting
+				gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
+				gl_RenderState.Apply();
+				RenderWall(RWF_TEXTURED);
+			}
+			break;
 		}
-		else               // GL3+ way
+		else // GL3+ way
 		{
 			gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
 			gl_RenderState.Apply();
