@@ -738,40 +738,67 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 
 void GLDrawList::DoDraw(int pass, int i, bool trans)
 {
-	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
-	switch (drawitems[i].rendertype)
-	{
-		case GLDIT_FLAT:
-		{
-			GLFlat * f = &flats[drawitems[i].index];
-			RenderFlat.Clock();
-			f->Draw(pass, trans);
-			RenderFlat.Unclock();
-			break;
-		}
-		case GLDIT_WALL:
-		{
-			GLWall * w = &walls[drawitems[i].index];
-			RenderWall.Clock();
-			w->Draw(pass);
-			RenderWall.Unclock();
-			break;
-		}
-		case GLDIT_SPRITE:
-		{
-			GLSprite * s = &sprites[drawitems[i].index];
-			RenderSprite.Clock();
-			s->Draw(pass);
-			RenderSprite.Unclock();
-			break;
-		}
-	}
-
 	int currentRenderType = drawitems[i].rendertype;
 	int index = drawitems[i].index;
 
+	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE
+	// ------------------------------------------------------------------------------------
+	// Stencil Masking Engine Context Link]
+	// Toggle feature to strictly isolate translucent light bleedouts
+	// No more world brightening behind broken windows, holes in the fence textures etc.
+	// TODO: For smooth alpha-blended transparency gradients (e.g. dirty glass, smoke),
+	// stencil buffering falls short since it only records a binary 'yes/no' footprint.
+	// To implement smooth translucency light taming in the future, we could experiment 
+	// with color channel multiplicative inversions via glBlendFunc(GL_DST_ALPHA, GL_ONE) 
+	// or standard hardware multi-texturing blends, but let's leave it for some time later.
+	// ------------------------------------------------------------------------------------
+	const bool onlyLightOpaqueTextureAreas = true;
+	bool useStencilMask = (gl.legacyMode && pass == GLPASS_TRANSLUCENT &&
+		currentRenderType == GLDIT_WALL && onlyLightOpaqueTextureAreas);
+
+	if (useStencilMask)
+	{
+		glClear(GL_STENCIL_BUFFER_BIT);            // Clear stencil cushion before creating the mask
+		glEnable(GL_STENCIL_TEST);
+		glStencilFunc(GL_ALWAYS, 1, 0xFF);         // Always pass, write '1' into the stencil buffer
+		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); // Replace stencil value with 1 on successful pixel draw
+	}
+
+	switch (drawitems[i].rendertype)
+	{
+	case GLDIT_FLAT:
+	{
+		GLFlat * f = &flats[drawitems[i].index];
+		RenderFlat.Clock();
+		f->Draw(pass, trans);
+		RenderFlat.Unclock();
+		break;
+	}
+	case GLDIT_WALL:
+	{
+		GLWall * w = &walls[drawitems[i].index];
+		RenderWall.Clock();
+		w->Draw(pass);
+		RenderWall.Unclock();
+		break;
+	}
+	case GLDIT_SPRITE:
+	{
+		GLSprite * s = &sprites[drawitems[i].index];
+		RenderSprite.Clock();
+		s->Draw(pass);
+		RenderSprite.Unclock();
+		break;
+	}
+	}
+
+	if (useStencilMask)
+	{
+		glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP); // Lock stencil buffer to read-only state
+	}
+
 	//--------------------------------------------------------------------------
-	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
+	// STEP 2:           THE TRANSLUSCENT DYNLIGHT SURFACES
 	//                   Can't configure dynlight intensities here!
 	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
 	// "gl_dynlightHandleSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
@@ -794,10 +821,8 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 			if (gl_SetupLightTexture())
 			{
-				// Tell the variable that it's a dynlight phase now
 				gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = GLPASS_LIGHTTEX;
 
-				// Common baseline registers hardware isolation setup
 				gl_RenderState.EnableFog(false);
 				gl_RenderState.Apply();
 
@@ -832,6 +857,14 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 					gl_RenderState.ApplyColorMask();
 				}
 
+				// --- [Hardware Stencil Culling Gate] ---
+				// Enforce stencil resolution restrictions if the masking stage was validated.
+				if (useStencilMask)
+				{
+					glEnable(GL_STENCIL_TEST);
+					glStencilFunc(GL_EQUAL, 1, 0xFF); // Only render lights where stencil value is 1
+				}
+
 				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_DST_COLOR, GL_ONE);
@@ -851,22 +884,22 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 
 				// RECOVERY AND CLEANUP
+				if (useStencilMask)
+				{
+					glDisable(GL_STENCIL_TEST); // Safely release stencil pipeline locks
+				}
+
 				if (maskColorChannelsOut)
 				{
 					gl_RenderState.ResetColorMask();
 					gl_RenderState.ApplyColorMask();
 				}
 
-				// DEPTH MASK SANITIZER GATEWAY
-				// THE CORE SHIELD: We STRICTLY force glDepthMask to stay FALSE here!
-				// Allowing true to leak inside the iteration node loop completely breaks 
-				// sorting arrays for subsequent transparent fog sprites and monster sheets.
-				// We keep GL_LEQUAL depth function to let multi-layered reflections stack up
 				glBlendEquation(GL_FUNC_ADD);
 
 				glEnable(GL_FOG);
-				glDepthMask(false);     // The hardware lock, the mask is on false
-				glDepthFunc(GL_LEQUAL); // Keep LEQUAL, not to break light overlays
+				glDepthMask(false);
+				glDepthFunc(GL_LEQUAL); // Restore baseline depth check for subsequent items
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 				gl_RenderState.EnableFog(true);
