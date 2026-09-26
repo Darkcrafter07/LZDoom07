@@ -656,7 +656,7 @@ void GLWall::Draw(int pass)
 		break;
 	}
 
-	case GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY:
+	case GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY: // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 		if (seg->sidedef != nullptr && seg->v1 != nullptr && seg->v2 != nullptr)
 		{
 			// Define local viewport culling radius bubble for open-space landscape sectors

@@ -2638,8 +2638,8 @@ OptionMenu "GLLightOptions" protected
 	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTSATURATIONBRIGHT", gl_legacy_dynlight_saturation_bright, 0.0, 1.25, 0.01
 	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTHUESHIFT",         gl_legacy_dynlight_hue_shift, 0.0, 35.0, 0.01
 	Option "$GLLIGHTMNU_LEGACYDYNLIGHTOVERBRIGHT",       gl_legacy_dynlight_overbright, "OnOff"
-	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTOVERBRIGHTFLATS",  gl_legacy_dynlight_overbright_flats, 0.0, 0.2, 0.01
-	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTOVERBRIGHTWALLS",  gl_legacy_dynlight_overbright_walls, 0.0, 0.2, 0.01
+	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTOVERBRIGHTFLATS",  gl_legacy_dynlight_overbright_flats, 0.0, 0.5, 0.01
+	Slider "$GLLIGHTMNU_LEGACYDYNLIGHTOVERBRIGHTWALLS",  gl_legacy_dynlight_overbright_walls, 0.0, 0.5, 0.01
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAPQUALITY",          gl_shadowmap_quality,       "ShadowMapQuality"
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAPFILTER",           gl_shadowmap_filter,        "ShadowMapFilter"
 }

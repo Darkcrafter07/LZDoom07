@@ -69,7 +69,7 @@ enum Drawpasses
 	// GL1x/GL2x dynamic light for regular surfaces but coupled with the transluscent ones (7th multipass pass)
 	GLPASS_TRANSLUCENT_LIGHTTEX,
 
-	GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY,	// GL1x/GL2x dynamic lights overbright 2nd pass
+	GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY,	// GL1x/GL2x dynamic lights overbright 2nd pass, disabled in gl_scene.cpp
 	GLPASS_LIGHTEFFECTS_LEGACY, // GL1x/GL2x legacy brightmap simulation effect
 
 };

@@ -142,7 +142,7 @@ void GLFlat::SetupSubsectorLights(int pass, subsector_t * sub, int *dli)
 
 		// we must do the side check here because gl_SetupLight needs the correct plane orientation
 		// which we don't have for Legacy-style 3D-floors
-		double planeh = plane.plane.ZatPoint(light->Pos);
+		float planeh = plane.plane.ZatPoint(light->Pos);
 		if (gl_lights_checkside && ((planeh<light->Z() && ceiling) || (planeh>light->Z() && !ceiling)))
 		{
 			node = node->nextLight;
@@ -562,7 +562,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		gl_RenderState.EnableTextureMatrix(false);
 		break;
 
-	case GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY:
+	case GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY: // IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 		// Cleaned up legacy overbright brightening pass for flats
 		// Uses low-level DrawLightsCompat routine integrated with fixed constants
 		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);
@@ -1139,8 +1139,8 @@ void GLFlat::ProcessSector(sector_t * frontsector)
 		renderflags = SSRF_RENDER3DPLANES;
 		srf |= SSRF_RENDER3DPLANES;
 		// 3d-floors must not overlap!
-		double lastceilingheight = sector->CenterCeiling();	// render only in the range of the
-		double lastfloorheight = sector->CenterFloor();		// current sector part (if applicable)
+		float lastceilingheight = sector->CenterCeiling();	// render only in the range of the
+		float lastfloorheight = sector->CenterFloor();		// current sector part (if applicable)
 		F3DFloor * rover;
 		int k;
 
@@ -1158,7 +1158,7 @@ void GLFlat::ProcessSector(sector_t * frontsector)
 				if (rover->flags&FF_FOG && mDrawer->FixedColormap) continue;
 				if (!rover->top.copied && rover->flags&(FF_INVERTPLANES | FF_BOTHPLANES))
 				{
-					double ff_top = rover->top.plane->ZatPoint(sector->centerspot);
+					float ff_top = rover->top.plane->ZatPoint(sector->centerspot);
 					if (ff_top < lastceilingheight)
 					{
 						if (r_viewpoint.Pos.Z <= rover->top.plane->ZatPoint(r_viewpoint.Pos))
@@ -1172,7 +1172,7 @@ void GLFlat::ProcessSector(sector_t * frontsector)
 				}
 				if (!rover->bottom.copied && !(rover->flags&FF_INVERTPLANES))
 				{
-					double ff_bottom = rover->bottom.plane->ZatPoint(sector->centerspot);
+					float ff_bottom = rover->bottom.plane->ZatPoint(sector->centerspot);
 					if (ff_bottom < lastceilingheight)
 					{
 						if (r_viewpoint.Pos.Z <= rover->bottom.plane->ZatPoint(r_viewpoint.Pos))
@@ -1198,7 +1198,7 @@ void GLFlat::ProcessSector(sector_t * frontsector)
 				if (rover->flags&FF_FOG && mDrawer->FixedColormap) continue;
 				if (!rover->bottom.copied && rover->flags&(FF_INVERTPLANES | FF_BOTHPLANES))
 				{
-					double ff_bottom = rover->bottom.plane->ZatPoint(sector->centerspot);
+					float ff_bottom = rover->bottom.plane->ZatPoint(sector->centerspot);
 					if (ff_bottom > lastfloorheight || (rover->flags&FF_FIX))
 					{
 						if (r_viewpoint.Pos.Z >= rover->bottom.plane->ZatPoint(r_viewpoint.Pos))
@@ -1219,7 +1219,7 @@ void GLFlat::ProcessSector(sector_t * frontsector)
 				}
 				if (!rover->top.copied && !(rover->flags&FF_INVERTPLANES))
 				{
-					double ff_top = rover->top.plane->ZatPoint(sector->centerspot);
+					float ff_top = rover->top.plane->ZatPoint(sector->centerspot);
 					if (ff_top > lastfloorheight)
 					{
 						if (r_viewpoint.Pos.Z >= rover->top.plane->ZatPoint(r_viewpoint.Pos))

@@ -281,7 +281,8 @@ GLFlat* g_isCurrentlyGL1xDynlightFlatDrawing = nullptr;        // for GL1x/GL2x 
 GLWall* g_isCurrentlyGL1xDynlightWallDrawing = nullptr;        // for GL1x/GL2x modes only
 bool g_isCurrentlyGL1xFlatsDynlightOverbrightPass = false;     // for GL1x/GL2x modes only
 bool g_isCurrentlyGL1xWallsDynlightOverbrightPass = false;     // for GL1x/GL2x modes only
-bool g_isGL1xDynlightAcamglow = false;                         // for GL1x/GL2x modes only
+bool g_isGL1xDynlightAcamglowOnFlat = false;                   // for GL1x/GL2x modes only
+bool g_isGL1xDynlightAcamglowOnWall = false;                   // for GL1x/GL2x modes only
 extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes (in gl_flats.cpp, Draw method)
 extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes (in gl_walls_draw.cpp, Draw method)
 
@@ -970,20 +971,20 @@ float GL1x_light_intens_subtractive_transluc_cur = GL1x_light_intens_subtractive
 void gl_dynlightHandleSpecialLightsLegacy(float &r, float &g, float &b, bool isTransluscent, FDynamicLight* light)
 {
 	if (!light || !light->IsActive()) return;
+
+	// For regular modulated geometry dynlights only as others don't need overbright
 	if (g_isCurrentlyGL1xFlatsDynlightOverbrightPass)
 	{
-		// For regular modulated flats dynlights only as others don't need overbright
 		GL1x_light_intens_regular_cur *= gl_legacy_dynlight_overbright_flats;
 	}
 	if (g_isCurrentlyGL1xWallsDynlightOverbrightPass)
 	{
-		// For regular modulated walls dynlights only as others don't need overbright
 		GL1x_light_intens_regular_cur *= gl_legacy_dynlight_overbright_walls;
 	}
 
 	// CRITICAL NOTE: check translucency flag FIRST.
 	// This prevents general rules from overriding custom transparent material multipliers.
-	//--- 1. REGULAR MODULATED CHANNELS (TEMPORARILY COMMENTED OUT) ---
+	//--- 1. REGULAR MODULATED CHANNELS  ---
 	if (isTransluscent && !light->IsAdditive() && !light->IsSubtractive())
 	{
 		r *= GL1x_light_intens_regular_transluc_cur;
@@ -1029,7 +1030,7 @@ void gl_dynlightHandleSpecialLightsLegacy(float &r, float &g, float &b, bool isT
 	if (r < 0.0f) r = 0.0f; else if (r > 1.0f) r = 1.0f;
 	if (g < 0.0f) g = 0.0f; else if (g > 1.0f) g = 1.0f;
 	if (b < 0.0f) b = 0.0f; else if (b > 1.0f) b = 1.0f;
-} 
+}
 
 bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive)
 {
@@ -1057,11 +1058,11 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	radiusWalls = light->GetRadius();
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-	if (light != nullptr && light->IsCamGlowStraight()) { radiusWalls *= 0.5f; g_isGL1xDynlightAcamglow = true; }
+	if (light != nullptr && light->IsCamGlowStraight()) { radiusWalls *= 0.5f; g_isGL1xDynlightAcamglowOnWall = true; }
 
 	if (radiusWalls <= 0.f) return false;
 	if (distLight2Wall > radiusWalls) return false;
-	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y))
+	if (checkside && gl_lights_checkside && p.PointOnSide(lpos.X, lpos.Z, lpos.Y)) // clip lights
 	{
 		return false;
 	}
@@ -1088,7 +1089,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	fn = p.Normal();
 	fn.GetRightUp(right, up);
 
-	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - START ===
+	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGHT) - START ===
 	// The whole thing is done with a zscript spawning a special dynlight on players
 	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
 	// *Walls: expand the dynlight blob texture (gllight.png) vertically
@@ -1151,7 +1152,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		right *= dynamicHorizontalScale;  // Apply adaptive width scaling
 		up *= 0.32f;                  // Vertical expansion - massive up the whole wall height
 	}
-	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
+	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGHT) - FINISH ===
 
 	FVector3 tmpVec = fn * distLight2Wall;
 	nearPt = pos + tmpVec;
@@ -1321,11 +1322,19 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	}
 	if (g_isCurrentlyGL1xWallsDynlightOverbrightPass)
 	{
-		r *= gl_legacy_dynlight_overbright_walls;
-		g *= gl_legacy_dynlight_overbright_walls;
-		b *= gl_legacy_dynlight_overbright_walls;
+		if (g_isGL1xDynlightAcamglowOnWall)
+		{
+			r = 0.0f; g = 0.0f; b = 0.0f;
+		}
+		else
+		{
+			r *= gl_legacy_dynlight_overbright_walls;
+			g *= gl_legacy_dynlight_overbright_walls;
+			b *= gl_legacy_dynlight_overbright_walls;
+		}
 	}
 	gl_RenderState.SetColor(r, g, b);
+	g_isGL1xDynlightAcamglowOnWall = false; // reset the flag otherwise overbright will be disabled for all dynlight types!
 	return true;
 }
 
@@ -1354,7 +1363,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	radiusFlats = light->GetRadius();
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-	if (light != nullptr && light->IsCamGlowStraight()) { radiusFlats *= 0.5f; g_isGL1xDynlightAcamglow = true; }
+	if (light != nullptr && light->IsCamGlowStraight()) { radiusFlats *= 0.5f; g_isGL1xDynlightAcamglowOnFlat = true; }
 
 	if (radiusFlats <= 0.f) return false;
 	if (distLight2Flat > radiusFlats) return false;
@@ -1385,7 +1394,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	fn = p.Normal();
 	fn.GetRightUp(right, up);
 
-	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - START ===
+	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGHT) - START ===
 	// The whole thing is done with a zscript spawning a special dynlight on players
 	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
 	// *Walls: expand the dynlight blob texture (gllight.png) vertically
@@ -1502,7 +1511,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		// How far it stretches aside (left-right) from camera (less is farther)
 		up *= slopePerspectiveCorrection;
 	}
-	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
+	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGHT) - FINISH ===
 
 	FVector3 tmpVec = fn * distLight2Flat;
 	nearPt = pos + tmpVec;
@@ -1674,12 +1683,20 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 	if (g_isCurrentlyGL1xFlatsDynlightOverbrightPass)
 	{
-		r *= gl_legacy_dynlight_overbright_flats;
-		g *= gl_legacy_dynlight_overbright_flats;
-		b *= gl_legacy_dynlight_overbright_flats;
+		if (g_isGL1xDynlightAcamglowOnFlat)
+		{
+			r = 0.0f; g = 0.0f; b = 0.0f;
+		}
+		else
+		{
+			r *= gl_legacy_dynlight_overbright_flats;
+			g *= gl_legacy_dynlight_overbright_flats;
+			b *= gl_legacy_dynlight_overbright_flats;
+		}
 	}
 
 	gl_RenderState.SetColor(r, g, b);
+	g_isGL1xDynlightAcamglowOnFlat = false; // reset the flag otherwise overbright will be disabled for all dynlight types!
 	return true;
 }
 
@@ -1728,7 +1745,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //
 //	fn.GetRightUp(right, up);
 //
-//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - START ===
+//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGHT) - START ===
 //	// The whole thing is done with a zscript spawning a special dynlight on players
 //	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
 //	// *Walls: expand the dynlight blob texture (gllight.png) vertically
@@ -1791,7 +1808,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //		right *= dynamicHorizontalScale;  // Apply adaptive width scaling
 //		up *= 0.32f;                  // Vertical expansion - massive up the whole wall height
 //	}
-//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
+//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGHT) - FINISH ===
 //
 //	FVector3 tmpVec = fn * dist;
 //	nearPt = pos + tmpVec;
@@ -1896,7 +1913,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	fn = p.Normal();
 //	fn.GetRightUp(right, up);
 //
-//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - START ===
+//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGHT) - START ===
 //	// The whole thing is done with a zscript spawning a special dynlight on players
 //	// But to achieve STRAIGHT diminished lighting just like in software renderer for:
 //	// *Walls: expand the dynlight blob texture (gllight.png) vertically
@@ -2013,7 +2030,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //		// How far it stretches aside (left-right) from camera (less is farther)
 //		up *= slopePerspectiveCorrection;
 //	}
-//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGT) - FINISH ===
+//	// ===  CAMGLOW DYNLIGHT STRAIGHT (SIMULATE SOFTWARE DIMLIGHT) - FINISH ===
 //
 //	FVector3 tmpVec = fn * dist;
 //	nearPt = pos + tmpVec;
@@ -2093,7 +2110,7 @@ bool gl_SetupLightTexture()
 //==========================================================================
 bool gl_GetWallStaticLightmaps(seg_t *seg, float ztop, float zbottom, float *topLightmapColor, float *bottomLightmapColor)
 {
-	if (g_isGL1xDynlightAcamglow) return false;
+	if (g_isGL1xDynlightAcamglowOnWall) return false;
 	if (!seg || !seg->sidedef || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
 
 	topLightmapColor[0] = topLightmapColor[1] = topLightmapColor[2] = 0.0f;
@@ -2170,7 +2187,7 @@ bool gl_GetWallStaticLightmaps(seg_t *seg, float ztop, float zbottom, float *top
 
 bool gl_GetFlatStaticLightmaps(subsector_t *sub, const GLSectorPlane &secPlane, float *lightmapColor)
 {
-	if (g_isGL1xDynlightAcamglow) return false;
+	if (g_isGL1xDynlightAcamglowOnFlat) return false;
 	if (!sub || !sub->sector || !gl_lights || !gl_legacy_dynlight_baked_huge) return false;
 
 	lightmapColor[0] = lightmapColor[1] = lightmapColor[2] = 0.0f;
@@ -2603,7 +2620,7 @@ bool GLFlat::PutFlatCompat(bool fog)
 	//	alpha < 1.f - FLT_EPSILON || sector->lighthead == NULL) return false;
 
 	// That made game slower by 20-30% on regular maps without big radius dynlights, so
-	bool skiplightprocessing = sector->lighthead == NULL && (radiusFlats <= 256.0f || !g_isGL1xDynlightAcamglow);
+	bool skiplightprocessing = sector->lighthead == NULL && (radiusFlats <= 256.0f || !g_isGL1xDynlightAcamglowOnFlat);
 	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent ||
 		alpha < 1.f - FLT_EPSILON || skiplightprocessing) return false;
 
@@ -2768,7 +2785,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		}
 		g_isCurrentlyGL1xDynlightFlatDrawing = nullptr; // Clear immediately after evaluation!
 
-		if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY)
+		if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 		{
 			float overbrightFactor = clamp((float)gl_legacy_dynlight_overbright_flats, 0.0f, 0.2f);
 			if (overbrightFactor > 1.0f) overbrightFactor = 1.0f;
@@ -2793,7 +2810,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			t1 = { ptr->x, ptr->z, ptr->y };
 			FVector3 nearToVert = t1 - nearPt;
 
-			if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY)
+			if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 			{
 				float radius = light->GetRadius();
 				if (radius <= 0.0f) radius = 1.0f;
@@ -2820,7 +2837,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		// FIRST PASS: Multiplies existing floor texture by the projected light mask shape
 		GLRenderer->mVBO->RenderCurrent(ptr, GL_TRIANGLE_FAN);
 
-		if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY)
+		if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 		{
 			GLRenderer->mVBO->RenderCurrent(startPtr, GL_TRIANGLE_FAN);
 		}
@@ -2847,6 +2864,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 void GLFlat::DrawLightsCompat(int pass)
 {
 	// Set fog and global coloring for this pass
+	// pass GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 	if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY || pass == GLPASS_LIGHTTEX_ADDITIVE)
 	{
 		// Force-disable fixed hardware fog to fully eliminate the lipstick effect
@@ -2868,6 +2886,7 @@ void GLFlat::DrawLightsCompat(int pass)
 		if (sub)
 		{
 			// Bypass ss_renderflags filter completely for our overbright pass!
+			// pass GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 			if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY || (gl_drawinfo->ss_renderflags[sub->Index()] & renderflags))
 			{
 				DrawSubsectorLights(sub, pass);
