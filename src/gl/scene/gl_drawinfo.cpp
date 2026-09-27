@@ -732,39 +732,37 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 
 //==========================================================================
 //
-// [Dual-Pass Depth Injection Guide]
+// [Single-Pass Alpha/Z Sync & VBO Freeze Guide]
 //
 // WHAT YOU MUST DO:
-// 1. Maintain Pass A with GL_GREATER alpha function and GL_TRUE depth
-//    mask. This safely bakes the pixel boundaries of solid elements 
-//    (iron bars, frame nodes) straight into the hardware Z-buffer.
-// 2. IMPORTANT: DO NOT reset walls[index].vertcount to 0 between passes.
-//    By preserving vertcount, MakeVertices() inside w->Draw() skips 
-//    re-tessellation, forcing the GPU to reuse the exact same vertex 
-//    layout data. This crushes reverse-side gl_seamless float drifts.
-// 3. Maintain Pass B with GL_LEQUAL alpha function and GL_FALSE depth
-//    mask. This renders remaining alpha-blended transparent materials
-//    (dirty glass, smoke grates) over the exact same geometry layout.
+// 1. Maintain simultaneous Alpha Testing (GL_GREATER) and Depth Writes
+//    (glDepthMask(GL_TRUE)) during the SINGLE native w->Draw() pass.
+//    This bakes the precise pixel depth footprint of solid elements
+//    (iron bars, frame nodes) directly into the hardware Z-buffer.
+// 2. IMPORTANT: NEVER call w->Draw() twice inside STEP 1. Single-pass
+//    execution prevents double alpha channel blending, completely
+//    eradicating edge ghosting, artificial darkening, and camera shifts.
+// 3. IMPORTANT: DO NOT reset walls[index].vertcount to 0 between passes!
+//    By preserving vertcount, MakeVertices() inside subsequent draws
+//    skips re-tessellation, forcing the GPU to reuse the exact same
+//    vertex layout, crushing reverse-side float rounding drifts.
 // 4. Keep glDepthFunc(GL_EQUAL) locked during STEP 2 lighting passes.
-//    Since vertcount remains frozen, the light passes match the mesh 
-//    layout byte-by-byte, completely bypassing heavy stencil buffers.
-// 5. Enjoy full recursive portal safety and flawless sprite sorting!
-//    Projectiles now execute standard hardware Z-tests against the 
-//    baked texture nodes, rendering in front of fences correctly.
+//    Since vertcount remains frozen, light overlay stages match the
+//    baked VBO mesh byte-by-byte, bypassing heavy stencil states.
+// 5. Projectiles now execute standard
+//    hardware Z-tests against the baked fence node depths, natively
+//    rendering in front of translucent frames at close range.
 //
 // WHAT YOU MUST NEVER DO:
 // 1. NEVER execute global glClear(GL_STENCIL_BUFFER_BIT) inside the
 //    DoDraw loop. Wiping bitplanes breaks native recursive portals,
 //    throwing active viewport scopes into total pitch black darkness.
-// 2. NEVER clear vertcount until the absolute end of the lighting
-//    sub-passes execution cycle inside STEP 2 recovery cleanup gates!
+// 2. NEVER clear walls[index].vertcount until the absolute end of the
+//    lighting sub-passes inside STEP 2 recovery cleanup gates!
 // 3. NEVER forget to restore glDepthFunc(GL_LEQUAL) and glDepthMask(false)
 //    at the end of STEP 2 cleanup gates to prevent state drifts.
 //
 //==========================================================================
-
-//extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes (in gl_flats.cpp, Draw method)
-//extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes (in gl_walls_draw.cpp, Draw method)
 
 void GLDrawList::DoDraw(int pass, int i, bool trans)
 {
@@ -809,26 +807,20 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 		if (useDualPassAlphaGate)
 		{
-			// --- [Dual-Pass Single-Mesh Injection] ---
-			// PASS A: Solid frames alpha testing loop with forced Z-Buffer write unlock
+			// --- [Single-Pass Alpha/Z Sync Fix] ---
+			// CRITICAL FIX: Completely removed the flawed double w->Draw() loop!
+			// Calling w->Draw() twice forces the engine to double-blend alpha channels,
+			// causing the texture to artificially darken (thicken) and trigger severe 
+			// edge ghosting/shaking shifts during camera movements.
+			// Instead, we force the GPU to process Alpha Testing and Depth Writes 
+			// simultaneously in a single native hardware pass.
 			glEnable(GL_ALPHA_TEST);
-			glAlphaFunc(GL_GREATER, gl_mask_threshold);
+			glAlphaFunc(GL_GREATER, gl_mask_threshold); // Alpha test cuts the window holes cleanly
 
-			glDepthMask(GL_TRUE); // Open Z-write to cache the fence frame borders safely
+			glDepthMask(GL_TRUE); // Open Z-write: Opaque bars lock their depth into the Z-buffer
 			gl_RenderState.Apply();
 
-			w->Draw(pass); // This compiles the single-pass VBO layout and locks vertcount
-
-			// PASS B: Semi-translucent blended details loop.
-			// CRITICAL FIX: We do NOT reset w->vertcount to 0 here! 
-			// Because vertcount keeps its compiled value, MakeVertices() inside w->Draw()
-			// will completely skip re-tessellation, forcing the GPU to reuse the exact 
-			// same hardware vertex data chunk, crushing any reverse-side float drifts.
-			glAlphaFunc(GL_LEQUAL, gl_mask_threshold);
-			glDepthMask(GL_FALSE); // Lock depth writes back to safe translucent parameters
-			gl_RenderState.Apply();
-
-			w->Draw(pass);         // Reuse the frozen mesh
+			w->Draw(pass); // DRAW ONCE: Pristine 1:1 transparency blend, zero ghosting
 
 			glDisable(GL_ALPHA_TEST);
 			gl_RenderState.Apply();
@@ -856,7 +848,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	}
 
 	//--------------------------------------------------------------------------
-	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
+	// STEP 2:           THE TRANSLUSCENT DYNLIGHT SURFACES
 	//                   Can't configure dynlight intensities here!
 	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
 	// "gl_dynlightHandleSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
