@@ -738,13 +738,17 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 // 1. Maintain Pass A with GL_GREATER alpha function and GL_TRUE depth
 //    mask. This safely bakes the pixel boundaries of solid elements 
 //    (iron bars, frame nodes) straight into the hardware Z-buffer.
-// 2. Maintain Pass B with GL_LEQUAL alpha function and GL_FALSE depth
+// 2. IMPORTANT: DO NOT reset walls[index].vertcount to 0 between passes.
+//    By preserving vertcount, MakeVertices() inside w->Draw() skips 
+//    re-tessellation, forcing the GPU to reuse the exact same vertex 
+//    layout data. This crushes reverse-side gl_seamless float drifts.
+// 3. Maintain Pass B with GL_LEQUAL alpha function and GL_FALSE depth
 //    mask. This renders remaining alpha-blended transparent materials
-//    (dirty glass, smoke grates) without corrupting depth layers.
-// 3. Keep glDepthFunc(GL_EQUAL) locked during STEP 2 lighting passes.
-//    This forces the GPU to naturally drop dynamic light fragments 
-//    hitting alpha holes natively, bypassing heavy stencil states.
-// 4. Enjoy full recursive portal safety and flawless sprite sorting!
+//    (dirty glass, smoke grates) over the exact same geometry layout.
+// 4. Keep glDepthFunc(GL_EQUAL) locked during STEP 2 lighting passes.
+//    Since vertcount remains frozen, the light passes match the mesh 
+//    layout byte-by-byte, completely bypassing heavy stencil buffers.
+// 5. Enjoy full recursive portal safety and flawless sprite sorting!
 //    Projectiles now execute standard hardware Z-tests against the 
 //    baked texture nodes, rendering in front of fences correctly.
 //
@@ -752,9 +756,8 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 // 1. NEVER execute global glClear(GL_STENCIL_BUFFER_BIT) inside the
 //    DoDraw loop. Wiping bitplanes breaks native recursive portals,
 //    throwing active viewport scopes into total pitch black darkness.
-// 2. NEVER invoke gl_RenderState.SetMaterial or manually re-bind 
-//    wall texture pointer assets during multi-pass light texture draws.
-//    Altering units warps and stretches lightmap projection scales.
+// 2. NEVER clear vertcount until the absolute end of the lighting
+//    sub-passes execution cycle inside STEP 2 recovery cleanup gates!
 // 3. NEVER forget to restore glDepthFunc(GL_LEQUAL) and glDepthMask(false)
 //    at the end of STEP 2 cleanup gates to prevent state drifts.
 //
@@ -768,84 +771,92 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	int currentRenderType = drawitems[i].rendertype;
 	int index = drawitems[i].index;
 
-	//float flatAlpha, wallAlpha = 0.0f;
-	//if (g_isCurrentlyGLFlatDrawing != nullptr)
-	//{
-	//	flatAlpha = g_isCurrentlyGLFlatDrawing->alpha;
-	//}
-	//if (g_isCurrentlyGLWallDrawing != nullptr)
-	//{
-	//	wallAlpha = g_isCurrentlyGLWallDrawing->alpha;
-	//}
-
 	// STEP 1: RENDER ORIGINAL SURFACE WITH DUAL-PASS DEPTH INJECTION
 	const bool onlyLightOpaqueTextureAreas = true;
 	bool useDualPassAlphaGate = (gl.legacyMode && pass == GLPASS_TRANSLUCENT &&
 		currentRenderType == GLDIT_WALL && onlyLightOpaqueTextureAreas);
 
+	// Cache state machine options to prevent data leaks into global queues
+	GLboolean wasStencilEnabled = glIsEnabled(GL_STENCIL_TEST);
+	GLint originalStencilMask = 0;
+	GLint originalStencilFunc = 0;
+	GLint originalStencilRef = 0;
+	GLint originalStencilValueMask = 0;
+
+	if (useDualPassAlphaGate)
+	{
+		// Back up the active portal stencil chain parameters byte-by-byte
+		glGetIntegerv(GL_STENCIL_WRITEMASK, &originalStencilMask);
+		glGetIntegerv(GL_STENCIL_FUNC, &originalStencilFunc);
+		glGetIntegerv(GL_STENCIL_REF, &originalStencilRef);
+		glGetIntegerv(GL_STENCIL_VALUE_MASK, &originalStencilValueMask);
+	}
+
 	switch (drawitems[i].rendertype)
 	{
-		case GLDIT_FLAT:
+	case GLDIT_FLAT:
+	{
+		GLFlat * f = &flats[drawitems[i].index];
+		RenderFlat.Clock();
+		f->Draw(pass, trans);
+		RenderFlat.Unclock();
+		break;
+	}
+	case GLDIT_WALL:
+	{
+		GLWall * w = &walls[drawitems[i].index];
+		RenderWall.Clock();
+
+		if (useDualPassAlphaGate)
 		{
-			GLFlat * f = &flats[drawitems[i].index];
-			RenderFlat.Clock();
-			f->Draw(pass, trans);
-			RenderFlat.Unclock();
-			break;
+			// --- [Dual-Pass Single-Mesh Injection] ---
+			// PASS A: Solid frames alpha testing loop with forced Z-Buffer write unlock
+			glEnable(GL_ALPHA_TEST);
+			glAlphaFunc(GL_GREATER, gl_mask_threshold);
+
+			glDepthMask(GL_TRUE); // Open Z-write to cache the fence frame borders safely
+			gl_RenderState.Apply();
+
+			w->Draw(pass); // This compiles the single-pass VBO layout and locks vertcount
+
+			// PASS B: Semi-translucent blended details loop.
+			// CRITICAL FIX: We do NOT reset w->vertcount to 0 here! 
+			// Because vertcount keeps its compiled value, MakeVertices() inside w->Draw()
+			// will completely skip re-tessellation, forcing the GPU to reuse the exact 
+			// same hardware vertex data chunk, crushing any reverse-side float drifts.
+			glAlphaFunc(GL_LEQUAL, gl_mask_threshold);
+			glDepthMask(GL_FALSE); // Lock depth writes back to safe translucent parameters
+			gl_RenderState.Apply();
+
+			w->Draw(pass);         // Reuse the frozen mesh
+
+			glDisable(GL_ALPHA_TEST);
+			gl_RenderState.Apply();
 		}
-		case GLDIT_WALL:
+		else
 		{
-			GLWall * w = &walls[drawitems[i].index];
-			RenderWall.Clock();
-
-			if (useDualPassAlphaGate)
-			{
-				// --- [Hardware Depth Injection Pass] ---
-				// PASS A: Render only the completely solid/opaque parts of the fence texture.
-				// We FORCE enable Depth Buffer writing here! This bakes the exact pixel footprint 
-				// of the iron bars/solid window frames straight into the hardware Z-buffer.
-				glEnable(GL_ALPHA_TEST);
-				glAlphaFunc(GL_GREATER, gl_mask_threshold); // Pass solid texture segments only
-
-				glDepthMask(GL_TRUE); // UNLOCK Z-WRITE: Solid mesh nodes now block background elements!
-				gl_RenderState.Apply();
-
-				w->Draw(pass);
-
-				// PASS B: Render the remaining semi-translucent alpha blended details (dirty glass, smoke grates).
-				// We lock the depth buffer back to read-only to prevent alpha-sorting halos, 
-				// but we retain the smooth alpha blending curves.
-				glAlphaFunc(GL_LEQUAL, gl_mask_threshold); // Pass semi-transparent segments
-				glDepthMask(GL_FALSE);                     // Lock depth writes back to standard translucent defaults
-				gl_RenderState.Apply();
-
-				w->Draw(pass);
-
-				glDisable(GL_ALPHA_TEST);
-				gl_RenderState.Apply();
-			}
-			else
-			{
-				// Native path for non-masked normal walls
-				w->Draw(pass);
-			}
-			RenderWall.Unclock();
-			break;
+			w->Draw(pass);
 		}
-		case GLDIT_SPRITE:
-		{
-			// Clean native path: Sprites are now perfectly culled and sorted by the 
-			// custom hardware Z-buffer layout generated during Pass A of the walls!
-			GLSprite * s = &sprites[drawitems[i].index];
-			RenderSprite.Clock();
-			s->Draw(pass);
-			RenderSprite.Unclock();
-			break;
-		}
+		RenderWall.Unclock();
+		break;
+	}
+	case GLDIT_SPRITE:
+	{
+		GLSprite * s = &sprites[drawitems[i].index];
+		RenderSprite.Clock();
+		s->Draw(pass);
+		RenderSprite.Unclock();
+		break;
+	}
+	}
+
+	if (useDualPassAlphaGate)
+	{
+		glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
 	}
 
 	//--------------------------------------------------------------------------
-	// STEP 2:           THE TRANSLUSCENT DYNLIGHT SURFACES
+	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
 	//                   Can't configure dynlight intensities here!
 	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
 	// "gl_dynlightHandleSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
@@ -863,15 +874,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 			// completely extinguishing far-away flickering and sector side alternating artifacts
 			if (currentRenderType == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
 			{
-				glBlendEquation(GL_FUNC_ADD);
-				glEnable(GL_FOG);
-				glDepthMask(true);
-				glDepthFunc(GL_LEQUAL);
-				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				gl_RenderState.EnableFog(true);
-				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				gl_RenderState.Apply();
-				return;
+				return; // Safe and clean bypass on any distance before changing registers
 			}
 
 			if (gl_SetupLightTexture())
@@ -884,14 +887,13 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				glDisable(GL_FOG);
 				glDepthMask(false);
 
-				// --- [Pure Z-Buffer Lightmap Culling Gateway] ---
-				// If our dual-pass engine baked the wall layout during STEP 1, 
-				// we completely skip any stencil operations! 
-				// We force glDepthFunc(GL_EQUAL) to let the GPU drop light fragments 
-				// inside alpha holes natively. No stencil = 100% portal and skybox safety
 				if (useDualPassAlphaGate)
 				{
-					glDepthFunc(GL_EQUAL); // Light matches the solid frames layout only
+					// --- Hardware Lock Gateway ---
+					// Force strict GL_EQUAL depth matching over the locked VBO geometry mesh.
+					// Since vertcount wasn't wiped out, w->Draw reuses the identical layout points,
+					// thus removing reverse-side Z-fighting without touching stencil arrays
+					glDepthFunc(GL_EQUAL);
 				}
 				else
 				{
@@ -926,22 +928,35 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_DST_COLOR, GL_ONE);
-				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX);
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX); // Reuse frozen VBO
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX, trans);
 
 				// --- PASS 2: SPECIAL ADDITIVE LIGHTS PLACED ON PURPOSE CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE); // Reuse frozen VBO
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
 
 				// --- PASS 3: SPECIAL SUBTRACTIVE LIGHTS ANTI-ILLUMINATION CHANNEL ---
 				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX); // Reuse frozen VBO
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 
 				// RECOVERY AND CLEANUP
+				if (useDualPassAlphaGate)
+				{
+					// --- THE LIFELINE CLEANUP GATE ---
+					// Safely reset our wall state tracking bounds so next elements compile cleanly
+					walls[index].vertcount = 0;
+
+					glStencilMask(originalStencilMask);
+					glStencilFunc(originalStencilFunc, originalStencilRef, originalStencilValueMask);
+
+					if (!wasStencilEnabled) glDisable(GL_STENCIL_TEST);
+					else                    glEnable(GL_STENCIL_TEST);
+				}
+
 				if (maskColorChannelsOut)
 				{
 					gl_RenderState.ResetColorMask();
