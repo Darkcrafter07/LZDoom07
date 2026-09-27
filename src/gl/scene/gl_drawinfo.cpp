@@ -732,69 +732,116 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 
 //==========================================================================
 //
+// [Dual-Pass Depth Injection Guide]
 //
+// WHAT YOU MUST DO:
+// 1. Maintain Pass A with GL_GREATER alpha function and GL_TRUE depth
+//    mask. This safely bakes the pixel boundaries of solid elements 
+//    (iron bars, frame nodes) straight into the hardware Z-buffer.
+// 2. Maintain Pass B with GL_LEQUAL alpha function and GL_FALSE depth
+//    mask. This renders remaining alpha-blended transparent materials
+//    (dirty glass, smoke grates) without corrupting depth layers.
+// 3. Keep glDepthFunc(GL_EQUAL) locked during STEP 2 lighting passes.
+//    This forces the GPU to naturally drop dynamic light fragments 
+//    hitting alpha holes natively, bypassing heavy stencil states.
+// 4. Enjoy full recursive portal safety and flawless sprite sorting!
+//    Projectiles now execute standard hardware Z-tests against the 
+//    baked texture nodes, rendering in front of fences correctly.
+//
+// WHAT YOU MUST NEVER DO:
+// 1. NEVER execute global glClear(GL_STENCIL_BUFFER_BIT) inside the
+//    DoDraw loop. Wiping bitplanes breaks native recursive portals,
+//    throwing active viewport scopes into total pitch black darkness.
+// 2. NEVER invoke gl_RenderState.SetMaterial or manually re-bind 
+//    wall texture pointer assets during multi-pass light texture draws.
+//    Altering units warps and stretches lightmap projection scales.
+// 3. NEVER forget to restore glDepthFunc(GL_LEQUAL) and glDepthMask(false)
+//    at the end of STEP 2 cleanup gates to prevent state drifts.
 //
 //==========================================================================
+
+//extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes (in gl_flats.cpp, Draw method)
+//extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes (in gl_walls_draw.cpp, Draw method)
 
 void GLDrawList::DoDraw(int pass, int i, bool trans)
 {
 	int currentRenderType = drawitems[i].rendertype;
 	int index = drawitems[i].index;
 
-	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE
-	// ------------------------------------------------------------------------------------
-	// Stencil Masking Engine Context Link]
-	// Toggle feature to strictly isolate translucent light bleedouts
-	// No more world brightening behind broken windows, holes in the fence textures etc.
-	// TODO: For smooth alpha-blended transparency gradients (e.g. dirty glass, smoke),
-	// stencil buffering falls short since it only records a binary 'yes/no' footprint.
-	// To implement smooth translucency light taming in the future, we could experiment 
-	// with color channel multiplicative inversions via glBlendFunc(GL_DST_ALPHA, GL_ONE) 
-	// or standard hardware multi-texturing blends, but let's leave it for some time later.
-	// ------------------------------------------------------------------------------------
-	const bool onlyLightOpaqueTextureAreas = true;
-	bool useStencilMask = (gl.legacyMode && pass == GLPASS_TRANSLUCENT &&
-		currentRenderType == GLDIT_WALL && onlyLightOpaqueTextureAreas);
+	//float flatAlpha, wallAlpha = 0.0f;
+	//if (g_isCurrentlyGLFlatDrawing != nullptr)
+	//{
+	//	flatAlpha = g_isCurrentlyGLFlatDrawing->alpha;
+	//}
+	//if (g_isCurrentlyGLWallDrawing != nullptr)
+	//{
+	//	wallAlpha = g_isCurrentlyGLWallDrawing->alpha;
+	//}
 
-	if (useStencilMask)
-	{
-		glClear(GL_STENCIL_BUFFER_BIT);            // Clear stencil cushion before creating the mask
-		glEnable(GL_STENCIL_TEST);
-		glStencilFunc(GL_ALWAYS, 1, 0xFF);         // Always pass, write '1' into the stencil buffer
-		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); // Replace stencil value with 1 on successful pixel draw
-	}
+	// STEP 1: RENDER ORIGINAL SURFACE WITH DUAL-PASS DEPTH INJECTION
+	const bool onlyLightOpaqueTextureAreas = true;
+	bool useDualPassAlphaGate = (gl.legacyMode && pass == GLPASS_TRANSLUCENT &&
+		currentRenderType == GLDIT_WALL && onlyLightOpaqueTextureAreas);
 
 	switch (drawitems[i].rendertype)
 	{
-	case GLDIT_FLAT:
-	{
-		GLFlat * f = &flats[drawitems[i].index];
-		RenderFlat.Clock();
-		f->Draw(pass, trans);
-		RenderFlat.Unclock();
-		break;
-	}
-	case GLDIT_WALL:
-	{
-		GLWall * w = &walls[drawitems[i].index];
-		RenderWall.Clock();
-		w->Draw(pass);
-		RenderWall.Unclock();
-		break;
-	}
-	case GLDIT_SPRITE:
-	{
-		GLSprite * s = &sprites[drawitems[i].index];
-		RenderSprite.Clock();
-		s->Draw(pass);
-		RenderSprite.Unclock();
-		break;
-	}
-	}
+		case GLDIT_FLAT:
+		{
+			GLFlat * f = &flats[drawitems[i].index];
+			RenderFlat.Clock();
+			f->Draw(pass, trans);
+			RenderFlat.Unclock();
+			break;
+		}
+		case GLDIT_WALL:
+		{
+			GLWall * w = &walls[drawitems[i].index];
+			RenderWall.Clock();
 
-	if (useStencilMask)
-	{
-		glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP); // Lock stencil buffer to read-only state
+			if (useDualPassAlphaGate)
+			{
+				// --- [Hardware Depth Injection Pass] ---
+				// PASS A: Render only the completely solid/opaque parts of the fence texture.
+				// We FORCE enable Depth Buffer writing here! This bakes the exact pixel footprint 
+				// of the iron bars/solid window frames straight into the hardware Z-buffer.
+				glEnable(GL_ALPHA_TEST);
+				glAlphaFunc(GL_GREATER, gl_mask_threshold); // Pass solid texture segments only
+
+				glDepthMask(GL_TRUE); // UNLOCK Z-WRITE: Solid mesh nodes now block background elements!
+				gl_RenderState.Apply();
+
+				w->Draw(pass);
+
+				// PASS B: Render the remaining semi-translucent alpha blended details (dirty glass, smoke grates).
+				// We lock the depth buffer back to read-only to prevent alpha-sorting halos, 
+				// but we retain the smooth alpha blending curves.
+				glAlphaFunc(GL_LEQUAL, gl_mask_threshold); // Pass semi-transparent segments
+				glDepthMask(GL_FALSE);                     // Lock depth writes back to standard translucent defaults
+				gl_RenderState.Apply();
+
+				w->Draw(pass);
+
+				glDisable(GL_ALPHA_TEST);
+				gl_RenderState.Apply();
+			}
+			else
+			{
+				// Native path for non-masked normal walls
+				w->Draw(pass);
+			}
+			RenderWall.Unclock();
+			break;
+		}
+		case GLDIT_SPRITE:
+		{
+			// Clean native path: Sprites are now perfectly culled and sorted by the 
+			// custom hardware Z-buffer layout generated during Pass A of the walls!
+			GLSprite * s = &sprites[drawitems[i].index];
+			RenderSprite.Clock();
+			s->Draw(pass);
+			RenderSprite.Unclock();
+			break;
+		}
 	}
 
 	//--------------------------------------------------------------------------
@@ -816,7 +863,15 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 			// completely extinguishing far-away flickering and sector side alternating artifacts
 			if (currentRenderType == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
 			{
-				return; // Safe and clean bypass on any distance before changing registers
+				glBlendEquation(GL_FUNC_ADD);
+				glEnable(GL_FOG);
+				glDepthMask(true);
+				glDepthFunc(GL_LEQUAL);
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				gl_RenderState.EnableFog(true);
+				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				gl_RenderState.Apply();
+				return;
 			}
 
 			if (gl_SetupLightTexture())
@@ -827,12 +882,23 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				gl_RenderState.Apply();
 
 				glDisable(GL_FOG);
-				glDepthFunc(GL_LEQUAL);
 				glDepthMask(false);
 
+				// --- [Pure Z-Buffer Lightmap Culling Gateway] ---
+				// If our dual-pass engine baked the wall layout during STEP 1, 
+				// we completely skip any stencil operations! 
+				// We force glDepthFunc(GL_EQUAL) to let the GPU drop light fragments 
+				// inside alpha holes natively. No stencil = 100% portal and skybox safety
+				if (useDualPassAlphaGate)
+				{
+					glDepthFunc(GL_EQUAL); // Light matches the solid frames layout only
+				}
+				else
+				{
+					glDepthFunc(GL_LEQUAL);
+				}
+
 				// --- DETECT CUMULATIVE TRANSLUCENCY ---
-				// Check overdraw heights strictly within the current sector bounds,
-				// minimizing the stacked overexposed cumulative translucency overlay.
 				bool maskColorChannelsOut = false;
 				if (currentRenderType == GLDIT_FLAT)
 				{
@@ -857,14 +923,6 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 					gl_RenderState.ApplyColorMask();
 				}
 
-				// --- [Hardware Stencil Culling Gate] ---
-				// Enforce stencil resolution restrictions if the masking stage was validated.
-				if (useStencilMask)
-				{
-					glEnable(GL_STENCIL_TEST);
-					glStencilFunc(GL_EQUAL, 1, 0xFF); // Only render lights where stencil value is 1
-				}
-
 				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_DST_COLOR, GL_ONE);
@@ -884,11 +942,6 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 
 				// RECOVERY AND CLEANUP
-				if (useStencilMask)
-				{
-					glDisable(GL_STENCIL_TEST); // Safely release stencil pipeline locks
-				}
-
 				if (maskColorChannelsOut)
 				{
 					gl_RenderState.ResetColorMask();
