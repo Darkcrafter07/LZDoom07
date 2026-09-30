@@ -562,7 +562,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		gl_RenderState.EnableTextureMatrix(false);
 		break;
 
-	case GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY: // IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
+	case GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY: // IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 		// Cleaned up legacy overbright brightening pass for flats
 		// Uses low-level DrawLightsCompat routine integrated with fixed constants
 		gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);

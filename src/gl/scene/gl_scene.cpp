@@ -364,7 +364,8 @@ void GLSceneDrawer::RenderScene(int recursion)
 		{
 			RenderMultipassStuff();
 
-			//// --- Legacy GL1x/GL2x overbright dynlights pass - START ---
+			// DISABLED DUE TO BETTER IMPLEMENTATION FOUND
+			//	// --- Legacy GL1x/GL2x overbright dynlights pass - START ---
 			//if (gl_legacy_dynlight_overbright && GLRenderer && GLRenderer->mLightCount > 0 && !FixedColormap)
 			//{
 			//	// Pure OpenGL 1.1 State Machine Lock - 100% isolated from gl_RenderState caches!
@@ -384,31 +385,31 @@ void GLSceneDrawer::RenderScene(int recursion)
 			//	// --- PART 1: WALLS OVERBRIGHT PIPELINE SPEED-UP ---
 			//	// We call DrawWalls ONLY if the specific list actually contains geometry to render!
 			//	if (dlists[GLLDL_WALLS_PLAIN].drawitems.Size() > 0)
-			//		dlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//		dlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY);
 			//
 			//	if (dlists[GLLDL_WALLS_MASKED].drawitems.Size() > 0)
-			//		dlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//		dlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY);
 			//
 			//	if (dlists[GLLDL_WALLS_FOG].drawitems.Size() > 0)
-			//		dlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//		dlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY);
 			//
 			//	if (dlists[GLLDL_WALLS_FOGMASKED].drawitems.Size() > 0)
-			//		dlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//		dlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY);
 			//
 			//
 			//	// --- PART 2: FLATS OVERBRIGHT PIPELINE SPEED-UP ---
 			//	// Replicate the identical zero-overhead size guarding for floors and ceilings!
 			//	if (dlists[GLLDL_FLATS_PLAIN].drawitems.Size() > 0)
-			//		dlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//		dlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY);
 			//
 			//	if (dlists[GLLDL_FLATS_MASKED].drawitems.Size() > 0)
-			//		dlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//		dlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY);
 			//
 			//	if (dlists[GLLDL_FLATS_FOG].drawitems.Size() > 0)
-			//		dlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//		dlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY);
 			//
 			//	if (dlists[GLLDL_FLATS_FOGMASKED].drawitems.Size() > 0)
-			//		dlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY);
+			//		dlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY);
 			//
 			//
 			//	// FIXED-FUNCTION SYMMETRIC CONTEXT RESET
@@ -444,7 +445,7 @@ void GLSceneDrawer::RenderScene(int recursion)
 			//	// THE MONOLITHIC SYNCHRONIZATION FLUSH
 			//	gl_RenderState.Apply();
 			//}
-			//// --- Legacy GL1x/GL2x overbright dynlights pass - FINISH ---
+			//	// --- Legacy GL1x/GL2x overbright dynlights pass - FINISH ---
 
 		}
 

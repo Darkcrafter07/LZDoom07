@@ -128,12 +128,12 @@ class FRenderState
 
 	FShader *activeShader;
 
-	EPassType mPassType = NORMAL_PASS;
 	int mNumDrawBuffers = 1;
 
 	bool ApplyShader();
 
 public:
+	EPassType mPassType = NORMAL_PASS;
 
 	VSMatrix mProjectionMatrix;
 	VSMatrix mViewMatrix;
@@ -153,6 +153,23 @@ public:
 
 	void SetMaterial(FMaterial *mat, int clampmode, int translation, int overrideshader, bool alphatexture)
 	{
+		// --- LZDoom07 Null Pointer Context Recovery Link ---
+		// If the material is null, we MUST NOT just call return!
+		// Leaving the function early causes a fatal State Drift inside fixed-function registers,
+		// leaving the blending and texture environment units corrupted, which turns the map black.
+		// Instead, we safely sanitize the state machine to default parameters before escaping.
+		if (mat == nullptr || mat->tex == nullptr)
+		{
+			mTempTM = TM_MODULATE;
+			mEffectState = -1;
+			mShaderTimer = 0;
+			
+			// Force-disable active texturing to safely unbind broken pipeline slots
+			EnableTexture(false);
+			Apply();
+			return; // Registry clean, safe to exit now!
+		}
+
 		// alpha textures need special treatment in the legacy renderer because withouz shaders they need a different texture.
 		if (alphatexture &&  gl.legacyMode) translation = INT_MAX;
 		

@@ -553,23 +553,23 @@ void FRenderState::ApplyFixedFunction()
 		float fogDensMul = 2.0f; float fogColorMul = 1.0f;
 		if (gl_lights && fogColInitR >= 5 && fogColInitG >= 5 && fogColInitB >= 5)
 		{
-			if      (lightlevel <= 88)                      { fogDensMul = 1.0f;  fogColorMul = 1.0f;  }
+			if      (lightlevel <= 88)                      { fogDensMul = 1.00f; fogColorMul = 1.00f; }
 			else if (lightlevel >= 89 && lightlevel < 96)   { fogDensMul = 1.05f; fogColorMul = 0.99f; }
 			else if (lightlevel >= 96 && lightlevel < 104)  { fogDensMul = 1.15f; fogColorMul = 0.98f; }
 			else if (lightlevel >= 104 && lightlevel < 112) { fogDensMul = 1.45f; fogColorMul = 0.97f; }
 			else if (lightlevel >= 112 && lightlevel < 120) { fogDensMul = 1.58f; fogColorMul = 0.96f; }
 			else if (lightlevel >= 120 && lightlevel < 128) { fogDensMul = 1.75f; fogColorMul = 0.95f; }
-			else if (lightlevel >= 128 && lightlevel < 136) { fogDensMul = 2.0f;  fogColorMul = 0.94f; }
+			else if (lightlevel >= 128 && lightlevel < 136) { fogDensMul = 2.00f; fogColorMul = 0.94f; }
 			else if (lightlevel >= 136 && lightlevel < 144) { fogDensMul = 2.12f; fogColorMul = 0.93f; }
 			else if (lightlevel >= 144 && lightlevel < 152) { fogDensMul = 2.24f; fogColorMul = 0.92f; }
 			else if (lightlevel >= 152 && lightlevel < 160) { fogDensMul = 2.24f; fogColorMul = 0.91f; }
-			else if (lightlevel >= 160 && lightlevel < 168) { fogDensMul = 2.0f;  fogColorMul = 0.91f; }
+			else if (lightlevel >= 160 && lightlevel < 168) { fogDensMul = 2.00f; fogColorMul = 0.91f; }
 			else if (lightlevel >= 168 && lightlevel < 176) { fogDensMul = 1.88f; fogColorMul = 0.92f; }
 			else if (lightlevel >= 176 && lightlevel < 184) { fogDensMul = 1.75f; fogColorMul = 0.93f; }
 			else if (lightlevel >= 184 && lightlevel < 192) { fogDensMul = 1.65f; fogColorMul = 0.95f; }
-			else if (lightlevel >= 192 && lightlevel < 200) { fogDensMul = 1.5f;  fogColorMul = 0.97f; }
+			else if (lightlevel >= 192 && lightlevel < 200) { fogDensMul = 1.50f; fogColorMul = 0.97f; }
 			else if (lightlevel >= 200 && lightlevel < 216) { fogDensMul = 1.25f; fogColorMul = 0.99f; }
-			else                                            { fogDensMul = 1.12f; fogColorMul = 1.0f;  }
+			else                                            { fogDensMul = 1.12f; fogColorMul = 1.00f; }
 
 			//if (!g_isCurrentlyGLSpriteDrawing) fogDensMul *= 1.5f; // in case you want even more fog but why?
 
@@ -1057,6 +1057,10 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	distLight2Wall = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 	radiusWalls = light->GetRadius();
 
+	// Turn off overbright for the camglow dynlight
+	if (gl_RenderState.mPassType == (EPassType)GLPASS_LIGHTTEX_OVERBRIGHT2_LEGACY)
+	{ if (light != nullptr && light->IsCamGlowStraight()) return false; }
+
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
 	if (light != nullptr && light->IsCamGlowStraight()) { radiusWalls *= 0.5f; g_isGL1xDynlightAcamglowOnWall = true; }
 
@@ -1320,19 +1324,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	{
 		gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	}
-	if (g_isCurrentlyGL1xWallsDynlightOverbrightPass)
-	{
-		if (g_isGL1xDynlightAcamglowOnWall)
-		{
-			r = 0.0f; g = 0.0f; b = 0.0f;
-		}
-		else
-		{
-			r *= gl_legacy_dynlight_overbright_walls;
-			g *= gl_legacy_dynlight_overbright_walls;
-			b *= gl_legacy_dynlight_overbright_walls;
-		}
-	}
+
 	gl_RenderState.SetColor(r, g, b);
 	g_isGL1xDynlightAcamglowOnWall = false; // reset the flag otherwise overbright will be disabled for all dynlight types!
 	return true;
@@ -1361,6 +1353,10 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 	distLight2Flat = fabsf(p.DistToPoint(lpos.X, lpos.Z, lpos.Y));
 	radiusFlats = light->GetRadius();
+
+	// Turn off overbright for the camglow dynlight
+	if (gl_RenderState.mPassType == (EPassType)GLPASS_LIGHTTEX_OVERBRIGHT2_LEGACY)
+	{ if (light != nullptr && light->IsCamGlowStraight()) return false; }
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
 	if (light != nullptr && light->IsCamGlowStraight()) { radiusFlats *= 0.5f; g_isGL1xDynlightAcamglowOnFlat = true; }
@@ -1672,27 +1668,11 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	{
 		gl_RenderState.BlendEquation(GL_FUNC_REVERSE_SUBTRACT);
 		float length = float(FVector3(r, g, b).Length());
-		r = length - r;
-		g = length - g;
-		b = length - b;
+		r = length - r; g = length - g; b = length - b;
 	}
 	else
 	{
 		gl_RenderState.BlendEquation(GL_FUNC_ADD);
-	}
-
-	if (g_isCurrentlyGL1xFlatsDynlightOverbrightPass)
-	{
-		if (g_isGL1xDynlightAcamglowOnFlat)
-		{
-			r = 0.0f; g = 0.0f; b = 0.0f;
-		}
-		else
-		{
-			r *= gl_legacy_dynlight_overbright_flats;
-			g *= gl_legacy_dynlight_overbright_flats;
-			b *= gl_legacy_dynlight_overbright_flats;
-		}
 	}
 
 	gl_RenderState.SetColor(r, g, b);
@@ -2663,6 +2643,9 @@ bool GLFlat::PutFlatCompat(bool fog)
 
 void GLWall::RenderFogBoundaryCompat()
 {
+	const float invMul255 = 1.0f / 255.0f;
+	const float invMul62500 = 1.0f / 62500.0f;
+
 	// without shaders some approximation is needed. This won't look as good
 	// as the shader version but it's an acceptable compromise.
 	float fogdensity = gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
@@ -2671,10 +2654,10 @@ void GLWall::RenderFogBoundaryCompat()
 	float dist2 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, glseg.x2, glseg.y2);
 
 	// these values were determined by trial and error and are scale dependent!
-	float fogd1 = (0.95f - exp(-fogdensity * dist1 / 62500.f)) * 1.05f;
-	float fogd2 = (0.95f - exp(-fogdensity * dist2 / 62500.f)) * 1.05f;
+	float fogd1 = (0.95f - exp(-fogdensity * dist1 * invMul62500)) * 1.05f;
+	float fogd2 = (0.95f - exp(-fogdensity * dist2 * invMul62500)) * 1.05f;
 
-	float fc[4] = { Colormap.FadeColor.r / 255.0f,Colormap.FadeColor.g / 255.0f,Colormap.FadeColor.b / 255.0f,fogd2 };
+	float fc[4] = { Colormap.FadeColor.r * invMul255,Colormap.FadeColor.g * invMul255,Colormap.FadeColor.b * invMul255,fogd2 };
 
 	gl_RenderState.EnableTexture(false);
 	gl_RenderState.EnableFog(false);
@@ -2785,7 +2768,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		}
 		g_isCurrentlyGL1xDynlightFlatDrawing = nullptr; // Clear immediately after evaluation!
 
-		if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
+		if (pass == GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 		{
 			float overbrightFactor = clamp((float)gl_legacy_dynlight_overbright_flats, 0.0f, 0.2f);
 			if (overbrightFactor > 1.0f) overbrightFactor = 1.0f;
@@ -2810,7 +2793,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			t1 = { ptr->x, ptr->z, ptr->y };
 			FVector3 nearToVert = t1 - nearPt;
 
-			if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
+			if (pass == GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 			{
 				float radius = light->GetRadius();
 				if (radius <= 0.0f) radius = 1.0f;
@@ -2837,7 +2820,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		// FIRST PASS: Multiplies existing floor texture by the projected light mask shape
 		GLRenderer->mVBO->RenderCurrent(ptr, GL_TRIANGLE_FAN);
 
-		if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
+		if (pass == GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY) // DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
 		{
 			GLRenderer->mVBO->RenderCurrent(startPtr, GL_TRIANGLE_FAN);
 		}
@@ -2864,8 +2847,8 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 void GLFlat::DrawLightsCompat(int pass)
 {
 	// Set fog and global coloring for this pass
-	// pass GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
-	if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY || pass == GLPASS_LIGHTTEX_ADDITIVE)
+	// pass GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
+	if (pass == GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY || pass == GLPASS_LIGHTTEX_ADDITIVE)
 	{
 		// Force-disable fixed hardware fog to fully eliminate the lipstick effect
 		gl_RenderState.EnableFog(false);
@@ -2886,8 +2869,8 @@ void GLFlat::DrawLightsCompat(int pass)
 		if (sub)
 		{
 			// Bypass ss_renderflags filter completely for our overbright pass!
-			// pass GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
-			if (pass == GLPASS_LIGHTTEXT_OVERBRIGHT1_LEGACY || (gl_drawinfo->ss_renderflags[sub->Index()] & renderflags))
+			// pass GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY IS DISABLED AND UNUSED BUT CAN SHOW HOW TO DO IT ALTERNATIVELY (in gl_scene.cpp)
+			if (pass == GLPASS_LIGHTTEX_OVERBRIGHT1_LEGACY || (gl_drawinfo->ss_renderflags[sub->Index()] & renderflags))
 			{
 				DrawSubsectorLights(sub, pass);
 			}
@@ -3311,31 +3294,29 @@ void GLSceneDrawer::RenderMultipassStuff()
 		{
 			gl_RenderState.EnableTexture(true);
 			gl_RenderState.EnableBrightmap(false);
-			gl_RenderState.EnableFog(false); // Disengage fog to let photon glare burn crystal clean
+			gl_RenderState.EnableFog(false);
 
-			glDepthFunc(GL_EQUAL); // Strictly lock vectors to existing geometry depth steps
+			glDepthFunc(GL_EQUAL);
 			glDepthMask(false);
 
-			// Engage true hardware overbright overlay blend curves
 			glBlendEquation(GL_FUNC_ADD);
-			glBlendFunc(GL_DST_COLOR, GL_ONE); // Pure photo-additive hardware stack
+			glBlendFunc(GL_DST_COLOR, GL_ONE);
 
-			// Re-draw lightmaps strictly over standard visible surfaces to multiply brightness
-			g_isCurrentlyGL1xWallsDynlightOverbrightPass = true;
+			// The state link: tag the active pipeline context as GLPASS_LIGHTTEX_OVERBRIGHT2_LEGACY
+			gl_RenderState.mPassType = (EPassType)GLPASS_LIGHTTEX_OVERBRIGHT2_LEGACY;
+
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOGMASKED].DrawWalls(GLPASS_LIGHTTEX);
-			g_isCurrentlyGL1xWallsDynlightOverbrightPass = false;
 
-			g_isCurrentlyGL1xFlatsDynlightOverbrightPass = true;
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
+			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
-			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOGMASKED].DrawFlats(GLPASS_LIGHTTEX);
-			g_isCurrentlyGL1xFlatsDynlightOverbrightPass = false;
+
+			// Factory state recovery reset
+			gl_RenderState.mPassType = NORMAL_PASS;
 		}
 	}
-
-	glDepthMask(true);
 
 	// Cleanup
 	glDepthFunc(GL_LESS);

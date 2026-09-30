@@ -687,8 +687,10 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 	float xscaleMdldef, yscaleMdldef, xyscaleMdldef, zscaleMdldef = 1.0f;
 	float xyscaleMap, zscaleMap = 1.0f;
 	float finalScaleX, finalScaleZ = 1.0f;
-	float map2mdldefRatioXY, mdldef2mapRatioXY = 1.0f;
-	float map2mdldefRatioXYinv, mdldef2mapRatioXYinv = 1.0f;
+	float map2mdldefRatioXY = 1.0f;
+	float mdldef2mapRatioXY = 1.0f;
+	float map2mdldefRatioXYinv = 1.0f;
+	float mdldef2mapRatioXYinv = 1.0f;
 	float scaleZcombo, scaleZcomboInvCompens = 1.0f;
 
 	bool isClassTypeValid = (ti != nullptr && (uintptr_t)ti > 0x10000);
