@@ -537,7 +537,18 @@ void GLSceneDrawer::RenderScene(int recursion)
 		gl_RenderState.SetColor(intensity, intensity, intensity, 1.0f);
 
 		// 3. Precision & Depth Control
-		glDepthFunc(GL_EQUAL);
+		if (gl_seamless) // aka "gl_render_precise" quality dynamic light rendering mode
+		{
+			// in this mode it zfights so we pull the brightmaps up a little
+			glEnable(GL_POLYGON_OFFSET_FILL);
+			glPolygonOffset(-0.125f, -0.125f);
+			glDepthFunc(GL_LEQUAL); // also different depth otherwise walls get darker
+		}
+		else
+		{
+			glDepthFunc(GL_EQUAL);  // for speed mode we use regular depth sorting
+		}
+
 		glDepthMask(false);
 
 		// 4. Draw Static Geometry Lists
@@ -560,6 +571,10 @@ void GLSceneDrawer::RenderScene(int recursion)
 		}
 
 		// 6. Restore states
+		if (gl_seamless)
+		{
+			glDisable(GL_POLYGON_OFFSET_FILL);
+		}
 		glDepthFunc(GL_LESS);
 		glDepthMask(true);
 		gl_RenderState.EnableFog(true);
