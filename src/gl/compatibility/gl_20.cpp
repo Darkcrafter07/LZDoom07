@@ -1325,6 +1325,13 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 		gl_RenderState.BlendEquation(GL_FUNC_ADD);
 	}
 
+	if (g_isCurrentlyGL1xWallsDynlightOverbrightPass)
+	{
+		r *= gl_legacy_dynlight_overbright_walls;
+		g *= gl_legacy_dynlight_overbright_walls;
+		b *= gl_legacy_dynlight_overbright_walls;
+	}
+
 	gl_RenderState.SetColor(r, g, b);
 	g_isGL1xDynlightAcamglowOnWall = false; // reset the flag otherwise overbright will be disabled for all dynlight types!
 	return true;
@@ -1673,6 +1680,13 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	else
 	{
 		gl_RenderState.BlendEquation(GL_FUNC_ADD);
+	}
+
+	if (g_isCurrentlyGL1xFlatsDynlightOverbrightPass)
+	{
+		r *= gl_legacy_dynlight_overbright_flats;
+		g *= gl_legacy_dynlight_overbright_flats;
+		b *= gl_legacy_dynlight_overbright_flats;
 	}
 
 	gl_RenderState.SetColor(r, g, b);
@@ -3305,13 +3319,17 @@ void GLSceneDrawer::RenderMultipassStuff()
 			// The state link: tag the active pipeline context as GLPASS_LIGHTTEX_OVERBRIGHT2_LEGACY
 			gl_RenderState.mPassType = (EPassType)GLPASS_LIGHTTEX_OVERBRIGHT2_LEGACY;
 
+			g_isCurrentlyGL1xWallsDynlightOverbrightPass = true;
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_MASKED].DrawWalls(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_WALLS_FOG].DrawWalls(GLPASS_LIGHTTEX);
+			g_isCurrentlyGL1xWallsDynlightOverbrightPass = false;
 
+			g_isCurrentlyGL1xFlatsDynlightOverbrightPass = true;
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_MASKED].DrawFlats(GLPASS_LIGHTTEX);
 			gl_drawinfo->dldrawlists[GLLDL_FLATS_FOG].DrawFlats(GLPASS_LIGHTTEX);
+			g_isCurrentlyGL1xFlatsDynlightOverbrightPass = false;
 
 			// Factory state recovery reset
 			gl_RenderState.mPassType = NORMAL_PASS;
