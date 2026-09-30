@@ -2614,7 +2614,7 @@ bool GLFlat::PutFlatCompat(bool fog)
 	//	alpha < 1.f - FLT_EPSILON || sector->lighthead == NULL) return false;
 
 	// That made game slower by 20-30% on regular maps without big radius dynlights, so
-	bool skiplightprocessing = sector->lighthead == NULL && (radiusFlats <= 256.0f || !g_isGL1xDynlightAcamglowOnFlat);
+	bool skiplightprocessing = sector->lighthead == NULL && (radiusFlats <= 256.0f || g_isGL1xDynlightAcamglowOnFlat);
 	if (mDrawer->FixedColormap != CM_DEFAULT || !gl_lights || !gltexture || renderstyle != STYLE_Translucent ||
 		alpha < 1.f - FLT_EPSILON || skiplightprocessing) return false;
 
