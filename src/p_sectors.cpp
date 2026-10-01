@@ -74,6 +74,22 @@
 
 #include "gl/system/gl_interface.h"
 
+#ifdef _MSC_VER
+// Everything seems to work just fine even with such warnings.
+// Disable warning about conversion from 'double' to 'float', possible loss of data.
+#pragma warning(disable:4244)
+// Disable warning about 'initializing': truncation from 'double' to 'float'
+#pragma warning(disable:4305)
+#endif
+
+//	#if defined(__GNUC__) || defined(__clang__)
+//	// GCC/Clang: Disable warnings about implicit float conversions.
+//	// -Wfloat-conversion handles double to float specifically.
+//	// -Wconversion is a broader check for all type casts.
+//	#pragma GCC diagnostic ignored "-Wfloat-conversion"
+//	#pragma GCC diagnostic ignored "-Wconversion"
+//	#endif
+
 
 // [RH]
 // P_NextSpecialSector()
@@ -1378,6 +1394,15 @@ CUSTOM_CVAR(Int, r_fakecontrast, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 //
 //
 //==========================================================================
+// kind of useless but keep it for the history record maybe
+const bool enableGL1xFakeContrastCache = false;
+
+struct FFakeContrastGL1xCacheEntry
+{
+	int lastUpdateTick = -1;
+	int cachedRel = 0;
+};
+static TMap<const side_t*, FFakeContrastGL1xCacheEntry> g_GL1xFakeContrastCache;
 
 int side_t::GetLightLevel(bool foggy, int baselight, bool is3dlight, int *pfakecontrast) const
 {
@@ -1397,46 +1422,103 @@ int side_t::GetLightLevel(bool foggy, int baselight, bool is3dlight, int *pfakec
 	{
 		if (!(Flags & WALLF_NOFAKECONTRAST) && r_fakecontrast != 0)
 		{
-			DVector2 delta = linedef->Delta();
 			int rel = 0;
 
 			// --- [Darkcrafter07]: PATHWAY A - GL1x/GL2x LEGACY FIXED-FUNCTION WAY
 			if (gl.legacyMode)
 			{
-				if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2))
+				const int currentMapTimeTick = level.maptime;
+
+				// --- [Autonomous One-Shot Map-Transition Flush Barrier] ---
+				// If level.maptime hits absolute zero (0 or 1) on a new map,
+				// trigger a single-pass hard clear to completely wipe dead pointer links.
+				static int lastCheckedMapTime = -1;
+				if (currentMapTimeTick <= 1 && currentMapTimeTick != lastCheckedMapTime)
 				{
-					float len = sqrt(delta.X * delta.X + delta.Y * delta.Y);
-					if (len > 0.0001f)
+					g_GL1xFakeContrastCache.Clear();
+					lastCheckedMapTime = currentMapTimeTick; // Lock trigger
+				}
+
+				if (enableGL1xFakeContrastCache)
+				{
+					FFakeContrastGL1xCacheEntry &entry = g_GL1xFakeContrastCache[this];
+
+					// If cache is hot and valid within the 8-tick safety window, bypass math completely
+					if (entry.lastUpdateTick != -1 && (currentMapTimeTick - entry.lastUpdateTick) < 8)
 					{
-						// Calculate normalized directional components of the wall string line
-						float cosAngle = fabs(delta.X / len); // How close the wall is to horizontal axis (East-West)
-						float sinAngle = fabs(delta.Y / len); // How close the wall is to vertical axis (North-South)
-
-						// Smoothly interpolate between dark horizontal steps and bright vertical steps 
-						// using square of projections (trigonometric identity layout), matching native software behaviors!
-						float interp = (cosAngle * cosAngle);
-
-						// level.WallHorizLight is negative (e.g. -8), WallVertLight is positive (e.g. +8)
-						rel = xs_RoundToInt(interp * level.WallHorizLight + (1.0 - interp) * level.WallVertLight);
+						rel = entry.cachedRel;
 					}
 					else
 					{
-						rel = 0;
+						DVector2 delta = linedef->Delta();
+						if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2))
+						{
+							float len = sqrt(delta.X * delta.X + delta.Y * delta.Y);
+							if (len > 0.0001f)
+							{
+								// Calculate normalized directional components of the wall string line
+								float cosAngle = fabs(delta.X / len); // How close the wall is to horizontal axis (East-West)
+								float sinAngle = fabs(delta.Y / len); // How close the wall is to vertical axis (North-South)
+
+								// Smoothly interpolate between dark horizontal steps and bright vertical steps 
+								// using square of projections (trigonometric identity layout), matching native software behaviors!
+								float interp = (cosAngle * cosAngle);
+
+								// level.WallHorizLight is negative (e.g. -8), WallVertLight is positive (e.g. +8)
+								rel = xs_RoundToInt(interp * level.WallHorizLight + (1.0 - interp) * level.WallVertLight);
+							}
+							else
+							{
+								rel = 0;
+							}
+						}
+						else
+						{
+							// Standard vanilla step-contrast route for orthogonal walls
+							rel = delta.X == 0 ? level.WallVertLight :
+								delta.Y == 0 ? level.WallHorizLight : 0;
+						}
+
+						rel = xs_RoundToInt((float)rel * gl_legacyvidmode_fakecontrast_scale);
+
+						// Store the calculated result into the memory cache vault for the next 8 ticks
+						entry.cachedRel = rel;
+						entry.lastUpdateTick = currentMapTimeTick;
 					}
 				}
 				else
 				{
-					// Standard vanilla step-contrast route for orthogonal walls
-					rel = delta.X == 0 ? level.WallVertLight :
-						delta.Y == 0 ? level.WallHorizLight : 0;
-				}
+					// Standard uncached direct mathematical fallback route
+					DVector2 delta = linedef->Delta();
+					if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2))
+					{
+						float len = sqrt(delta.X * delta.X + delta.Y * delta.Y);
+						if (len > 0.0001f)
+						{
+							float cosAngle = fabs(delta.X / len);
+							float sinAngle = fabs(delta.Y / len);
+							float interp = (cosAngle * cosAngle);
+							rel = xs_RoundToInt(interp * level.WallHorizLight + (1.0 - interp) * level.WallVertLight);
+						}
+						else
+						{
+							rel = 0;
+						}
+					}
+					else
+					{
+						rel = delta.X == 0 ? level.WallVertLight :
+							delta.Y == 0 ? level.WallHorizLight : 0;
+					}
 
-				rel = xs_RoundToInt((float)rel * gl_legacyvidmode_fakecontrast_scale);
+					rel = xs_RoundToInt((float)rel * gl_legacyvidmode_fakecontrast_scale);
+				}
 			}
 			// --- PATHWAY B - MODERN GL3/GL4 WAY ---
 			// Maintains original atan calculations to feed shaders natively.
 			else
 			{
+				DVector2 delta = linedef->Delta();
 				if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2) &&
 					delta.X != 0)
 				{
@@ -1470,4 +1552,3 @@ int side_t::GetLightLevel(bool foggy, int baselight, bool is3dlight, int *pfakec
 	}
 	return baselight;
 }
-

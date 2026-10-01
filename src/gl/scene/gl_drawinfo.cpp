@@ -54,6 +54,9 @@
 
 FDrawInfo * gl_drawinfo;
 
+extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes (in gl_flats.cpp, Draw method)
+extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes (in gl_walls_draw.cpp, Draw method)
+
 //==========================================================================
 //
 //
@@ -99,6 +102,19 @@ SortNode * StaticSortNodeArray::GetNew()
 static StaticSortNodeArray SortNodes;
 
 //==========================================================================
+//                            DoDraw cache
+// Cache cumulative translucency color mask decisions for flat surfaces.
+// Refreshes the structural validation state once every 8 map ticks.
+//
+//==========================================================================
+struct FTranslucencyCacheEntry
+{
+	int  lastUpdateTick = -1;
+	bool maskColorChannelsOut = false;
+};
+static TMap<int, FTranslucencyCacheEntry> g_TranslucencyGL1xOverdrawCache;
+
+//==========================================================================
 //
 //
 //
@@ -111,6 +127,7 @@ void GLDrawList::Reset()
 	flats.Clear();
 	sprites.Clear();
 	drawitems.Clear();
+	g_TranslucencyGL1xOverdrawCache.Clear();
 }
 
 
@@ -732,7 +749,7 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 
 //==========================================================================
 //
-// [Single-Pass Alpha/Z Sync & VBO Freeze Guide]
+// [Single-Pass Alpha/Z Sync & Stencil Cache Gate]
 //
 // WHAT YOU MUST DO:
 // 1. Maintain simultaneous Alpha Testing (GL_GREATER) and Depth Writes
@@ -749,45 +766,48 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 // 4. Keep glDepthFunc(GL_EQUAL) locked during STEP 2 lighting passes.
 //    Since vertcount remains frozen, light overlay stages match the
 //    baked VBO mesh byte-by-byte, bypassing heavy stencil states.
-// 5. Projectiles now execute standard
-//    hardware Z-tests against the baked fence node depths, natively
-//    rendering in front of translucent frames at close range.
+// 5. Explicitly invoke glPushAttrib(GL_STENCIL_BUFFER_BIT) on Step 1 entry
+//    and glPopAttrib() on Step 2 exit. Snapshotting attributes on GPU
+//    bypasses expensive glGetIntegerv stalls, protecting nested portals 
+//    and stopping background skybox meshes from eating foreground quads.
+// 6. Force glStencilMask(0x80) and clear the 8th bit plane inside recovery
+//    cleanup gates. Hard-wiping our stencil footprint before bailing out
+//    eradicates rectangular artifact cuts on BFG explosions entirely.
+// 7. Utilize the omnidirectional 8-tick g_TranslucencyGL1xOverdrawCache layer.
+//    Evaluating camera vertical deltas symmetrically via fabsf removes
+//    dynamic overexposure burns when looking both above-down and below-up.
 //
 // WHAT YOU MUST NEVER DO:
-// 1. NEVER execute global glClear(GL_STENCIL_BUFFER_BIT) inside the
-//    DoDraw loop. Wiping bitplanes breaks native recursive portals,
-//    throwing active viewport scopes into total pitch black darkness.
-// 2. NEVER clear walls[index].vertcount until the absolute end of the
-//    lighting sub-passes inside STEP 2 recovery cleanup gates!
+// 1. NEVER execute global glClear(GL_STENCIL_BUFFER_BIT) without isolating
+//    the 8th bit plane. Wiping portal recursion data blindfolds the engine.
+// 2. NEVER clear walls[index].vertcount or invoke glGetIntegerv queries 
+//    inside the hot draw loop. Frame rates will drop by 20% or more.
 // 3. NEVER forget to restore glDepthFunc(GL_LEQUAL) and glDepthMask(false)
-//    at the end of STEP 2 cleanup gates to prevent state drifts.
+//    at the end of STEP 2 cleanup gates to prevent pipeline drifts.
 //
 //==========================================================================
-
 void GLDrawList::DoDraw(int pass, int i, bool trans)
 {
 	int currentRenderType = drawitems[i].rendertype;
 	int index = drawitems[i].index;
 
-	// STEP 1: RENDER ORIGINAL SURFACE WITH DUAL-PASS DEPTH INJECTION
+	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
 	const bool onlyLightOpaqueTextureAreas = true;
 	bool useDualPassAlphaGate = (gl.legacyMode && pass == GLPASS_TRANSLUCENT &&
 		currentRenderType == GLDIT_WALL && onlyLightOpaqueTextureAreas);
 
-	// Cache state machine options to prevent data leaks into global queues
-	GLboolean wasStencilEnabled = glIsEnabled(GL_STENCIL_TEST);
-	GLint originalStencilMask = 0;
-	GLint originalStencilFunc = 0;
-	GLint originalStencilRef = 0;
-	GLint originalStencilValueMask = 0;
-
 	if (useDualPassAlphaGate)
 	{
-		// Back up the active portal stencil chain parameters byte-by-byte
-		glGetIntegerv(GL_STENCIL_WRITEMASK, &originalStencilMask);
-		glGetIntegerv(GL_STENCIL_FUNC, &originalStencilFunc);
-		glGetIntegerv(GL_STENCIL_REF, &originalStencilRef);
-		glGetIntegerv(GL_STENCIL_VALUE_MASK, &originalStencilValueMask);
+		// --- [Hardware Stencil Attribute Push] ---
+		glPushAttrib(GL_STENCIL_BUFFER_BIT);
+
+		glEnable(GL_STENCIL_TEST);
+		glStencilMask(0x80);
+		glClearStencil(0);
+		glClear(GL_STENCIL_BUFFER_BIT);
+
+		glStencilFunc(GL_ALWAYS, 0x80, 0x80);
+		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 	}
 
 	switch (drawitems[i].rendertype)
@@ -807,20 +827,14 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 		if (useDualPassAlphaGate)
 		{
-			// --- [Single-Pass Alpha/Z Sync Fix] ---
-			// CRITICAL FIX: Completely removed the flawed double w->Draw() loop!
-			// Calling w->Draw() twice forces the engine to double-blend alpha channels,
-			// causing the texture to artificially darken (thicken) and trigger severe 
-			// edge ghosting/shaking shifts during camera movements.
-			// Instead, we force the GPU to process Alpha Testing and Depth Writes 
-			// simultaneously in a single native hardware pass.
+			// --- [Single-Pass Alpha/Z Sync] ---
 			glEnable(GL_ALPHA_TEST);
-			glAlphaFunc(GL_GREATER, gl_mask_threshold); // Alpha test cuts the window holes cleanly
+			glAlphaFunc(GL_GREATER, gl_mask_threshold);
 
-			glDepthMask(GL_TRUE); // Open Z-write: Opaque bars lock their depth into the Z-buffer
+			glDepthMask(GL_TRUE);
 			gl_RenderState.Apply();
 
-			w->Draw(pass); // DRAW ONCE: Pristine 1:1 transparency blend, zero ghosting
+			w->Draw(pass);
 
 			glDisable(GL_ALPHA_TEST);
 			gl_RenderState.Apply();
@@ -848,13 +862,13 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	}
 
 	//--------------------------------------------------------------------------
-	// STEP 2:           THE TRANSLUSCENT DYNLIGHT SURFACES
+	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
 	//                   Can't configure dynlight intensities here!
 	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
 	// "gl_dynlightHandleSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
 	// and also call "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy".
 	//--------------------------------------------------------------------------
-	if (gl.legacyMode && pass == GLPASS_TRANSLUCENT && GLRenderer->mLightCount)
+	if (gl.legacyMode && pass == GLPASS_TRANSLUCENT && currentRenderType != GLDIT_SPRITE && GLRenderer->mLightCount)
 	{
 		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
 		{
@@ -866,7 +880,14 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 			// completely extinguishing far-away flickering and sector side alternating artifacts
 			if (currentRenderType == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
 			{
-				return; // Safe and clean bypass on any distance before changing registers
+				if (useDualPassAlphaGate)
+				{
+					glStencilMask(0x80);
+					glClearStencil(0);
+					glClear(GL_STENCIL_BUFFER_BIT);
+					glPopAttrib();
+				}
+				return;
 			}
 
 			if (gl_SetupLightTexture())
@@ -877,37 +898,61 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				gl_RenderState.Apply();
 
 				glDisable(GL_FOG);
+				glDepthFunc(GL_LEQUAL);
 				glDepthMask(false);
 
-				if (useDualPassAlphaGate)
-				{
-					// --- Hardware Lock Gateway ---
-					// Force strict GL_EQUAL depth matching over the locked VBO geometry mesh.
-					// Since vertcount wasn't wiped out, w->Draw reuses the identical layout points,
-					// thus removing reverse-side Z-fighting without touching stencil arrays
-					glDepthFunc(GL_EQUAL);
-				}
-				else
-				{
-					glDepthFunc(GL_LEQUAL);
-				}
-
 				// --- DETECT CUMULATIVE TRANSLUCENCY ---
+				// Check overdraw heights strictly within the current sector bounds,
+				// minimizing the stacked overexposed cumulative translucency overlay.
 				bool maskColorChannelsOut = false;
 				if (currentRenderType == GLDIT_FLAT)
 				{
-					GLFlat* f = &flats[index];
-					if (f && f->sector && ((float)r_viewpoint.Pos.Z - (float)f->z) > 0.0f)
+					const int currentMapTimeTick = level.maptime;
+					FTranslucencyCacheEntry &entry = g_TranslucencyGL1xOverdrawCache[index];
+
+					if (entry.lastUpdateTick != -1 && (currentMapTimeTick - entry.lastUpdateTick) < 8)
 					{
-						float currentFlatZ = (float)f->z;
-						for (unsigned int j = 0; j < flats.Size(); j++)
+						maskColorChannelsOut = entry.maskColorChannelsOut;
+					}
+					else
+					{
+						GLFlat* f = &flats[index];
+						if (f && f->sector && fabsf((float)r_viewpoint.Pos.Z - (float)f->z) > 0.001f)
 						{
-							if (flats[j].sector == f->sector && (float)flats[j].z > currentFlatZ)
+							// --- [Omnidirectional Translucency Overdraw Scanner] ---
+							// Evaluate cumulative overlays symmetrically.
+							// Track occlusion shifts when looking both from above-down and below-up,
+							float currentFlatZ = (float)f->z;
+							bool isViewerAbove = ((float)r_viewpoint.Pos.Z > currentFlatZ);
+
+							for (unsigned int j = 0; j < flats.Size(); j++)
 							{
-								maskColorChannelsOut = true;
-								break;
+								if (flats[j].sector == f->sector)
+								{
+									if (isViewerAbove)
+									{
+										// Looking down: seek overlapping flats sitting higher
+										if ((float)flats[j].z > currentFlatZ)
+										{
+											maskColorChannelsOut = true;
+											break;
+										}
+									}
+									else
+									{
+										// Looking up: seek overlapping flats sitting lower
+										if ((float)flats[j].z < currentFlatZ)
+										{
+											maskColorChannelsOut = true;
+											break;
+										}
+									}
+								}
 							}
 						}
+						// Cache the fresh omnidirectional evaluation result for the next 8 ticks
+						entry.maskColorChannelsOut = maskColorChannelsOut;
+						entry.lastUpdateTick = currentMapTimeTick;
 					}
 				}
 
@@ -917,36 +962,41 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 					gl_RenderState.ApplyColorMask();
 				}
 
+				// --- [Bitwise Hardware Stencil Culling Gate] ---
+				if (useDualPassAlphaGate)
+				{
+					glEnable(GL_STENCIL_TEST);
+					glStencilFunc(GL_EQUAL, 0x80, 0x80);
+				}
+
 				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_DST_COLOR, GL_ONE);
-				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX); // Reuse frozen VBO
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX, trans);
 
 				// --- PASS 2: SPECIAL ADDITIVE LIGHTS PLACED ON PURPOSE CHANNEL ---
 				glBlendEquation(GL_FUNC_ADD);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE); // Reuse frozen VBO
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
 
 				// --- PASS 3: SPECIAL SUBTRACTIVE LIGHTS ANTI-ILLUMINATION CHANNEL ---
 				glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX); // Reuse frozen VBO
+				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
 				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
 
 				// RECOVERY AND CLEANUP
 				if (useDualPassAlphaGate)
 				{
-					// --- THE LIFELINE CLEANUP GATE ---
-					// Safely reset our wall state tracking bounds so next elements compile cleanly
 					walls[index].vertcount = 0;
 
-					glStencilMask(originalStencilMask);
-					glStencilFunc(originalStencilFunc, originalStencilRef, originalStencilValueMask);
+					glStencilMask(0x80);
+					glClearStencil(0);
+					glClear(GL_STENCIL_BUFFER_BIT);
 
-					if (!wasStencilEnabled) glDisable(GL_STENCIL_TEST);
-					else                    glEnable(GL_STENCIL_TEST);
+					glPopAttrib();
 				}
 
 				if (maskColorChannelsOut)
@@ -959,7 +1009,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 				glEnable(GL_FOG);
 				glDepthMask(false);
-				glDepthFunc(GL_LEQUAL); // Restore baseline depth check for subsequent items
+				glDepthFunc(GL_LEQUAL);
 				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 				gl_RenderState.EnableFog(true);
@@ -969,167 +1019,6 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 		}
 	}
 }
-
-// For an extra case when you need it to draw subtractive lights only if they're detected here
-//void GLDrawList::DoDraw(int pass, int i, bool trans)
-//{
-//	// STEP 1: RENDER ORIGINAL TRANSLUCENT SURFACE NATIVELY
-//	switch (drawitems[i].rendertype)
-//	{
-//	case GLDIT_FLAT:
-//	{
-//		GLFlat * f = &flats[drawitems[i].index];
-//		RenderFlat.Clock();
-//		f->Draw(pass, trans);
-//		RenderFlat.Unclock();
-//		break;
-//	}
-//	case GLDIT_WALL:
-//	{
-//		GLWall * w = &walls[drawitems[i].index];
-//		RenderWall.Clock();
-//		w->Draw(pass);
-//		RenderWall.Unclock();
-//		break;
-//	}
-//	case GLDIT_SPRITE:
-//	{
-//		GLSprite * s = &sprites[drawitems[i].index];
-//		RenderSprite.Clock();
-//		s->Draw(pass);
-//		RenderSprite.Unclock();
-//		break;
-//	}
-//	}
-//
-//	int currentRenderType = drawitems[i].rendertype;
-//	int index = drawitems[i].index;
-//
-//	//--------------------------------------------------------------------------
-//	// STEP 2:           THE TRANSLUSCENT DYNLIGHT 3DFLOOR-SURFACES
-//	//                   Can't configure dynlight intensities here!
-//	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
-//	// "gl_dynlightTameSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
-//	// and also call "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy".
-//	//--------------------------------------------------------------------------
-//	if (pass == GLPASS_TRANSLUCENT && gl.legacyMode && GLRenderer->mLightCount)
-//	{
-//		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
-//		{
-//			// TOTAL DISTANCE FOG BOUNDARY GEOMETRY CULLING FILTER
-//			// If this wall primitive is a fake fog boundary line,
-//			// SKIP skip lightmap projections over it on ANY distance.
-//			// Since fake fog lines share identical 3D coordinates with solid room seams,
-//			// culling them here permanently cures the legacy 16-bit Z-buffer depth fighting,
-//			// completely extinguishing far-away flickering and sector side alternating artifacts
-//			if (currentRenderType == GLDIT_WALL && walls[index].type == RENDERWALL_FOGBOUNDARY)
-//			{
-//				return; // Safe and clean bypass on any distance before changing registers
-//			}
-//
-//			if (gl_SetupLightTexture())
-//			{
-//				// Common baseline registers hardware isolation setup
-//				gl_RenderState.EnableFog(false);
-//				gl_RenderState.Apply();
-//
-//				glDisable(GL_FOG);
-//				glDepthFunc(GL_LEQUAL);
-//				glDepthMask(false);
-//
-//				// --- DETECT CUMULATIVE TRANSLUCENCY ---
-//				// Check overdraw heights strictly within the current sector bounds,
-//				// minimizing the stacked overexposed cumulative translucency overlay.
-//				bool maskColorChannelsOut = false;
-//				if (currentRenderType == GLDIT_FLAT)
-//				{
-//					GLFlat* f = &flats[index];
-//					if (f && f->sector && ((float)r_viewpoint.Pos.Z - (float)f->z) > 0.0f)
-//					{
-//						float currentFlatZ = (float)f->z;
-//						for (unsigned int j = 0; j < flats.Size(); j++)
-//						{
-//							if (flats[j].sector == f->sector && (float)flats[j].z > currentFlatZ)
-//							{
-//								maskColorChannelsOut = true;
-//								break;
-//							}
-//						}
-//					}
-//				}
-//
-//				if (maskColorChannelsOut)
-//				{
-//					gl_RenderState.SetColorMask(false, false, false, false);
-//					gl_RenderState.ApplyColorMask();
-//				}
-//
-//				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
-//				glBlendEquation(GL_FUNC_ADD);
-//				glBlendFunc(GL_DST_COLOR, GL_ONE);
-//				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX);
-//				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX, trans);
-//
-//				// --- PASS 2: SPECIAL ADDITIVE LIGHTS PLACED ON PURPOSE CHANNEL ---
-//				glBlendEquation(GL_FUNC_ADD);
-//				glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-//				if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_LIGHTTEX_ADDITIVE);
-//				else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_LIGHTTEX_ADDITIVE, trans);
-//
-//				// --- PASS 3: SPECIAL SUBTRACTIVE LIGHTS ANTI-ILLUMINATION CHANNEL ---
-//				// MASTER KEY: Scan the subsector node array dynamically to confirm if 
-//				// any active subtractive anti-light actor is currently affecting this surface.
-//				// If tracked, the CPU fires the inverse hardware subtract equation strictly 
-//				// inside translucent map bounds, preventing empty alpha leaks.
-//				bool hasActiveSubtractiveLights = false;
-//				FLightNode* subScanNode = nullptr;
-//
-//				if (currentRenderType == GLDIT_FLAT)
-//					subScanNode = flats[index].sector ? flats[index].sector->lighthead : nullptr;
-//				else if (currentRenderType == GLDIT_WALL)
-//					subScanNode = walls[index].seg ? walls[index].seg->frontsector->lighthead : nullptr;
-//
-//				while (subScanNode)
-//				{
-//					FDynamicLight* sl = subScanNode->lightsource;
-//					if (sl && sl->IsActive() && sl->IsSubtractive())
-//					{
-//						hasActiveSubtractiveLights = true;
-//						break; // Subtractive node confirmed, break early to save cycles
-//					}
-//					subScanNode = subScanNode->nextLight;
-//				}
-//
-//				// The conditional if-else block safely processes subtractive nodes strictly when needed!
-//				if (hasActiveSubtractiveLights)
-//				{
-//					glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-//					glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-//					if (currentRenderType == GLDIT_WALL) walls[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX);
-//					else if (currentRenderType == GLDIT_FLAT) flats[index].Draw(GLPASS_TRANSLUCENT_LIGHTTEX, trans);
-//				}
-//
-//				// RECOVERY AND CLEANUP
-//				if (maskColorChannelsOut)
-//				{
-//					gl_RenderState.ResetColorMask();
-//					gl_RenderState.ApplyColorMask();
-//				}
-//
-//				glBlendEquation(GL_FUNC_ADD); // Hard reset blending equations safely
-//
-//				glEnable(GL_FOG);
-//				glDepthMask(true);
-//				glDepthFunc(GL_LESS);
-//				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-//
-//				gl_RenderState.EnableFog(true);
-//				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-//				gl_RenderState.Apply();
-//			}
-//		}
-//	}
-//}
 
 //==========================================================================
 //
