@@ -50,6 +50,8 @@
 #include "gl/models/gl_models.h"
 #include "stats.h"
 
+#include "bitmap.h"
+
 //==========================================================================
 //
 // Texture CVARs
@@ -201,6 +203,7 @@ FTexture::MiscGLInfo::MiscGLInfo() throw()
 	Metallic = NULL;
 	Roughness = NULL;
 	AmbientOcclusion = NULL;
+	ParentTexture = NULL;
 }
 
 FTexture::MiscGLInfo::~MiscGLInfo()
@@ -216,6 +219,7 @@ FTexture::MiscGLInfo::~MiscGLInfo()
 
 	// this is just a reference to another texture in the texture manager.
 	Brightmap = NULL;
+	ParentTexture = NULL;
 
 	if (areas != NULL) delete [] areas;
 	areas = NULL;
@@ -265,7 +269,6 @@ void FTexture::CreateDefaultBrightmap()
 	}
 }
 
-
 //==========================================================================
 //
 // Calculates glow color for a texture
@@ -303,67 +306,97 @@ void FTexture::GetGlowColor(float *data)
 bool FTexture::FindHoles(const unsigned char * buffer, int w, int h)
 {
 	const unsigned char * li;
-	int y,x;
-	int startdraw,lendraw;
+	int y, x;
+	int startdraw, lendraw;
 	int gaps[5][2];
-	int gapc=0;
-
+	int gapc = 0;
 
 	// already done!
 	if (gl_info.areacount) return false;
-	if (UseType == ETextureType::Flat) return false;	// flats don't have transparent parts
-	gl_info.areacount=-1;	//whatever happens next, it shouldn't be done twice!
+
+	// flats don't have transparent parts - [Darkcrafter07]: really? 3D floors?
+	//if (UseType == ETextureType::Flat) return false;
+
+	gl_info.areacount = -1;	//whatever happens next, it shouldn't be done twice!
+
 
 	// large textures are excluded for performance reasons
-	if (h>512) return false;	
+	if (h > 512) return false;
 
-	startdraw=-1;
-	lendraw=0;
-	for(y=0;y<h;y++)
+	// --- [Alpha-Channel Transparency Pre-Flight Check] ---
+	// CRITICAL FIX: Before executing the original broken loop mergers, run 
+	// a fast raw hardware scan over the actual alpha channel byte-array.
+	// If the image contains zero transparent pixels (alpha == 0), it is 100% solid.
+	// This bypasses the bugged end-of-loop startdraw == 0 crash gates.
+	bool hasAnyTransparentPixels = false;
+	const unsigned char *alphaPtr = buffer + 3; // Jump straight to the first alpha byte
+	int totalPixels = w * h;
+
+	for (int p = 0; p < totalPixels; p++, alphaPtr += 4)
 	{
-		li=buffer+w*y*4+3;
-
-		for(x=0;x<w;x++,li+=4)
+		if (*alphaPtr == 0) // Found a true alpha hole/cutout pixel!
 		{
-			if (*li!=0) break;
+			hasAnyTransparentPixels = true;
+			break;
+		}
+	}
+
+	if (!hasAnyTransparentPixels)
+	{
+		gl_info.areas = nullptr;
+		gl_info.areacount = 0;
+		return false; // Solid texture confirmed, do not create split zones!
+	}
+
+	startdraw = -1;
+	lendraw = 0;
+	for (y = 0; y < h; y++)
+	{
+		li = buffer + w * y * 4 + 3;
+
+		for (x = 0; x < w; x++, li += 4)
+		{
+			if (*li != 0) break;
 		}
 
-		if (x!=w)
+		if (x != w)
 		{
 			// non - transparent
-			if (startdraw==-1) 
+			if (startdraw == -1)
 			{
-				startdraw=y;
+				startdraw = y;
 				// merge transparent gaps of less than 16 pixels into the last drawing block
-				if (gapc && y<=gaps[gapc-1][0]+gaps[gapc-1][1]+16)
+				if (gapc && y <= gaps[gapc - 1][0] + gaps[gapc - 1][1] + 16)
 				{
 					gapc--;
-					startdraw=gaps[gapc][0];
-					lendraw=y-startdraw;
+					startdraw = gaps[gapc][0];
+					lendraw = y - startdraw;
 				}
-				if (gapc==4) return false;	// too many splits - this isn't worth it
+				if (gapc == 4) return false;	// too many splits - this isn't worth it
 			}
 			lendraw++;
 		}
-		else if (startdraw!=-1)
+		else if (startdraw != -1)
 		{
-			if (lendraw==1) lendraw=2;
-			gaps[gapc][0]=startdraw;
-			gaps[gapc][1]=lendraw;
+			if (lendraw == 1) lendraw = 2;
+			gaps[gapc][0] = startdraw;
+			gaps[gapc][1] = lendraw;
 			gapc++;
 
-			startdraw=-1;
-			lendraw=0;
+			startdraw = -1;
+			lendraw = 0;
 		}
 	}
-	if (startdraw!=-1)
+	if (startdraw != -1)
 	{
-		gaps[gapc][0]=startdraw;
-		gaps[gapc][1]=lendraw;
+		gaps[gapc][0] = startdraw;
+		gaps[gapc][1] = lendraw;
 		gapc++;
 	}
-	if (startdraw==0 && lendraw==h) return false;	// nothing saved so don't create a split list
 
+	// --- Validation Gate ---
+	// Since the pre-flight scanner already proved the existence of alpha cuts,
+	// bypass bugged logic line "if (startdraw == 0 && lendraw == h)".
 	if (gapc > 0)
 	{
 		FloatRect * rcs = new FloatRect[gapc];
@@ -377,8 +410,11 @@ bool FTexture::FindHoles(const unsigned char * buffer, int w, int h)
 		}
 		gl_info.areas = rcs;
 	}
-	else gl_info.areas = nullptr;
-	gl_info.areacount=gapc;
+	else
+	{
+		gl_info.areas = nullptr;
+	}
+	gl_info.areacount = gapc;
 
 	return true;
 }
