@@ -52,6 +52,8 @@
 
 #include "bitmap.h"
 
+#include "gi.h" // gameinfo
+
 //==========================================================================
 //
 // Texture CVARs
@@ -228,6 +230,9 @@ FTexture::MiscGLInfo::~MiscGLInfo()
 //===========================================================================
 // 
 // Checks if the texture has a default brightmap and creates it if so
+// It prioritizes custom user-made PK3 brightmaps over the generated ones,
+// as some games like Strife come with fullbright colors so it extracts them
+// and generates them by "gl_GenerateGlobalBrightmapFromColormap" function.
 //
 //===========================================================================
 void FTexture::CreateDefaultBrightmap()
@@ -542,7 +547,8 @@ bool FTexture::ProcessData(unsigned char * buffer, int w, int h, bool ispatch)
 
 //===========================================================================
 //
-// fake brightness maps
+// Fake brightness maps.
+// For games like Strife that have fullbright colors in palette.
 // These are generated for textures affected by a colormap with
 // fullbright entries.
 // These textures are only used internally by the GL renderer so
@@ -550,7 +556,7 @@ bool FTexture::ProcessData(unsigned char * buffer, int w, int h, bool ispatch)
 //
 //===========================================================================
 
-FBrightmapTexture::FBrightmapTexture (FTexture *source)
+FBrightmapTexture::FBrightmapTexture(FTexture *source)
 {
 	Name = "";
 	SourcePic = source;
@@ -561,6 +567,10 @@ FBrightmapTexture::FBrightmapTexture (FTexture *source)
 	bMasked = false;
 	id.SetInvalid();
 	SourceLump = -1;
+
+	// GL1x/GL2x - ensure the colormap/palette generated brightmaps doesn't become a parent texture.
+	// Otherwise, you'll see a brightmap texture itself drawn on top of a surface!
+	gl_info.ParentTexture = source;
 }
 
 uint8_t *FBrightmapTexture::MakeTexture(FRenderStyle style)
@@ -572,7 +582,18 @@ uint8_t *FBrightmapTexture::MakeTexture(FRenderStyle style)
 
 int FBrightmapTexture::CopyTrueColorPixels(FBitmap *bmp, int x, int y, int rotate, FCopyInfo *inf)
 {
-	SourcePic->CopyTrueColorTranslated(bmp, x, y, rotate, GlobalBrightmap.Palette);
+	if (gl.legacyMode)
+	{
+		// Do regular true color copy first to populate the RGBA buffer channels.
+		// Otherwise, this is the reason brightmaps generated from palette or colormaps
+		// for such games like Strife won't get colorized in gl_material.cpp, CreateTexBuffer.
+		SourcePic->CopyTrueColorPixels(bmp, x, y, rotate, inf);
+		SourcePic->CopyTrueColorTranslated(bmp, x, y, rotate, GlobalBrightmap.Palette);
+	}
+	else
+	{
+		SourcePic->CopyTrueColorTranslated(bmp, x, y, rotate, GlobalBrightmap.Palette);
+	}
 	return 0;
 }
 

@@ -486,7 +486,7 @@ void GLSprite::Draw(int pass)
 			if (sh) sh->muAnamorphicZ.Set(0.0f, 0.0f);
 
 			// --- Legacy GL1x/GL2x sprites brightmaps block start ---
-			if (gl_RenderState.IsBrightmapEnabled() && gl.legacyMode && !fullbright)
+			if (gl_RenderState.IsBrightmapEnabled() && gl.legacyMode && !fullbright && (!STYLEOP_Shadow || !isGLSpriteClassShadow))
 			{
 				FMaterial *bm = gltexture->GetBrightmapLegacy();
 				if (bm)
@@ -630,7 +630,7 @@ inline void GLSprite::PutSprite(bool translucent)
 void GLSprite::SplitSprite(sector_t * frontsector, bool translucent)
 {
 	GLSprite copySprite(mDrawer);
-	double lightbottom;
+	float lightbottom;
 	unsigned int i;
 	bool put = false;
 	TArray<lightlist_t> & lightlist = frontsector->e->XFloor.lightlist;
@@ -779,14 +779,12 @@ CVAR(Float, gl_sprite_distance_cull, 4000.0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 inline bool IsLinedefCulledByDistance(AActor* thing)
 {
-	double culldist = gl_sprite_distance_cull * gl_sprite_distance_cull;
-	if (culldist <= 0.0)
-		return false;
+	float culldist = gl_sprite_distance_cull * gl_sprite_distance_cull;
+	if (culldist <= 0.0) return false;
 
-	double dist = (thing->Pos() - r_viewpoint.Pos).LengthSquared();
+	float dist = (thing->Pos() - r_viewpoint.Pos).LengthSquared();
 
-	if (dist > culldist)
-		return true;
+	if (dist > culldist) return true;
 	return false;
 }
 
@@ -872,10 +870,10 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 	{
 		if (!(thing->flags7 & MF7_FLYCHEAT) && thing->target == GLRenderer->mViewActor && GLRenderer->mViewActor != NULL)
 		{
-			double speed = thing->Vel.Length();
-			if (speed >= thing->target->radius / 2)
+			float speed = thing->Vel.Length();
+			if (speed >= thing->target->radius * 0.5f)
 			{
-				double clipdist = clamp(thing->Speed, thing->target->radius, thing->target->radius * 2);
+				float clipdist = clamp(thing->Speed, thing->target->radius, thing->target->radius * 2);
 				if ((thingpos - r_viewpoint.Pos).LengthSquared() < clipdist * clipdist) return;
 			}
 		}
@@ -961,7 +959,7 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 			else
 			{
 				// Flat sprites cannot rotate in a predictable manner.
-				sprangle = 0.;
+				sprangle = 0.0f;
 				rot = 0;
 			}
 			patch = sprites[spritenum].GetSpriteFrame(thing->frame, rot, sprangle, &mirror, !!(thing->renderflags & RF_SPRITEFLIP));
@@ -1180,9 +1178,9 @@ void GLSprite::Process(AActor* thing, sector_t * sector, int thruportal, bool is
 		//EvaluateSpritePropertiesFP(thing); // Mods have tiny radius on big sprites - UZDoom way
 		// =*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*
 		// ******* REGULAR FP sprite projecting routine for SMALL NONCORPSE sprites OPTIMIZATION START *******
-		bool useRegularForcedPerspective(modelframe || isfloatingsprite || spriteRadius <= 12.0f &&
+		bool useRegularForcedPerspective(modelframe || isfloatingsprite || spriteRadius <= 5.0f &&
 				        (!isactoracorpse || !islegacyversionmonster || !islegacyversionprojectile) &&
-		( (spriteRasterXdimen <= 24 && spriteRasterYdimen <= 24) || !hasSignificantNegativeOffset)  );
+		( (spriteRasterXdimen <= 5 && spriteRasterYdimen <= 5) || !hasSignificantNegativeOffset)  );
 		if (useRegularForcedPerspective) // Use Forced-Perspective without occlusion checks, no smart clipping
 		{
 			// Start regular Forced-Perspective
@@ -1823,7 +1821,7 @@ void GLSprite::ProcessParticle(particle_t *particle, sector_t *sector)//, int sh
 	else if (!particle->bright)
 	{
 		TArray<lightlist_t> & lightlist = sector->e->XFloor.lightlist;
-		double lightbottom;
+		float lightbottom;
 
 		Colormap = sector->Colormap;
 		for (unsigned int i = 0; i < lightlist.Size(); i++)
@@ -1891,7 +1889,7 @@ void GLSprite::ProcessParticle(particle_t *particle, sector_t *sector)//, int sh
 		}
 	}
 
-	double timefrac = r_viewpoint.TicFrac;
+	float timefrac = r_viewpoint.TicFrac;
 	if (paused || level.isFrozen())
 		timefrac = 0.;
 	float xvf = (particle->Vel.X) * timefrac;
@@ -1902,10 +1900,15 @@ void GLSprite::ProcessParticle(particle_t *particle, sector_t *sector)//, int sh
 	y = float(particle->Pos.Y) + yvf;
 	z = float(particle->Pos.Z) + zvf;
 
-	float factor;
-	if (gl_particles_style == 1) factor = 1.3f / 7.f;
-	else if (gl_particles_style == 2) factor = 2.5f / 7.f;
-	else factor = 1 / 7.f;
+
+	const float foldExpr1d3DivBy7d0 = 1.3f / 7.0f;
+	const float foldExpr2d5DivBy7d0 = 2.5f / 7.0f;
+	const float foldExpr1d0DivBy7d0 = 1.0f / 7.0f;
+
+	float                             factor;
+	if      (gl_particles_style == 1) factor = foldExpr1d3DivBy7d0;
+	else if (gl_particles_style == 2) factor = foldExpr2d5DivBy7d0;
+	else                              factor = foldExpr1d0DivBy7d0;
 	float scalefac = particle->size * factor;
 
 	float viewvecX = GLRenderer->mViewVector.X;

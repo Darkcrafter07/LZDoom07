@@ -443,9 +443,7 @@ void gl_SetTextureMode(int type)
 	{
 		// Turn modulation on: brightmap texture will be multiplied by glColor
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-
-		// Make sure that scale has reset to 1, otherwise overbright
-		glTexEnvi(GL_TEXTURE_ENV, GL_RGB_SCALE, 1);
+		//glTexEnvi(GL_TEXTURE_ENV, GL_RGB_SCALE, 1);
 	}
 	else // if (type == TM_MODULATE)
 	{

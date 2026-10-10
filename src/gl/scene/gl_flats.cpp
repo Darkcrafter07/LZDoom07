@@ -601,7 +601,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 	case GLPASS_LIGHTEFFECTS_LEGACY:
 	{
 		FMaterial *bm = gltexture ? gltexture->GetBrightmapLegacy() : nullptr;
-		if (bm)
+		if (bm) // Brightmaps
 		{
 			int totalLight = lightlevel + rel;
 			if (totalLight > 255) totalLight = 255;

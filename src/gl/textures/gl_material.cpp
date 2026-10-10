@@ -309,6 +309,8 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 				tex->gl_info.ParentTexture->CopyTrueColorPixels(&parentBmp, exx, exx);
 			}
 
+			const int clampMaxPxBrightness = 192; // To decrease overburn slightly
+
 			// 3. Process pixels: Colorize, Desaturate and Cut by Parent Alpha
 			for (int i = 0; i < W * H; i++)
 			{
@@ -317,12 +319,21 @@ unsigned char * FGLTexture::CreateTexBuffer(int translation, int & w, int & h, F
 				// Hard-cut: If parent pixel is fully transparent, make brightmap pixel black and transparent
 				if (parentBuf[idx + 3] == 0)
 				{
-					buffer[idx] = 0; // R
+					buffer[idx] = 0;     // R
 					buffer[idx + 1] = 0; // G
 					buffer[idx + 2] = 0; // B
 					buffer[idx + 3] = 0; // A
 					continue;
 				}
+
+				// --- OVEREXPOSURE CLAMP ---
+				// Soft-clip the extreme white hotspots of the raw mask BEFORE any math is executed.
+				// This keeps middle-low intensities (glowing eyes, dim runes) uncorrupted and punchy,
+				// while shielding the frame buffer from pure white saturation leaks.
+				if (buffer[idx] > clampMaxPxBrightness) buffer[idx] = clampMaxPxBrightness;
+				if (buffer[idx + 1] > clampMaxPxBrightness) buffer[idx + 1] = clampMaxPxBrightness;
+				if (buffer[idx + 2] > clampMaxPxBrightness) buffer[idx + 2] = clampMaxPxBrightness;
+				if (buffer[idx + 3] > clampMaxPxBrightness) buffer[idx + 3] = clampMaxPxBrightness;
 
 				// Multiply brightmap mask by parent colors (Base * Brightmap / 255)
 				const float invMaxDoomLightLevel = 1.0f / 255.0f;

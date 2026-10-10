@@ -372,6 +372,7 @@ bool FClipRect::Intersect(int ix, int iy, int iw, int ih)
 // True Color texture copy function
 //
 //===========================================================================
+// The original function that crashes in GL1x/GL2x modes
 //void FBitmap::CopyPixelDataRGB(int originx, int originy, const uint8_t *patch, int srcwidth, 
 //							   int srcheight, int step_x, int step_y, int rotate, int ct, FCopyInfo *inf,
 //							   int r, int g, int b)
@@ -405,6 +406,7 @@ void FBitmap::CopyPixelDataRGB(int originx, int originy, const uint8_t *patch, i
 	}
 }
 
+// The original function that crashes in GL1x/GL2x modes
 //template<class TDest, class TBlend> 
 //void iCopyPaletted(uint8_t *buffer, const uint8_t * patch, int srcwidth, int srcheight, int Pitch,
 //					int step_x, int step_y, int rotate, PalEntry * palette, FCopyInfo *inf)
