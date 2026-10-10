@@ -782,8 +782,6 @@ void GLWall::Draw(int pass)
 
 	case GLPASS_LIGHTEFFECTS_LEGACY:
 	{
-		const float overallGlowIntensity = 0.9f;
-
 		int wallLight = this->lightlevel;
 		float intensityFactor;
 		if (wallLight < 96) intensityFactor = 1.0f;
@@ -969,7 +967,7 @@ void GLWall::Draw(int pass)
 			}
 		}
 
-		if (hasWallGlow) // PASS C: RENDER PROCEDURAL SECTOR GLOW GRADIENTS
+		if (hasWallGlow) // PASS C: RENDER PROCEDURAL SECTOR GLOW GRADIENTS (GLOWING FLATS)
 		{
 			gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
 			gl_RenderState.Apply();
@@ -1010,23 +1008,19 @@ void GLWall::Draw(int pass)
 
 					glBegin(GL_QUADS);
 					glTexCoord2f(tcs[0].u, sliceBottomV0);
-					glColor4f(bottomglow[0] * intensityBottom0 * overallGlowIntensity, bottomglow[1] * intensityBottom0 *
-						overallGlowIntensity, bottomglow[2] * intensityBottom0 * overallGlowIntensity, 1.0f);
+					glColor4f(bottomglow[0] * intensityBottom0, bottomglow[1] * intensityBottom0, bottomglow[2] * intensityBottom0, 1.0f);
 					glVertex3f(x1, rBottomZ0, y1);
 
 					glTexCoord2f(tcs[1].u, sliceTopV0);
-					glColor4f(bottomglow[0] * intensityTop0 * overallGlowIntensity, bottomglow[1] * intensityTop0 *
-						overallGlowIntensity, bottomglow[2] * intensityTop0 * overallGlowIntensity, 1.0f);
+					glColor4f(bottomglow[0] * intensityTop0, bottomglow[1] * intensityTop0, bottomglow[2] * intensityTop0, 1.0f);
 					glVertex3f(x1, rTopZ0, y1);
 
 					glTexCoord2f(tcs[2].u, sliceTopV1);
-					glColor4f(bottomglow[0] * intensityTop1 * overallGlowIntensity, bottomglow[1] * intensityTop1 *
-						overallGlowIntensity, bottomglow[2] * intensityTop1 * overallGlowIntensity, 1.0f);
+					glColor4f(bottomglow[0] * intensityTop1, bottomglow[1] * intensityTop1, bottomglow[2] * intensityTop1, 1.0f);
 					glVertex3f(x2, rTopZ1, y2);
 
 					glTexCoord2f(tcs[3].u, sliceBottomV1);
-					glColor4f(bottomglow[0] * intensityBottom1 * overallGlowIntensity, bottomglow[1] * intensityBottom1 *
-						overallGlowIntensity, bottomglow[2] * intensityBottom1 * overallGlowIntensity, 1.0f);
+					glColor4f(bottomglow[0] * intensityBottom1, bottomglow[1] * intensityBottom1, bottomglow[2] * intensityBottom1, 1.0f);
 					glVertex3f(x2, rBottomZ1, y2);
 					glEnd();
 				}
@@ -1060,23 +1054,19 @@ void GLWall::Draw(int pass)
 
 					glBegin(GL_QUADS);
 					glTexCoord2f(tcs[0].u, sliceBottomV0);
-					glColor4f(topglow[0] * intensityBottom0 * overallGlowIntensity, topglow[1] * intensityBottom0 *
-						overallGlowIntensity, topglow[2] * intensityBottom0 * overallGlowIntensity, 1.0f);
+					glColor4f(topglow[0] * intensityBottom0, topglow[1] * intensityBottom0, topglow[2] * intensityBottom0, 1.0f);
 					glVertex3f(x1, rBottomZ0, y1);
 
 					glTexCoord2f(tcs[1].u, sliceTopV0);
-					glColor4f(topglow[0] * intensityTop0 * overallGlowIntensity, topglow[1] * intensityTop0 *
-						overallGlowIntensity, topglow[2] * intensityTop0 * overallGlowIntensity, 1.0f);
+					glColor4f(topglow[0] * intensityTop0, topglow[1] * intensityTop0, topglow[2] * intensityTop0, 1.0f);
 					glVertex3f(x1, rTopZ0, y1);
 
 					glTexCoord2f(tcs[2].u, sliceTopV1);
-					glColor4f(topglow[0] * intensityTop1 * overallGlowIntensity, topglow[1] * intensityTop1 *
-						overallGlowIntensity, topglow[2] * intensityTop1 * overallGlowIntensity, 1.0f);
+					glColor4f(topglow[0] * intensityTop1, topglow[1] * intensityTop1, topglow[2] * intensityTop1, 1.0f);
 					glVertex3f(x2, rTopZ1, y2);
 
 					glTexCoord2f(tcs[3].u, sliceBottomV1);
-					glColor4f(topglow[0] * intensityBottom1 * overallGlowIntensity, topglow[1] * intensityBottom1 *
-						overallGlowIntensity, topglow[2] * intensityBottom1 * overallGlowIntensity, 1.0f);
+					glColor4f(topglow[0] * intensityBottom1, topglow[1] * intensityBottom1, topglow[2] * intensityBottom1, 1.0f);
 					glVertex3f(x2, rBottomZ1, y2);
 					glEnd();
 				}
