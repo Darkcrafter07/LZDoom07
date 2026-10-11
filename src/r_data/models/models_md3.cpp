@@ -679,28 +679,29 @@ int FMD3Model::FindFrame(const char * name)
 
 void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frameno, int frameno2, double inter, int translation, const PClass *ti)
 {
-	AActor* actor = (g_CurrentRendering3dmdlActorPtr != nullptr && (uintptr_t)g_CurrentRendering3dmdlActorPtr > 0x10000) 
+	AActor* actor = (g_CurrentRendering3dmdlActorPtr != nullptr && (uintptr_t)g_CurrentRendering3dmdlActorPtr > 0x10000)
 		? (AActor*)g_CurrentRendering3dmdlActorPtr : nullptr;
 
-	const FSpriteModelFrame* safeFramePtr = nullptr; 
+	const FSpriteModelFrame* safeFramePtr = nullptr;
 
-	float xscaleMdldef, yscaleMdldef, xyscaleMdldef, zscaleMdldef = 1.0f;
-	float xyscaleMap, zscaleMap = 1.0f;
-	float finalScaleX, finalScaleZ = 1.0f;
+	// FIX: Safe default values to strictly prevent Run-Time Check Failure #3
+	float xscaleMdldef = 1.0f, yscaleMdldef = 1.0f, xyscaleMdldef = 1.0f, zscaleMdldef = 1.0f;
+	float xyscaleMap = 1.0f, zscaleMap = 1.0f;
+	float finalScaleX = 1.0f, finalScaleZ = 1.0f;
 	float map2mdldefRatioXY = 1.0f;
 	float mdldef2mapRatioXY = 1.0f;
 	float map2mdldefRatioXYinv = 1.0f;
 	float mdldef2mapRatioXYinv = 1.0f;
-	float scaleZcombo, scaleZcomboInvCompens = 1.0f;
+	float scaleZcombo = 1.0f, scaleZcomboInvCompens = 1.0f;
 
 	bool isClassTypeValid = (ti != nullptr && (uintptr_t)ti > 0x10000);
-	
+
 	// ZOMBIE-ACTOR MEMORY BYPASS
 	// To completely block Access Violations when reading fields 
 	// 'actor->sprite' / 'actor->frame' over unmapped RAM blocks, enforce a strict 
 	// hardware try/catch boundary check on the actor pointer before reading specs.
 	// If it fails, fall back straight to pristine global cached frames natively.
-	bool isActorValidPtr = false;
+	bool isActorValidPtr = (actor != nullptr); // FIX: Activated pointer validation
 
 	if (isClassTypeValid)
 	{
@@ -709,24 +710,24 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 		{
 			safeFramePtr = FindModelFrame(ti, actor->sprite, actor->frame, false);
 		}
-		
+
 		if (safeFramePtr == nullptr)
 		{
 			// Safe Global Cache fallback with strict pointer boundary validations
-			if (curSpriteMDLFrame != nullptr && (uintptr_t)curSpriteMDLFrame > 0x10000) 
+			if (curSpriteMDLFrame != nullptr && (uintptr_t)curSpriteMDLFrame > 0x10000)
 			{
-				safeFramePtr = curSpriteMDLFrame; 
+				safeFramePtr = curSpriteMDLFrame;
 			}
 		}
 	}
 
 	// DOUBLE-LOCK GATEWAY: Evaluate across all load and menu toggle sequences
-	if (safeFramePtr != nullptr) 
+	if (safeFramePtr != nullptr)
 	{
 		xscaleMdldef = (float)safeFramePtr->xscale;
 		yscaleMdldef = (float)safeFramePtr->yscale;
 		zscaleMdldef = (float)safeFramePtr->zscale;
-		
+
 		// Secure scale assignments: use fallback safe unit matrix if actor memory is dead
 		if (isActorValidPtr)
 		{
@@ -738,8 +739,10 @@ void FMD3Model::RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame
 	xyscaleMdldef = (xscaleMdldef + yscaleMdldef) * 0.5f;
 	map2mdldefRatioXY = xyscaleMap / (xyscaleMdldef + 0.0001f);
 	mdldef2mapRatioXY = xyscaleMdldef / (xyscaleMap + 0.0001f);
-	map2mdldefRatioXYinv = 1.0f / map2mdldefRatioXYinv;
-	mdldef2mapRatioXYinv = 1.0f / mdldef2mapRatioXYinv;
+
+	// FIX: Corrected inverse equations to divide by calculated ratios instead of themselves
+	map2mdldefRatioXYinv = 1.0f / (map2mdldefRatioXY + 0.0001f);
+	mdldef2mapRatioXYinv = 1.0f / (mdldef2mapRatioXY + 0.0001f);
 
 	// ==============================================================================
 	// GL1x/GL2x legacy mode
