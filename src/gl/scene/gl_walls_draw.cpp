@@ -206,7 +206,7 @@ void GLWall::MakeVertices(bool nosplit)
 
 void GLWall::RenderWall(int textured)
 {
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 	gl_RenderState.ApplyLightIndex(dynlightindex);
 	if (gl.buffermethod != BM_DEFERRED)
 	{
@@ -569,7 +569,7 @@ void GLWall::Draw(int pass)
 				// Enforce discrete multiplicative blending for hardware Gouraud shading engine
 				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
 				gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(0);
 
 				// Enforce pixel depth matching to protect multi-pass layout sync
 				glDepthFunc(GL_EQUAL);
@@ -642,7 +642,7 @@ void GLWall::Draw(int pass)
 			{
 				// Regular walls without Doom64 sector gradient lighting
 				gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(0);
 				RenderWall(RWF_TEXTURED);
 			}
 			break;
@@ -650,7 +650,7 @@ void GLWall::Draw(int pass)
 		else // GL3+ way
 		{
 			gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(0);
 			RenderWall(RWF_TEXTURED);
 		}
 		break;
@@ -721,7 +721,7 @@ void GLWall::Draw(int pass)
 	
 					float vtx[] = { x1, zb0, y1, x1, zt0, y1, x2, zt1, y2, x2, zb1, y2 };
 	
-					gl_RenderState.Apply();
+					gl_RenderState.Apply(0);
 					glEnable(GL_TEXTURE_2D);
 					glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	
@@ -771,7 +771,7 @@ void GLWall::Draw(int pass)
 	
 			// Force the state machine to flush all changes directly into the GPU hardware registers.
 			// This completely clears the left-over GL_DST_COLOR, GL_ONE blending state!
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(0);
 	
 			// Secondary fallback clean for raw OpenGL 1.1 hardware registers
 			glEnable(GL_FOG);
@@ -812,7 +812,7 @@ void GLWall::Draw(int pass)
 		if (bm) // PASS A: RENDER BRIGHTMAPS
 		{
 			gl_RenderState.SetMaterial(bm, flags & 3, 0, -1, false);
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(0);
 
 			glBegin(GL_QUADS);
 			for (int i = 0; i < 4; i++)
@@ -919,7 +919,7 @@ void GLWall::Draw(int pass)
 					// Re-bind the diffuse wall texture so that our lightmaps blend identically to glowing flats
 					gl_RenderState.SetTextureMode(TM_MODULATE);
 					gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-					gl_RenderState.Apply();
+					gl_RenderState.Apply(0);
 
 					// ANTI-Z-FIGHTING PIPELINE SECURE
 					glDepthFunc(GL_LEQUAL);
@@ -962,7 +962,7 @@ void GLWall::Draw(int pass)
 
 					// Re-synchronize back to brightmap state layer for the next conditional passes
 					gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
-					gl_RenderState.Apply(); // Commit registry reset securely
+					gl_RenderState.Apply(0); // Commit registry reset securely
 				}
 			}
 		}
@@ -970,7 +970,7 @@ void GLWall::Draw(int pass)
 		if (hasWallGlow) // PASS C: RENDER PROCEDURAL SECTOR GLOW GRADIENTS (GLOWING FLATS)
 		{
 			gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(0);
 
 			glDepthFunc(GL_LEQUAL);
 			glDepthMask(false);
@@ -1080,7 +1080,7 @@ void GLWall::Draw(int pass)
 		// Clean hardware recovery matrix gate
 		glMatrixMode(GL_MODELVIEW);
 		gl_RenderState.SetTextureMode(TM_MODULATE);
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 	}
 	break;
 	}

@@ -25,7 +25,7 @@ public:
 
 	bool Load(const char * fn, int lumpnum, const char * buffer, int length) override;
 	int FindFrame(const char * name) override;
-	void RenderFrame(FModelRenderer *renderer, FTexture * skin, int frame, int frame2, double inter, int translation = 0, const PClass *ti = nullptr) override;
+	void RenderFrame(AActor *thing, FModelRenderer *renderer, FTexture * skin, int frame, int frame2, double inter, int translation = 0, const PClass *ti = nullptr) override;
 	void BuildVertexBuffer(FModelRenderer *renderer) override;
 	void AddSkins(uint8_t *hitlist) override;
 	void LoadGeometry();

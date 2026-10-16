@@ -34,37 +34,20 @@ class camglow_Light : SpotLightCamGlowStraight
 
 		// 1. Get base color from the player's CVar
 		Color c = CVar.GetCVar("cl_camglow_plus_color", toFollow.player).GetString();
-		string suffix = second ? "_2" : "";
-
-		// 2. Color calculation: apply multiplier ONLY to the second light
-		if (second)
-		{
-			float mult = CVar.GetCVar("cl_camglow_plus_color_2_mult", toFollow.player).GetFloat();
-			args[0] = c.r * mult;
-			args[1] = c.g * mult;
-			args[2] = c.b * mult;
-		}
-		else
-		{
-			// First light uses original color values
-			args[0] = c.r;
-			args[1] = c.g;
-			args[2] = c.b;
-		}
-
+		
+		// Cache the raw base color for dynamic updates inside Tick
 		baseColor = c;
 		
-		// 3. Set basic light properties
+		// 2. Set basic light properties
 		bATTENUATE = CVar.GetCVar("cl_camglow_attenuated", toFollow.player).GetBool();
-		args[3] = CVar.GetCVar("cl_camglow_plus_intensity"..suffix, toFollow.player).GetInt();
 		
-		// 4. Spotlight cone setup (will be maintained in Tick)
+		// 3. Spotlight cone setup (will be maintained in Tick)
 		SpotInnerAngle = 30.0;
 		SpotOuterAngle = 115.0;
 		
 		shouldInterpolate = CVar.GetCVar("cl_camglow_interpolate", toFollow.player).GetBool();
 		
-		// 5. Location and Offset setup
+		// 4. Location and Offset setup
 		double zBump = toFollow.height * 0.067;  // 1.0 / 15.0
 		int loc = CVar.GetCVar("cl_camglow_plus_location", toFollow.player).GetInt();
 
@@ -125,6 +108,7 @@ class camglow_Light : SpotLightCamGlowStraight
 		{
 			let cv = CVar.FindCVar("gl_camglowlight");
 			let vis = CVar.FindCVar("r_visibility");
+			let lm = CVar.FindCVar("gl_lightmode"); // Track current engine light mode
 			
 			bool engineEnabled = (cv && cv.GetBool());
 			
@@ -135,22 +119,48 @@ class camglow_Light : SpotLightCamGlowStraight
 
 			if (engineEnabled && visibilityMult > 0)
 			{
-				// Determine which intensity CVar to read
+				// Determine which intensity (RADIUS) CVar to read
 				string sfx = thisIsLight2 ? "_2" : "";
 				
-				// Get base intensity directly from player's user CVar
-				int baseIntensity = CVar.GetCVar("cl_camglow_plus_intensity"..sfx, toFollow.player).GetInt();
+				// Get base RADIUS directly from player's user CVar
+				int baseRadius = CVar.GetCVar("cl_camglow_plus_intensity"..sfx, toFollow.player).GetInt();
 				
-				// --- CALCULATE FINAL INTENSITY ---
-				// We multiply base by gain.
-				double finalIntensity = baseIntensity * visibilityMult;
+				// Calculate final RADIUS based on visibility multiplier
+				double finalRadius = baseRadius * visibilityMult;
 				
-				// Apply to Light Intensity (args[3])
-				//args[3] = clamp(int(finalIntensity), 0, 4096); // no reason to clamp final intensity
-				args[3] = finalIntensity;
+				// Apply to Light RADIUS (args[3]) -> FIXED: Stays intact as radius!
+				args[3] = finalRadius;
+
+				// --- DYNAMIC TRUE INTENSITY (COLOR RGB) CALCULATION ---
+				double rFactor = 1.0;
+				double gFactor = 1.0;
+				double bFactor = 1.0;
+
+				// Apply multiplier ONLY to the second light source (far-field beam)
+				if (thisIsLight2)
+				{
+					float mult = CVar.GetCVar("cl_camglow_plus_color_2_mult", toFollow.player).GetFloat();
+					rFactor *= mult;
+					gFactor *= mult;
+					bFactor *= mult;
+				}
+
+				// --- "DOOM" SECTOR LIGHT MODE INTERCEPT (gl_lightmode == 2) ONLY ---
+				// Soften the color flare by 2.5x to match the slight ambient glow requirements
+				if (lm && lm.GetInt() == 2)
+				{
+					rFactor *= 0.40; // Drops light emission intensity down correctly
+					gFactor *= 0.40;
+					bFactor *= 0.40;
+				}
+
+				// Apply finalized dynamic RGB color values to args[0..2] -> FIXED: Proper arrays!
+				args[0] = baseColor.r * rFactor;
+				args[1] = baseColor.g * gFactor;
+				args[2] = baseColor.b * bFactor;
 
 				// DEBUG PRINT: Open console (~) to see these values
-				//Console.Printf("Light %d | Base: %d | R_Vis Mult: %.2f | FINAL: %d", thisIsLight2 ? 2 : 1, baseIntensity, visibilityMult, args[3]);
+				//Console.Printf("Light %d | Radius: %d | Color: (%d, %d, %d)", thisIsLight2 ? 2 : 1, args[3], args[0], args[1], args[2]);
 			}
 			else
 			{

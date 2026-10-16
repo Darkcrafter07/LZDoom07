@@ -119,7 +119,7 @@ void GLPortal::ClearScreen()
 	gl_RenderState.mProjectionMatrix.ortho(0, SCREENWIDTH, SCREENHEIGHT, 0, -1.0f, 1.0f);
 	gl_RenderState.ApplyMatrices();
 	gl_RenderState.SetColor(0, 0, 0);
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 
 	glDisable(GL_MULTISAMPLE);
 	glDisable(GL_DEPTH_TEST);
@@ -151,7 +151,7 @@ void GLPortal::DrawPortalStencil(int pass)
 			mPrimIndices[i * 2 + 1] = lines[i].vertcount;
 		}
 	}
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 	for (unsigned int i = 0; i < mPrimIndices.Size(); i += 2)
 	{
 		GLRenderer->mVBO->RenderArray(GL_TRIANGLE_FAN, mPrimIndices[i], mPrimIndices[i + 1]);
@@ -198,7 +198,7 @@ bool GLPortal::Start(bool usestencil, bool doquery)
 			gl_RenderState.EnableTexture(false);
 			gl_RenderState.ResetColor();
 			glDepthFunc(GL_LESS);
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(0);
 
 			if (NeedDepthBuffer())
 			{
@@ -380,7 +380,7 @@ void GLPortal::End(bool usestencil)
 			gl_RenderState.SetEffect(EFF_NONE);
 			gl_RenderState.ResetColor();
 			gl_RenderState.EnableTexture(false);
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(0);
 
 			if (needdepth)
 			{
@@ -446,7 +446,7 @@ void GLPortal::End(bool usestencil)
 			gl_RenderState.EnableTexture(false);
 			gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
 			gl_RenderState.BlendEquation(GL_FUNC_ADD);
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(0);
 			DrawPortalStencil(STP_DepthRestore);
 			gl_RenderState.SetEffect(EFF_NONE);
 			gl_RenderState.EnableTexture(true);
@@ -1201,7 +1201,7 @@ void GLHorizonPortal::DrawContents()
 	gl_SetPlaneTextureRotation(sp, gltexture);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	gl_RenderState.BlendFunc(GL_ONE, GL_ZERO);
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 
 
 	for (unsigned i = 0; i < vcount; i += 4)

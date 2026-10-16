@@ -184,7 +184,7 @@ void FModelRenderer::RenderModel(float x, float y, float z, FSpriteModelFrame *s
 	float orientation = scaleFactorX * scaleFactorY * scaleFactorZ;
 
 	BeginDrawModel(actor, smf, objectToWorldMatrix, orientation < 0);
-	RenderFrameModels(smf, actor->state, actor->tics, actor->GetClass(), translation);
+	RenderFrameModels(actor, smf, actor->state, actor->tics, actor->GetClass(), translation);
 	EndDrawModel(actor, smf);
 }
 
@@ -224,11 +224,11 @@ void FModelRenderer::RenderHUDModel(DPSprite *psp, float ofsX, float ofsY)
 	BeginDrawHUDModel(playermo, objectToWorldMatrix, orientation < 0);
 	uint32_t trans = psp->GetTranslation() != 0 ? psp->GetTranslation() : 0;
 	if ((psp->Flags & PSPF_PLAYERTRANSLATED)) trans = psp->Owner->mo->Translation;
-	RenderFrameModels(smf, psp->GetState(), psp->GetTics(), playermo->player->ReadyWeapon->GetClass(), trans);
+	RenderFrameModels(playermo, smf, psp->GetState(), psp->GetTics(), playermo->player->ReadyWeapon->GetClass(), trans);
 	EndDrawHUDModel(playermo);
 }
 
-void FModelRenderer::RenderFrameModels(const FSpriteModelFrame *smf, const FState *curState, const int curTics, const PClass *ti, int translation)
+void FModelRenderer::RenderFrameModels(AActor *actor, const FSpriteModelFrame *smf, const FState *curState, const int curTics, const PClass *ti, int translation)
 {
 	// [BB] Frame interpolation: Find the FSpriteModelFrame smfNext which follows after smf in the animation
 	// and the scalar value inter ( element of [0,1) ), both necessary to determine the interpolated frame.
@@ -288,9 +288,9 @@ void FModelRenderer::RenderFrameModels(const FSpriteModelFrame *smf, const FStat
 			mdl->PushSpriteMDLFrame(smf, i);
 
 			if (smfNext && smf->modelframes[i] != smfNext->modelframes[i])
-				mdl->RenderFrame(this, tex, smf->modelframes[i], smfNext->modelframes[i], inter, translation, ti);
+				mdl->RenderFrame(actor, this, tex, smf->modelframes[i], smfNext->modelframes[i], inter, translation, ti);
 			else
-				mdl->RenderFrame(this, tex, smf->modelframes[i], smf->modelframes[i], 0.f, translation, ti);
+				mdl->RenderFrame(actor, this, tex, smf->modelframes[i], smf->modelframes[i], 0.f, translation, ti);
 
 			ResetVertexBuffer();
 		}
@@ -968,9 +968,17 @@ FSpriteModelFrame * FindModelFrame(const PClass * ti, int sprite, int frame, boo
 	// because 'actor->GetClass()' dynamically drifts into nullptr inside zombie states.
 	// Force an immediate fallback check: if incoming 'ti' type pointer is null, 
 	// return nullptr to completely eliminate runtime Access Violations.
-	if (ti == nullptr || (uintptr_t)ti <= 0x10000) 
+	if (ti == nullptr || (uintptr_t)ti <= 0x10000)
 	{
 		return nullptr; // Safe-guard exit block, prevent reading OS kernel bounds.
+	}
+
+	// FIX #1: Global C-style array bounds protect gate
+	// If the engine passes a corrupted, negative, or wild out-of-bounds sprite index 
+	// during map level hot-reloads, abort immediately before accessing the global array memory.
+	if (sprite < 0 || sprite >= (int)sprites.Size())
+	{
+		return nullptr;
 	}
 
 	if (GetDefaultByType(ti)->hasmodel)
@@ -978,32 +986,45 @@ FSpriteModelFrame * FindModelFrame(const PClass * ti, int sprite, int frame, boo
 		FSpriteModelFrame smf;
 
 		memset(&smf, 0, sizeof(smf));
-		smf.type=ti;
-		smf.sprite=sprite;
-		smf.frame=frame;
+		smf.type = ti;
+		smf.sprite = sprite;
+		smf.frame = frame;
 
 		int hash = SpriteModelHash[ModelFrameHash(&smf) % SpriteModelFrames.Size()];
 
-		while (hash>=0)
+		while (hash >= 0)
 		{
 			FSpriteModelFrame * smff = &SpriteModelFrames[hash];
-			if (smff->type==ti && smff->sprite==sprite && smff->frame==frame) return smff;
-			hash=smff->hashnext;
+			if (smff->type == ti && smff->sprite == sprite && smff->frame == frame) return smff;
+			hash = smff->hashnext;
 		}
 	}
 
 	// Check for voxel replacements
 	if (r_drawvoxels)
 	{
+		// FIX #2: Double-lock tracking update. Index is now 100% verified to sit within live array bounds.
 		spritedef_t *sprdef = &sprites[sprite];
-		if (frame < sprdef->numframes)
+
+		if (sprdef != nullptr && frame >= 0 && frame < sprdef->numframes)
 		{
-			spriteframe_t *sprframe = &SpriteFrames[sprdef->spriteframes + frame];
-			if (sprframe->Voxel != nullptr)
+			// Verify that SpriteFrames boundaries are preserved before pointer arithmetic offsets
+			int targetFrameIndex = sprdef->spriteframes + frame;
+			if (targetFrameIndex >= 0 && targetFrameIndex < (int)SpriteFrames.Size())
 			{
-				int index = sprframe->Voxel->VoxeldefIndex;
-				if (dropped && sprframe->Voxel->DroppedSpin !=sprframe->Voxel->PlacedSpin) index++;
-				return &SpriteModelFrames[index];
+				spriteframe_t *sprframe = &SpriteFrames[targetFrameIndex];
+				if (sprframe != nullptr && sprframe->Voxel != nullptr && (uintptr_t)sprframe->Voxel > 0x10000)
+				{
+					int index = sprframe->Voxel->VoxeldefIndex;
+					if (index >= 0 && index < (int)SpriteModelFrames.Size())
+					{
+						if (dropped && sprframe->Voxel->DroppedSpin != sprframe->Voxel->PlacedSpin)
+						{
+							if (index + 1 < (int)SpriteModelFrames.Size()) index++;
+						}
+						return &SpriteModelFrames[index];
+					}
+				}
 			}
 		}
 	}

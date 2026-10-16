@@ -2469,7 +2469,7 @@ OPTVAL_ONLYMONSTERS			= "Only monsters";
 OPTVAL_HEXEN				= "Hexen";
 OPTVAL_OLD					= "Old";
 OPTVAL_DEFAULT				= "Default";
-OPTVAL_DOOM					= "Doom";
+OPTVAL_DOOM					= "Doom (dark+slightglow)";
 OPTVAL_DOOMSTRICT			= "Doom (strict)";
 OPTVAL_BOOM					= "Boom";
 OPTVAL_BOOMSTRICT			= "Boom (strict)";
@@ -2538,7 +2538,7 @@ OPTVAL_HWPOLY				= "OpenGL-Accelerated";
 OPTVAL_SWDOOM				= "Doom Software Renderer";
 OPTVAL_DEDICATED			= "High-Performance";
 OPTVAL_INTEGRATED			= "Power-Saving";
-OPTVAL_VANILLA				= "Vanilla";
+OPTVAL_VANILLA				= "Vanilla (original wrong)";
 OPTVAL_VTFZDOOM				= "ZDoom (Forced)";
 OPTVAL_VTFVANILLA			= "Vanilla (Forced)";
 OPTVAL_VTAZDOOM				= "Auto (ZDoom Preferred)";
@@ -2868,11 +2868,11 @@ OPTVAL_16X 					= "16x";
 OPTVAL_32X 					= "32x";
 OPTVAL_USEASPALETTE 		= "Use as palette";
 OPTVAL_BLEND 				= "Blend";
-OPTVAL_STANDARD 			= "Standard";
-OPTVAL_BRIGHT 				= "Bright";
-OPTVAL_DARK 				= "Dark";
-OPTVAL_LEGACY 				= "Legacy";
-OPTVAL_SOFTWARE 			= "Software";
+OPTVAL_STANDARD 			= "Standard (dark+bright)";
+OPTVAL_BRIGHT 				= "Bright (no glow+ok fog),";
+OPTVAL_DARK 				= "Dark (no glow+black fog)";
+OPTVAL_LEGACY 				= "Legacy (doom legacy)";
+OPTVAL_SOFTWARE 			= "Software (ORIGINAL EXE)";
 OPTVAL_SPEED 				= "Speed";
 OPTVAL_QUALITY 				= "Quality";
 OPTVAL_OPTIMAL 				= "Optimal";
@@ -2936,8 +2936,13 @@ TCMNU_TITLE		= "TRUECOLOR OPTIONS";
 TCMNU_TRUECOLOR				= "True color output";
 TCMNU_MINFILTER				= "Linear filter when downscaling";
 TCMNU_MAGFILTER				= "Linear filter when upscaling";
-TCMNU_MIPMAP					= "Use mipmapped textures";
+TCMNU_MIPMAP				= "Use mipmapped textures";
 TCMNU_DYNLIGHTS				= "Dynamic lights (Software)";
+
+// LZDoom07 sector light mode naming conflict removal for fog
+OPTVAL_FOG_OFF 				= "Off";
+OPTVAL_FOG_STANDARD 			= "Standard";
+OPTVAL_FOG_RADIAL 			= "Radial";
 
 // SVE strings:
 

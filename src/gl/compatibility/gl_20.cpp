@@ -277,6 +277,8 @@ CVAR(Float, gl_legacy_dynlight_overbright_walls, 0.125f, CVAR_ARCHIVE) // Intens
 // Enables the zscript camglow dynlight spawn (why not to keep it for all renderers GL1,2,3,4, Software, Polyrenderer?)
 CVAR(Bool, gl_camglowlight, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
+EXTERN_CVAR(Int, r_fakecontrast)
+
 GLFlat* g_isCurrentlyGL1xDynlightFlatDrawing = nullptr;        // for GL1x/GL2x modes only
 GLWall* g_isCurrentlyGL1xDynlightWallDrawing = nullptr;        // for GL1x/GL2x modes only
 bool g_isCurrentlyGL1xFlatsDynlightOverbrightPass = false;     // for GL1x/GL2x modes only
@@ -285,6 +287,9 @@ bool g_isGL1xDynlightAcamglowOnFlat = false;                   // for GL1x/GL2x 
 bool g_isGL1xDynlightAcamglowOnWall = false;                   // for GL1x/GL2x modes only
 extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes (in gl_flats.cpp, Draw method)
 extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes (in gl_walls_draw.cpp, Draw method)
+
+extern bool s_WasFakeContrastForcedByGL1x, s_WasCamglowDynlightForcedByGL1x, s_WereAllGLDynlightsForcedByGL1x; // for GL1x/GL2x modes only, declared in gl_lightdata.cpp
+extern int  s_SavedFakeContrastValForcedByGL1x, s_SavedCamglowDynlightValForcedByGL1x, s_SavedAllGLDynlightsValForcedByGL1x;    // for GL1x/GL2x modes only, declared in gl_lightdata.cpp
 
 float distLight2Wall, distLight2Flat, radiusWalls, radiusFlats = 0.0f;
 
@@ -298,24 +303,59 @@ float distLight2Wall, distLight2Flat, radiusWalls, radiusFlats = 0.0f;
 
 void gl_PatchMenu()
 {
-	// Radial fog and Doom lighting are not available without full shader support.
 	if (!gl_legacy_mode) return;
 
-	FOptionValues **opt = OptionValues.CheckKey("LightingModes");
-	if (opt != NULL)
+	if (gl.legacyMode && (gl_lightmode == 2 || gl_lightmode == 8 || gl_lightmode == 16) )
 	{
-		for (int i = (*opt)->mValues.Size() - 1; i >= 0; i--)
+		// 1. Handle r_fakecontrast setup on startup
+		if (!s_WasFakeContrastForcedByGL1x)
 		{
-			// Delete 'Doom' lighting mode
-			if ((*opt)->mValues[i].Value == 2.0 || (*opt)->mValues[i].Value == 8.0 || (*opt)->mValues[i].Value == 16.0)
+			s_SavedFakeContrastValForcedByGL1x = r_fakecontrast;
+			if (r_fakecontrast == 0)
 			{
-				(*opt)->mValues.Delete(i);
+				r_fakecontrast = 1;
 			}
+			s_WasFakeContrastForcedByGL1x = true;
+		}
+
+		// 2. Handle gl_camglowlight setup on startup
+		if (!s_WasCamglowDynlightForcedByGL1x)
+		{
+			s_SavedCamglowDynlightValForcedByGL1x = gl_camglowlight;
+			if (gl_camglowlight == 0)
+			{
+				gl_camglowlight = 1;
+			}
+			s_WasCamglowDynlightForcedByGL1x = true;
+		}
+
+		// 3. Handle gl_lights safe fallback setup on startup
+		if (!s_WereAllGLDynlightsForcedByGL1x)
+		{
+			s_SavedAllGLDynlightsValForcedByGL1x = gl_lights;
+			if (gl_lights == 0)
+			{
+				gl_lights = 1;
+			}
+			s_WereAllGLDynlightsForcedByGL1x = true;
 		}
 	}
 
+	//FOptionValues **opt = OptionValues.CheckKey("LightingModes");
+	//if (opt != NULL)
+	//{
+	//	for (int i = (*opt)->mValues.Size() - 1; i >= 0; i--)
+	//	{
+	//		// Delete 'Doom' lighting mode
+	//		if ((*opt)->mValues[i].Value == 2.0 || (*opt)->mValues[i].Value == 8.0 || (*opt)->mValues[i].Value == 16.0)
+	//		{
+	//			(*opt)->mValues.Delete(i);
+	//		}
+	//	}
+	//}
+
 	// disable features that don't work without shaders.
-	if (gl_lightmode == 2 || gl_lightmode == 8 || gl_lightmode == 16) gl_lightmode = 3;
+	//if (gl_lightmode == 2 || gl_lightmode == 8 || gl_lightmode == 16) gl_lightmode = 3;
 
 	// gl_fogmode used to be disabled in GL1x/GL2x legacy path
 	// but it affects the way camglow dynlight works
@@ -332,6 +372,8 @@ void gl_PatchMenu()
 	//	}
 	//}
 	//if (gl_fogmode == 2) gl_fogmode = 1;
+
+
 
 	// remove more unsupported stuff like postprocessing options.
 	// This cannot be done with a menu filter because the renderer gets initialized long after the menu is set up.
@@ -468,12 +510,8 @@ static bool currentModelMatrixState;
 
 extern int modellightindex; // to distinguish between different dynlight types
 extern bool isUsingVolumetric3DModelLegacyDynlight;
-extern void* g_CurrentRendering3dmdlActorPtr;         // no need to add "AActor *actor" in ApplyFixedFunction
-void FRenderState::ApplyFixedFunction()
+void FRenderState::ApplyFixedFunction(AActor *actor)
 {
-	AActor* actor = (g_CurrentRendering3dmdlActorPtr != nullptr && (uintptr_t)g_CurrentRendering3dmdlActorPtr > 0x10000)
-		? (AActor*)g_CurrentRendering3dmdlActorPtr : nullptr;
-
 	int thistm = mTextureMode == TM_MODULATE && mTempTM == TM_OPAQUE ? TM_OPAQUE : mTextureMode;
 	if (thistm != ffTextureMode)
 	{
@@ -548,9 +586,18 @@ void FRenderState::ApplyFixedFunction()
 			{ lightlevel = g_isCurrentlyGLFlatDrawing->sector->lightlevel; }
 		}
 
-		float fogDensMul = 2.0f; float fogColorMul = 1.0f;
-		if (gl_lights && fogColInitR >= 5 && fogColInitG >= 5 && fogColInitB >= 5)
+		// Determine if we are rendering inside pure black fog (classic Doom dark fade)
+		bool isBlackFog = (fogColInitR < 5 && fogColInitG < 5 && fogColInitB < 5);
+
+		// Check condition triggers for custom tracking branches
+		bool isLegacySoftwareBlackFog = (isBlackFog && gl.legacyMode && (gl_lightmode == 8 || gl_lightmode == 16));
+		bool isLegacyColoredLightsFog = (gl_lights && fogColInitR >= 5 && fogColInitG >= 5 && fogColInitB >= 5);
+
+		// ---=== STEP 1: EMBED THE UNIFIED SCALE MATRIX LAYOUT ===---
+		if (isLegacySoftwareBlackFog || isLegacyColoredLightsFog)
 		{
+			float fogDensMul = 2.0f; float fogColorMul = 1.0f;
+
 			if      (lightlevel <= 88)                      { fogDensMul = 1.00f; fogColorMul = 1.00f; }
 			else if (lightlevel >= 89 && lightlevel < 96)   { fogDensMul = 1.05f; fogColorMul = 0.99f; }
 			else if (lightlevel >= 96 && lightlevel < 104)  { fogDensMul = 1.15f; fogColorMul = 0.98f; }
@@ -575,20 +622,51 @@ void FRenderState::ApplyFixedFunction()
 			fogColCurG = (int8_t)(fogColInitG * fogColorMul);
 			fogColCurB = (int8_t)(fogColInitB * fogColorMul);
 
-			// Fog loses intensity and gets brighter if rendered on top of regular modulated dynlight lit surfaces
-			if (g_isCurrentlyGLSpriteDrawing)
+			// ---=== STEP 2: EVALUATE TARGET TRACK CHANNELS ===---
+			if (isLegacySoftwareBlackFog)
 			{
-				float spriteFogDens = fogDensMul * 0.625f;
-				if (spriteFogDens < 1.0f) spriteFogDens = 1.0f;
+				if (g_isCurrentlyGLSpriteDrawing)
+				{
+					float spriteModifier = 1.0f;
+					if      (lightlevel >= 240)   spriteModifier = 3.30f;
+					else if (lightlevel >= 224)   spriteModifier = 3.32f;
+					else if (lightlevel >= 208)   spriteModifier = 2.85f;
+					else if (lightlevel >= 192)   spriteModifier = 2.50f;
+					else if (lightlevel >= 176)   spriteModifier = 2.22f;
+					else if (lightlevel >= 160)   spriteModifier = 2.00f;
+					else if (lightlevel >= 144)   spriteModifier = 1.64f;
+					else if (lightlevel >= 136)   spriteModifier = 1.55f;
+					else if (lightlevel >= 128)   spriteModifier = 1.42f;
+					else if (lightlevel >= 112)   spriteModifier = 1.25f;
 
-				FogDensityCurrent *= spriteFogDens; // less for sprites/models
+					// Smash the fog down exponentially on sprites in the dark
+					FogDensityCurrent = FogDensityCurrent / spriteModifier;
+				}
+				else
+				{
+					FogDensityCurrent *= fogDensMul;    // more for walls or flats
+
+					// Keep solid walls and flats tightly clamped at a maximum dense -0.35f threshold
+					if (FogDensityCurrent < -0.35f) FogDensityCurrent = -0.35f; // HARD-LOCK SHIELD FOR GEOMETRY!
+				}
 			}
-			else
+			else // isLegacyColoredLightsFog path wrapper
 			{
-				FogDensityCurrent *= fogDensMul;    // more for walls or flats
+				// Fog loses intensity and gets brighter if rendered on top of regular modulated dynlight lit surfaces
+				if (g_isCurrentlyGLSpriteDrawing)
+				{
+					float spriteFogDens = fogDensMul * 0.625f;
+					if (spriteFogDens < 1.0f) spriteFogDens = 1.0f;
 
-				// Keep solid walls and flats tightly clamped at a maximum dense -0.35f threshold
-				if (FogDensityCurrent < -0.35f) FogDensityCurrent = -0.35f; // HARD-LOCK SHIELD FOR GEOMETRY!
+					FogDensityCurrent *= spriteFogDens; // less for sprites/models
+				}
+				else
+				{
+					FogDensityCurrent *= fogDensMul;    // more for walls or flats
+
+					// Keep solid walls and flats tightly clamped at a maximum dense -0.35f threshold
+					if (FogDensityCurrent < -0.35f) FogDensityCurrent = -0.35f; // HARD-LOCK SHIELD FOR GEOMETRY!
+				}
 			}
 
 			// Push un-corrupted dynamically faded color assets straight into hardware registers
@@ -602,6 +680,7 @@ void FRenderState::ApplyFixedFunction()
 			if (g_isCurrentlyGLSpriteDrawing) ffFogDensity = mLightParmsInitial; // no abrupt fog intens drop on sprites?
 			else                              ffFogDensity = mLightParmsInitial;
 		}
+		// ---=== STEP 3: STANDARD FACTORY HARDWARE FALLBACK ===---
 		else
 		{
 			GLfloat FactoryFogColor[4] = { fogColInitR * invMul255, fogColInitG * invMul255, fogColInitB * invMul255, 0.0f };
@@ -2660,7 +2739,7 @@ void GLWall::RenderFogBoundaryCompat()
 
 	// without shaders some approximation is needed. This won't look as good
 	// as the shader version but it's an acceptable compromise.
-	float fogdensity = gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
+	float fogdensity = gl_GetFogDensity(lightlevel, 0, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
 
 	float dist1 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, glseg.x1, glseg.y1);
 	float dist2 = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, glseg.x2, glseg.y2);
@@ -2674,7 +2753,7 @@ void GLWall::RenderFogBoundaryCompat()
 	gl_RenderState.EnableTexture(false);
 	gl_RenderState.EnableFog(false);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0);
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 	glEnable(GL_POLYGON_OFFSET_FILL);
 	glPolygonOffset(-1.0f, -128.0f);
 	glDepthFunc(GL_LEQUAL);
@@ -2791,7 +2870,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 			gl_RenderState.SetObjectColor(0xffffffff);
 		}
 
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 
 		FFlatVertex *ptr = GLRenderer->mVBO->GetBuffer();
 		FFlatVertex *startPtr = ptr;
@@ -2847,7 +2926,7 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 	// leaves this floor sector chunk, permanently curing the angle pitch-black glitch.
 	gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = false;
 	gl_RenderState.BlendEquation(GL_FUNC_ADD);
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 }
 
 //==========================================================================
@@ -2871,7 +2950,7 @@ void GLFlat::DrawLightsCompat(int pass)
 	}
 	else
 	{
-		mDrawer->SetFog(lightlevel, gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor), &Colormap, true);
+		mDrawer->SetFog(lightlevel, gl_GetFogDensity(lightlevel, 0, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor), &Colormap, true);
 	}
 
 	// Draw the subsectors belonging to this sector
@@ -3062,7 +3141,7 @@ void GLWall::RenderLightsCompat(int pass)
 	// leaves this floor sector chunk, permanently curing the angle pitch-black glitch.
 	gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = false;
 	gl_RenderState.BlendEquation(GL_FUNC_ADD);
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 
 	memcpy(tcs, save, sizeof(tcs));
 	vertcount = 0;
@@ -3081,7 +3160,7 @@ void GLSceneDrawer::RenderMultipassStuff()
 	// remove any remaining texture bindings and shaders whick may get in the way.
 	gl_RenderState.EnableTexture(false);
 	gl_RenderState.EnableBrightmap(false);
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 	gl_drawinfo->dldrawlists[GLLDL_WALLS_PLAIN].DrawWalls(GLPASS_PLAIN);
 	gl_drawinfo->dldrawlists[GLLDL_FLATS_PLAIN].DrawFlats(GLPASS_PLAIN);
 

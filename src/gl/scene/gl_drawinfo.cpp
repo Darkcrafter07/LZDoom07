@@ -856,12 +856,12 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				glAlphaFunc(GL_GREATER, gl_mask_threshold);
 
 				glDepthMask(GL_TRUE);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(0);
 
 				w->Draw(pass);
 
 				glDisable(GL_ALPHA_TEST);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(0);
 			}
 			else
 			{
@@ -919,7 +919,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = GLPASS_LIGHTTEX;
 
 				gl_RenderState.EnableFog(false);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(0);
 
 				glDisable(GL_FOG);
 				glDepthFunc(GL_LEQUAL);
@@ -928,49 +928,94 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// --- DETECT CUMULATIVE TRANSLUCENCY ---
 				// Check overdraw heights strictly within the current sector bounds,
 				// minimizing the stacked overexposed cumulative translucency overlay.
+				// Enhanced to natively support deep layered 3D-water and volumetric fog.
+				// Instead of an early break on the first boundary hit, it evaluates the 
+				// full spatial continuum of flat planes within the target sector memory page.
+				// ==============================================================================
+				const bool useDoDrawTranslucCumulDetectCache = false; // Just for fun and hardcore diagnostic testing
 				bool maskColorChannelsOut = false;
+
 				if (currentRenderType == GLDIT_FLAT)
 				{
 					const int currentMapTimeTick = level.maptime;
-					FTranslucencyGL1xCacheEntry &entry = g_TranslucencyGL1xOverdrawCache[index];
 
-					if (entry.lastUpdateTick != -1 && (currentMapTimeTick - entry.lastUpdateTick) < 8)
+					// BRANCH A: CACHED WAY
+					if (useDoDrawTranslucCumulDetectCache)
 					{
-						maskColorChannelsOut = entry.maskColorChannelsOut;
-					}
-					else
-					{
-						GLFlat* f = &flats[index];
-						if (f && f->sector && fabsf((float)r_viewpoint.Pos.Z - (float)f->z) > 0.001f)
+						FTranslucencyGL1xCacheEntry &entry = g_TranslucencyGL1xOverdrawCache[index];
+
+						if (entry.lastUpdateTick != -1 && (currentMapTimeTick - entry.lastUpdateTick) < 8)
 						{
-							float currentFlatZ = (float)f->z;
-							bool isViewerAbove = ((float)r_viewpoint.Pos.Z > currentFlatZ);
-
-							for (unsigned int j = 0; j < flats.Size(); j++)
+							maskColorChannelsOut = entry.maskColorChannelsOut;
+						}
+						else
+						{
+							if (index >= 0 && index < (int)flats.Size())
 							{
-								if (flats[j].sector == f->sector)
+								GLFlat* f = &flats[index];
+								if (f != nullptr && (uintptr_t)f > 0x10000 && f->sector != nullptr && (uintptr_t)f->sector > 0x10000)
 								{
-									if (isViewerAbove)
+									float currentFlatZ = (float)f->z;
+									float viewerZ = (float)r_viewpoint.Pos.Z;
+									bool isViewerAbove = (viewerZ > currentFlatZ);
+									void* targetSectorPtr = f->sector;
+
+									int activeOverdrawLayersCount = 0;
+									for (unsigned int j = 0; j < flats.Size(); j++)
 									{
-										if ((float)flats[j].z > currentFlatZ)
+										if (flats[j].sector != nullptr && (uintptr_t)flats[j].sector > 0x10000 && flats[j].sector == targetSectorPtr)
 										{
-											maskColorChannelsOut = true;
-											break;
+											float checkFlatZ = (float)flats[j].z;
+											if (isViewerAbove)
+											{
+												if (checkFlatZ > currentFlatZ && viewerZ > checkFlatZ) activeOverdrawLayersCount++;
+											}
+											else
+											{
+												if (checkFlatZ < currentFlatZ && viewerZ < checkFlatZ) activeOverdrawLayersCount++;
+											}
 										}
 									}
-									else
+									if (activeOverdrawLayersCount > 0) maskColorChannelsOut = true;
+								}
+							}
+							entry.maskColorChannelsOut = maskColorChannelsOut;
+							entry.lastUpdateTick = currentMapTimeTick;
+						}
+					}
+					// BRANCH B: UNCACHED WAY
+					else
+					{
+						if (index >= 0 && index < (int)flats.Size())
+						{
+							GLFlat* f = &flats[index];
+							if (f != nullptr && (uintptr_t)f > 0x10000 && f->sector != nullptr && (uintptr_t)f->sector > 0x10000)
+							{
+								float currentFlatZ = (float)f->z;
+								float viewerZ = (float)r_viewpoint.Pos.Z;
+								bool isViewerAbove = (viewerZ > currentFlatZ);
+								void* targetSectorPtr = f->sector;
+
+								int activeOverdrawLayersCount = 0;
+
+								for (unsigned int j = 0; j < flats.Size(); j++)
+								{
+									if (flats[j].sector != nullptr && (uintptr_t)flats[j].sector > 0x10000 && flats[j].sector == targetSectorPtr)
 									{
-										if ((float)flats[j].z < currentFlatZ)
+										float checkFlatZ = (float)flats[j].z;
+										if (isViewerAbove)
 										{
-											maskColorChannelsOut = true;
-											break;
+											if (checkFlatZ > currentFlatZ && viewerZ > checkFlatZ) activeOverdrawLayersCount++;
+										}
+										else
+										{
+											if (checkFlatZ < currentFlatZ && viewerZ < checkFlatZ) activeOverdrawLayersCount++;
 										}
 									}
 								}
+								if (activeOverdrawLayersCount > 0) maskColorChannelsOut = true;
 							}
 						}
-						entry.maskColorChannelsOut = maskColorChannelsOut;
-						entry.lastUpdateTick = currentMapTimeTick;
 					}
 				}
 
@@ -1032,7 +1077,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 				gl_RenderState.EnableFog(true);
 				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(0);
 			}
 		}
 	}
@@ -1131,7 +1176,7 @@ void GLDrawList::DrawSorted()
 		// from eating, biting and cutting transparent sprite sheets resting on top
 		glEnable(GL_ALPHA_TEST);
 		gl_RenderState.AlphaFunc(GL_GREATER, 0.85f); // Hardware binary pixel gate
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 
 		// Execute standard tree loop for legacy mode cleanly
 		DoDrawSorted(sorted);
@@ -1140,7 +1185,7 @@ void GLDrawList::DrawSorted()
 		gl_RenderState.g_isCurrentlyGLSpriteDrawing = false;
 		glDisable(GL_ALPHA_TEST);
 		gl_RenderState.AlphaFunc(GL_GREATER, 0.0f);
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 	}
 	else
 	{
@@ -1448,7 +1493,7 @@ void FDrawInfo::SetupFloodStencil(wallseg * ws)
 		glEnable(GL_DEPTH_TEST);
 		glDepthMask(true);
 
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 		FQuadDrawer qd;
 		qd.Set(0, ws->x1, ws->z1, ws->y1, 0, 0);
 		qd.Set(1, ws->x1, ws->z2, ws->y1, 0, 0);
@@ -1476,7 +1521,7 @@ void FDrawInfo::ClearFloodStencil(wallseg * ws)
 		ScopedColorMask colorMask(0, 0, 0, 0); // glColorMask(0,0,0,0);						// don't write to the graphics buffer
 		gl_RenderState.ResetColor();
 
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 		FQuadDrawer qd;
 		qd.Set(0, ws->x1, ws->z1, ws->y1, 0, 0);
 		qd.Set(1, ws->x1, ws->z2, ws->y1, 0, 0);
@@ -1536,7 +1581,7 @@ void FDrawInfo::DrawFloodedPlane(wallseg * ws, float planez, sector_t * sec, boo
 	float fviewz = r_viewpoint.Pos.Z;
 
 	gl_SetPlaneTextureRotation(&plane, gltexture);
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 
 	float prj_fac1 = (planez-fviewz)/(ws->z1-fviewz);
 	float prj_fac2 = (planez-fviewz)/(ws->z2-fviewz);

@@ -110,6 +110,9 @@ void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
 			{
 				// 1. Force additive blending
 				gl_RenderState.EnableFog(false);
+				glEnable(GL_POLYGON_OFFSET_FILL);
+				// Pull it a bit closer to the camera to counteract transluscent surfaces
+				glPolygonOffset(-0.5f, -0.5f);
 				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 				gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
 
@@ -150,21 +153,20 @@ void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
 				// 3. Setup ONLY the brightmap material
 				int translation = (smf->flags & MDL_IGNORETRANSLATION) ? 0 : actor->Translation;
 				gl_RenderState.SetMaterial(bmMat, CLAMP_NONE, translation, -1, false);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(actor);
 
 				// 4. Redraw ONLY the geometry with the brightmap texture
-				this->RenderFrameModels(smf, actor->state, actor->tics, actor->GetClass(), translation);
+				this->RenderFrameModels(actor, smf, actor->state, actor->tics, actor->GetClass(), translation);
 			}
 		}
 
-		if (gl.legacyMode)
-		{
-			glActiveTexture(GL_TEXTURE1);
-			glDisable(GL_TEXTURE_GEN_S);
-			glDisable(GL_TEXTURE_GEN_T);
-			glDisable(GL_TEXTURE_2D);
-			glActiveTexture(GL_TEXTURE0);
-		}
+		glActiveTexture(GL_TEXTURE1);
+		glDisable(GL_TEXTURE_GEN_S);
+		glDisable(GL_TEXTURE_GEN_T);
+		glDisable(GL_TEXTURE_2D);
+		glActiveTexture(GL_TEXTURE0);
+
+		glDisable(GL_POLYGON_OFFSET_FILL);
 
 		// 5. Restore standard state
 		gl_RenderState.EnableFog(true);
@@ -232,6 +234,8 @@ void FGLModelRenderer::EndDrawHUDModel(AActor *actor)
 			{
 				// 1. Setup Additive State
 				gl_RenderState.EnableFog(false);
+				glEnable(GL_POLYGON_OFFSET_FILL);
+				// Pull it a bit closer to the camera to counteract transluscent surfaces
 				gl_RenderState.BlendFunc(GL_ONE, GL_ONE);
 				gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
 
@@ -250,10 +254,10 @@ void FGLModelRenderer::EndDrawHUDModel(AActor *actor)
 				// 3. Apply Brightmap and redraw
 				int translation = (smf->flags & MDL_IGNORETRANSLATION) ? 0 : actor->Translation;
 				gl_RenderState.SetMaterial(bmMat, CLAMP_NONE, translation, -1, false);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(actor);
 
 				// Redraw the weapon geometry as an additive layer
-				this->RenderFrameModels(smf, actor->state, actor->tics, weapon->GetClass(), translation);
+				this->RenderFrameModels(actor, smf, actor->state, actor->tics, weapon->GetClass(), translation);
 			}
 		}
 		// 4. Restore State
@@ -261,6 +265,8 @@ void FGLModelRenderer::EndDrawHUDModel(AActor *actor)
 		gl_RenderState.SetTextureMode(TM_MODULATE);
 		gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		gl_RenderState.ResetColor();
+		glDisable(GL_POLYGON_OFFSET_FILL);
+		// Pull it a bit closer to the camera to counteract transluscent surfaces
 	}
 
 	// Original factory cleanup code inside gl_models.cpp EndDrawModel
@@ -299,7 +305,7 @@ void FGLModelRenderer::SetMaterial(FTexture *skin, bool clampNoFilter, int trans
 	// texture setup to prevent it from blending over our brightmap layer.
 	if (gl.legacyMode && gl_RenderState.GetTextureMode() == TM_BRIGHTMAP_LEGACY)
 	{
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 		return;
 	}
 
@@ -308,7 +314,7 @@ void FGLModelRenderer::SetMaterial(FTexture *skin, bool clampNoFilter, int trans
 	if (tex != nullptr)
 	{
 		gl_RenderState.SetMaterial(tex, clampNoFilter ? CLAMP_NOFILTER : CLAMP_NONE, translation, -1, false);
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 
 		if (modellightindex != -1) gl_RenderState.ApplyLightIndex(modellightindex);
 	}

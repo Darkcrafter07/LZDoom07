@@ -166,7 +166,7 @@ public:
 			
 			// Force-disable active texturing to safely unbind broken pipeline slots
 			EnableTexture(false);
-			Apply();
+			Apply(0);
 			return; // Registry clean, safe to exit now!
 		}
 
@@ -189,7 +189,7 @@ public:
 
 	bool IsBrightmapEnabled() const { return mBrightmapEnabled; }
 
-	void Apply();
+	void Apply(AActor *actor);
 	void ApplyColorMask();
 	void ApplyMatrices();
 	void ApplyLightIndex(int index);
@@ -584,7 +584,7 @@ public:
 	}
 
 	// GL1x/GL2x legacy stuff follows
-	void ApplyFixedFunction();
+	void ApplyFixedFunction(AActor *actor);
 	void DrawColormapOverlay();
 
 	void SetAlpha(float alpha)

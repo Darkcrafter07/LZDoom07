@@ -166,7 +166,7 @@ void GLSceneDrawer::Set3DViewport(bool mainview)
 		GLRenderer->mBuffers->BindSceneFB(useSSAO);
 		gl_RenderState.SetPassType(useSSAO ? GBUFFER_PASS : NORMAL_PASS);
 		gl_RenderState.EnableDrawBuffers(gl_RenderState.GetPassDrawBufferCount());
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 	}
 
 	// Always clear all buffers with scissor test disabled.
@@ -670,7 +670,7 @@ void GLSceneDrawer::DrawScene(int drawmode)
 		GLRenderer->AmbientOccludeScene();
 		GLRenderer->mBuffers->BindSceneFB(true);
 		gl_RenderState.EnableDrawBuffers(gl_RenderState.GetPassDrawBufferCount());
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 		gl_RenderState.ApplyMatrices();
 	}
 
@@ -687,7 +687,7 @@ void gl_FillScreen()
 {
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	gl_RenderState.EnableTexture(false);
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 	// The fullscreen quad is stored at index 4 in the main vertex buffer.
 	GLRenderer->mVBO->RenderArray(GL_TRIANGLE_STRIP, FFlatVertexBuffer::FULLSCREEN_INDEX, 4);
 }

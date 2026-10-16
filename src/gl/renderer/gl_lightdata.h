@@ -17,7 +17,7 @@ void gl_GetRenderStyle(FRenderStyle style, bool drawopaque, bool allowcolorblend
 int gl_CalcLightLevel(int lightlevel, int rellight, bool weapon, int blendfactor);
 void gl_SetColor(int light, int rellight, bool fullbright, const FColormap &cm, float alpha, bool weapon=false);
 
-float gl_GetFogDensity(int lightlevel, PalEntry fogcolor, int sectorfogdensity, int blendfactor);
+float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sectorfogdensity, int blendfactor);
 struct sector_t;
 bool gl_CheckFog(sector_t *frontsector, sector_t *backsector);
 

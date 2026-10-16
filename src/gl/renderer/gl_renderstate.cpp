@@ -335,7 +335,7 @@ bool FRenderState::ApplyShader()
 //
 //==========================================================================
 
-void FRenderState::Apply()
+void FRenderState::Apply(AActor *actor)
 {
 	if (!gl_direct_state_change)
 	{
@@ -366,7 +366,7 @@ void FRenderState::Apply()
 	}
 	else
 	{
-		ApplyFixedFunction();
+		ApplyFixedFunction(actor);
 	}
 }
 

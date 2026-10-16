@@ -2823,6 +2823,11 @@ TCMNU_MAGFILTER				= "Filtrage linéaire en agrandissement";
 TCMNU_MIPMAP				= "Utiliser textures mipmappées";
 TCMNU_DYNLIGHTS				= "Lumières Dynamiques (Software)";
 
+// LZDoom07 sector light mode naming conflict removal for fog
+OPTVAL_FOG_OFF 				= "Off";
+OPTVAL_FOG_STANDARD 			= "Standard";
+OPTVAL_FOG_RADIAL 			= "Radial";
+
 // SVE strings:
 
 TAG_TALISMANRED 	= "Talisman Rouge";

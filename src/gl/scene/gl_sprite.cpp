@@ -324,11 +324,11 @@ void GLSprite::Draw(int pass)
 			float fuzzalpha = 0.44f;
 			float minalpha = 0.1f;
 
-			// fog + fuzz don't work well without some fiddling with the alpha value!
+			//fog + fuzz don't work well without some fiddling with the alpha value!
 			if (!gl_isBlack(Colormap.FadeColor))
 			{
 				float dist = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, x, y);
-				int fogd = gl_GetFogDensity(lightlevel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
+				int fogd = gl_GetFogDensity(lightlevel, rel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
 
 				// this value was determined by trial and error and is scale dependent!
 				float factor = 0.05f + exp(-fogd * dist / 62500.f);
@@ -458,7 +458,7 @@ void GLSprite::Draw(int pass)
 
 		if (!modelframe)
 		{
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(actor);
 
 			FVector3 v[4];
 			gl_RenderState.SetNormal(0, 0, 0);
@@ -534,7 +534,7 @@ void GLSprite::Draw(int pass)
 					int intensity = (int)(255.0f * intensityFactor);
 					mDrawer->SetColor(intensity, rel, Colormap, trans);
 
-					gl_RenderState.Apply();
+					gl_RenderState.Apply(actor);
 
 					// 3. Draw on the same "v" vertices
 					qd.Render(GL_TRIANGLE_STRIP);
@@ -557,7 +557,7 @@ void GLSprite::Draw(int pass)
 				gl_RenderState.SetFixedColormap(CM_FOGLAYER);
 				gl_RenderState.BlendEquation(GL_FUNC_ADD);
 				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				gl_RenderState.Apply();
+				gl_RenderState.Apply(actor);
 				qd.Render(GL_TRIANGLE_STRIP);
 				gl_RenderState.SetFixedColormap(CM_DEFAULT);
 			}

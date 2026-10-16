@@ -262,7 +262,7 @@ void GLFlat::DrawSubsectors(int pass, bool processlights, bool istrans)
 {
 	int dli = dynlightindex;
 
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 	if (vboindex >= 0)
 	{
 		int index = vboindex;
@@ -590,7 +590,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 		// Flush all fixed-function parameters directly into the GPU registers.
 		// This guarantees that GL_DST_COLOR, GL_ONE completely drops before sky portals process.
-		gl_RenderState.Apply();
+		gl_RenderState.Apply(0);
 
 		// Hardware fallback override path for strict OpenGL 1.1 compliance
 		glEnable(GL_FOG);
@@ -628,7 +628,7 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 
 			// Re-sync hardware matrix state safely inside brightmap context
 			glMatrixMode(GL_MODELVIEW);
-			gl_RenderState.Apply();
+			gl_RenderState.Apply(0);
 		}
 	}
 	break;
