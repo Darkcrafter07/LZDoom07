@@ -105,6 +105,7 @@ void gl_FillScreen();
 //
 //
 // *** LZDoom07 is a fork that took it way beyond original capabilites in 2026:
+// - brightmaps, custom user-made PK3 ones or pal based generated (Strife);
 // - dynlights are now rendered to all surfaces (remove faulty normals check);
 // - dynlights are now rendered properly even to the foggy surfaces;
 // - dynlights rendered even on midtextures with binary transparency;
@@ -125,6 +126,9 @@ void gl_FillScreen();
 //   and according to the brightmap brightness, so the brighter pixel is
 //   less transparent it gets. Then draw it on top of parent sprites/surfaces.
 //   That should look better but a dynlight must also be taken into account.
+//   EDIT: no, it works but applied with a hard (binary) transparency only,
+//   you could spawn 2 actors but won't work nice because GL1.1 can't do
+//   transparency lower than 0.5 (at least 50% visible at all times).
 //
 //
 //

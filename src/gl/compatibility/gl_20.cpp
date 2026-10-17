@@ -49,6 +49,7 @@
 //
 //
 // *** LZDoom07 is a fork that took it way beyond original capabilites in 2026:
+// - brightmaps, custom user-made PK3 ones or pal based generated (Strife);
 // - dynlights are now rendered to all surfaces (remove faulty normals check);
 // - dynlights are now rendered properly even to the foggy surfaces;
 // - dynlights rendered even on midtextures with binary transparency;
@@ -69,6 +70,9 @@
 //   and according to the brightmap brightness, so the brighter pixel is
 //   less transparent it gets. Then draw it on top of parent sprites/surfaces.
 //   That should look better but a dynlight must also be taken into account.
+//   EDIT: no, it works but applied with a hard (binary) transparency only,
+//   you could spawn 2 actors but won't work nice because GL1.1 can't do
+//   transparency lower than 0.5 (at least 50% visible at all times).
 //
 //
 //
@@ -288,8 +292,10 @@ bool g_isGL1xDynlightAcamglowOnWall = false;                   // for GL1x/GL2x 
 extern GLFlat* g_isCurrentlyGLFlatDrawing;                     // for all GL modes (in gl_flats.cpp, Draw method)
 extern GLWall* g_isCurrentlyGLWallDrawing;                     // for all GL modes (in gl_walls_draw.cpp, Draw method)
 
-extern bool s_WasFakeContrastForcedByGL1x, s_WasCamglowDynlightForcedByGL1x, s_WereAllGLDynlightsForcedByGL1x; // for GL1x/GL2x modes only, declared in gl_lightdata.cpp
-extern int  s_SavedFakeContrastValForcedByGL1x, s_SavedCamglowDynlightValForcedByGL1x, s_SavedAllGLDynlightsValForcedByGL1x;    // for GL1x/GL2x modes only, declared in gl_lightdata.cpp
+extern bool s_WasFakeContrastForcedByGL1x, s_WasCamglowDynlightForcedByGL1x;
+extern bool s_WasCamglowDynlightForcedByShaderGL3x, s_WereAllGLDynlightsForcedByGL1x;
+extern int s_SavedFakeContrastValForcedByGL1x, s_SavedCamglowDynlightValForcedByGL1x;
+extern int s_SavedCamglowDynlightValForcedByShaderGL3x, s_SavedAllGLDynlightsValForcedByGL1x;
 
 float distLight2Wall, distLight2Flat, radiusWalls, radiusFlats = 0.0f;
 
@@ -303,43 +309,66 @@ float distLight2Wall, distLight2Flat, radiusWalls, radiusFlats = 0.0f;
 
 void gl_PatchMenu()
 {
-	if (!gl_legacy_mode) return;
-
-	if (gl.legacyMode && (gl_lightmode == 2 || gl_lightmode == 8 || gl_lightmode == 16) )
+	// ---=== PATHWAY A: GL1x/GL2x LEGACY FIXED-FUNCTION CONTEXT ===---
+	if (gl.legacyMode)
 	{
-		// 1. Handle r_fakecontrast setup on startup
-		if (!s_WasFakeContrastForcedByGL1x)
+		if (gl_lightmode == 2 || gl_lightmode == 8 || gl_lightmode == 16)
 		{
-			s_SavedFakeContrastValForcedByGL1x = r_fakecontrast;
-			if (r_fakecontrast == 0)
+			// 1. Handle r_fakecontrast setup on startup
+			if (!s_WasFakeContrastForcedByGL1x)
 			{
-				r_fakecontrast = 1;
+				s_SavedFakeContrastValForcedByGL1x = r_fakecontrast;
+				if (r_fakecontrast == 0)
+				{
+					r_fakecontrast = 1;
+				}
+				s_WasFakeContrastForcedByGL1x = true;
 			}
-			s_WasFakeContrastForcedByGL1x = true;
-		}
 
-		// 2. Handle gl_camglowlight setup on startup
-		if (!s_WasCamglowDynlightForcedByGL1x)
-		{
-			s_SavedCamglowDynlightValForcedByGL1x = gl_camglowlight;
-			if (gl_camglowlight == 0)
+			// 2. Handle gl_camglowlight setup on startup
+			if (!s_WasCamglowDynlightForcedByGL1x)
 			{
-				gl_camglowlight = 1;
+				s_SavedCamglowDynlightValForcedByGL1x = gl_camglowlight;
+				if (gl_camglowlight == 0)
+				{
+					gl_camglowlight = 1;
+				}
+				s_WasCamglowDynlightForcedByGL1x = true;
 			}
-			s_WasCamglowDynlightForcedByGL1x = true;
-		}
 
-		// 3. Handle gl_lights safe fallback setup on startup
-		if (!s_WereAllGLDynlightsForcedByGL1x)
-		{
-			s_SavedAllGLDynlightsValForcedByGL1x = gl_lights;
-			if (gl_lights == 0)
+			// 3. Handle gl_lights safe fallback setup on startup
+			if (!s_WereAllGLDynlightsForcedByGL1x)
 			{
-				gl_lights = 1;
+				s_SavedAllGLDynlightsValForcedByGL1x = gl_lights;
+				if (gl_lights == 0)
+				{
+					gl_lights = 1;
+				}
+				s_WereAllGLDynlightsForcedByGL1x = true;
 			}
-			s_WereAllGLDynlightsForcedByGL1x = true;
 		}
 	}
+	// ---=== PATHWAY B: GL3x/GL4x MODERN SHADER CONTEXT ===---
+	else
+	{
+		if (gl_lightmode == 2 || gl_lightmode == 8 || gl_lightmode == 16)
+		{
+			// Safely force gl_camglowlight OFF (0) at startup for shader-lit modes, 
+			// but cache their preference so it can be un-isolated dynamically later
+			if (!s_WasCamglowDynlightForcedByShaderGL3x)
+			{
+				s_SavedCamglowDynlightValForcedByShaderGL3x = gl_camglowlight;
+				if (gl_camglowlight != 0)
+				{
+					gl_camglowlight = 0;
+				}
+				s_WasCamglowDynlightForcedByShaderGL3x = true;
+			}
+		}
+	}
+
+	// Dynamic menu pruning below remains unmodified (only runs if legacyMode is true)
+	if (!gl.legacyMode) return;
 
 	//FOptionValues **opt = OptionValues.CheckKey("LightingModes");
 	//if (opt != NULL)
@@ -373,8 +402,6 @@ void gl_PatchMenu()
 	//}
 	//if (gl_fogmode == 2) gl_fogmode = 1;
 
-
-
 	// remove more unsupported stuff like postprocessing options.
 	// This cannot be done with a menu filter because the renderer gets initialized long after the menu is set up.
 	DMenuDescriptor **desc = MenuDescriptors.CheckKey("OpenGLOptions");
@@ -400,7 +427,6 @@ void gl_PatchMenu()
 		}
 	}
 }
-
 
 //==========================================================================
 //
@@ -586,15 +612,15 @@ void FRenderState::ApplyFixedFunction(AActor *actor)
 			{ lightlevel = g_isCurrentlyGLFlatDrawing->sector->lightlevel; }
 		}
 
-		// Determine if we are rendering inside pure black fog (classic Doom dark fade)
+		// Determine if we are rendering inside pure black fog (classic Doom dark fade on all levels aka diminishing lighting)
 		bool isBlackFog = (fogColInitR < 5 && fogColInitG < 5 && fogColInitB < 5);
 
 		// Check condition triggers for custom tracking branches
-		bool isLegacySoftwareBlackFog = (isBlackFog && gl.legacyMode && (gl_lightmode == 8 || gl_lightmode == 16));
-		bool isLegacyColoredLightsFog = (gl_lights && fogColInitR >= 5 && fogColInitG >= 5 && fogColInitB >= 5);
+		bool isGL1xSoftwareBlackFog = (isBlackFog && gl.legacyMode && (gl_lightmode == 8 || gl_lightmode == 16));
+		bool isGL1xColoredDynlightsFog = (gl_lights && fogColInitR >= 5 && fogColInitG >= 5 && fogColInitB >= 5);
 
 		// ---=== STEP 1: EMBED THE UNIFIED SCALE MATRIX LAYOUT ===---
-		if (isLegacySoftwareBlackFog || isLegacyColoredLightsFog)
+		if (isGL1xSoftwareBlackFog || isGL1xColoredDynlightsFog)
 		{
 			float fogDensMul = 2.0f; float fogColorMul = 1.0f;
 
@@ -623,22 +649,22 @@ void FRenderState::ApplyFixedFunction(AActor *actor)
 			fogColCurB = (int8_t)(fogColInitB * fogColorMul);
 
 			// ---=== STEP 2: EVALUATE TARGET TRACK CHANNELS ===---
-			if (isLegacySoftwareBlackFog)
+			if (isGL1xSoftwareBlackFog)
 			{
+				// Software/Vanilla modes have less fog on actors, especially the brighter ligtlevel gets
 				if (g_isCurrentlyGLSpriteDrawing)
 				{
-					float spriteModifier = 1.0f;
+					float                         spriteModifier = 1.00f;
 					if      (lightlevel >= 240)   spriteModifier = 3.30f;
 					else if (lightlevel >= 224)   spriteModifier = 3.32f;
 					else if (lightlevel >= 208)   spriteModifier = 2.85f;
-					else if (lightlevel >= 192)   spriteModifier = 2.50f;
-					else if (lightlevel >= 176)   spriteModifier = 2.22f;
-					else if (lightlevel >= 160)   spriteModifier = 2.00f;
-					else if (lightlevel >= 144)   spriteModifier = 1.64f;
-					else if (lightlevel >= 136)   spriteModifier = 1.55f;
-					else if (lightlevel >= 128)   spriteModifier = 1.42f;
-					else if (lightlevel >= 112)   spriteModifier = 1.25f;
-
+					else if (lightlevel >= 192)   spriteModifier = 2.75f;
+					else if (lightlevel >= 176)   spriteModifier = 2.65f;
+					else if (lightlevel >= 160)   spriteModifier = 2.60f;
+					else if (lightlevel >= 144)   spriteModifier = 2.50f;
+					else if (lightlevel >= 136)   spriteModifier = 2.40f;
+					else if (lightlevel >= 128)   spriteModifier = 2.30f;
+					else if (lightlevel >= 112)   spriteModifier = 2.20f;
 					// Smash the fog down exponentially on sprites in the dark
 					FogDensityCurrent = FogDensityCurrent / spriteModifier;
 				}
@@ -650,7 +676,7 @@ void FRenderState::ApplyFixedFunction(AActor *actor)
 					if (FogDensityCurrent < -0.35f) FogDensityCurrent = -0.35f; // HARD-LOCK SHIELD FOR GEOMETRY!
 				}
 			}
-			else // isLegacyColoredLightsFog path wrapper
+			else // isGL1xColoredDynlightsFog path wrapper
 			{
 				// Fog loses intensity and gets brighter if rendered on top of regular modulated dynlight lit surfaces
 				if (g_isCurrentlyGLSpriteDrawing)

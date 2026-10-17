@@ -68,10 +68,10 @@ struct RenderContext
 	float glslversion;
 	int max_texturesize;
 	char * vendorstring;
-	bool legacyMode;
-	bool gl1path;
-	bool gl1_v1dot1 = false;
-	bool glnpot = false;
+	bool legacyMode; // this one applies to both GL1x and GL2x, as GL2x is same but wrapped via shader based frame buffer
+	bool gl1path;            // this one is OpenGL1.3
+	bool gl1_v1dot1 = false; // this one is OpenGL1.1 as a fork of GL1.3, e.g. built on top!
+	bool glnpot = false;     // OpenGL non-power-of-two, false means npot support is ENABLED!
 	bool es;
 
 	int MaxLights() const
