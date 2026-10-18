@@ -640,10 +640,42 @@ void FRenderState::ApplyFixedFunction(AActor *actor)
 			else if (lightlevel >= 184 && lightlevel < 192) { fogDensMul = 1.65f; fogColorMul = 0.95f; }
 			else if (lightlevel >= 192 && lightlevel < 200) { fogDensMul = 1.50f; fogColorMul = 0.97f; }
 			else if (lightlevel >= 200 && lightlevel < 216) { fogDensMul = 1.25f; fogColorMul = 0.99f; }
-			else                                            { fogDensMul = 1.12f; fogColorMul = 1.00f; }
+			else
+			{
+				fogDensMul = 1.12f; fogColorMul = 1.00f;
+			}
 
-			//if (!g_isCurrentlyGLSpriteDrawing) fogDensMul *= 1.5f; // in case you want even more fog but why?
+			// ---=== THE ANAMORPHIC TRIGONOMETRIC DEPTH-BUFFER SHIELD ===---
+			// Smooth fake contrast continuously drops the lightlevel on horizontal and near-horizontal walls.
+			// This forces the OpenGL 1.1 hardware GL_FOG matrix to over-saturate and black out at long distances.
+			// Extract the exact same trigonometric 'interp' projection (cosAngle * cosAngle) from p_sectors.cpp,
+			// and use it to dynamically and seamlessly damp down fogDensMul on all horizontal vector spans.
+			if (isGL1xSoftwareBlackFog && g_isCurrentlyGLWallDrawing != nullptr && g_isCurrentlyGLWallDrawing->seg != nullptr)
+			{
+				auto currentLine = g_isCurrentlyGLWallDrawing->seg->linedef;
+				if (currentLine != nullptr)
+				{
+					DVector2 delta = currentLine->Delta();
+					float lenSq = (float)(delta.X * delta.X + delta.Y * delta.Y);
 
+					if (lenSq > 0.0001f)
+					{
+						// Calculate cosAngle square (interp factor: 1.0 = strict horizontal, 0.0 = strict vertical)
+						float cosAngleSq = (float)(delta.X * delta.X) / lenSq;
+
+						// If the wall falls into the horizontal spectrum (cosAngleSq > 0.0) and distance is huge
+						if (cosAngleSq > 0.01f && lightlevel >= 128)
+						{
+							// Smoothly scale the attenuation dampener: lines closer to East-West axis
+							// receive a much stronger fog clearance pass, up to a 55% reduction.
+							float dynamicDamp = 1.0f - (0.55f * cosAngleSq);
+							fogDensMul = fogDensMul * dynamicDamp;
+						}
+					}
+				}
+			}
+
+			//if (!g_isCurrentlyGLSpriteDrawing) fogDensMul = 1.5f; // in case you want even more fog but why?
 			fogColCurR = (int8_t)(fogColInitR * fogColorMul);
 			fogColCurG = (int8_t)(fogColInitG * fogColorMul);
 			fogColCurB = (int8_t)(fogColInitB * fogColorMul);
@@ -655,16 +687,19 @@ void FRenderState::ApplyFixedFunction(AActor *actor)
 				if (g_isCurrentlyGLSpriteDrawing)
 				{
 					float                         spriteModifier = 1.00f;
-					if      (lightlevel >= 240)   spriteModifier = 3.30f;
-					else if (lightlevel >= 224)   spriteModifier = 3.32f;
-					else if (lightlevel >= 208)   spriteModifier = 2.85f;
-					else if (lightlevel >= 192)   spriteModifier = 2.75f;
-					else if (lightlevel >= 176)   spriteModifier = 2.65f;
-					else if (lightlevel >= 160)   spriteModifier = 2.60f;
-					else if (lightlevel >= 144)   spriteModifier = 2.50f;
-					else if (lightlevel >= 136)   spriteModifier = 2.40f;
-					else if (lightlevel >= 128)   spriteModifier = 2.30f;
-					else if (lightlevel >= 112)   spriteModifier = 2.20f;
+					if      (lightlevel >= 240)   spriteModifier = 3.20f;
+					else if (lightlevel >= 224)   spriteModifier = 3.58f;
+					else if (lightlevel >= 208)   spriteModifier = 4.00f;
+					else if (lightlevel >= 192)   spriteModifier = 4.40f;
+					else if (lightlevel >= 176)   spriteModifier = 5.60f;
+					else if (lightlevel >= 160)   spriteModifier = 6.40f;
+					else if (lightlevel >= 144)   spriteModifier = 7.00f;
+					else if (lightlevel >= 136)   spriteModifier = 8.60f;
+					else if (lightlevel >= 128)   spriteModifier = 9.20f;
+					else if (lightlevel >= 112)   spriteModifier = 8.80f;
+					else if (lightlevel >= 80)    spriteModifier = 8.00f;
+					else if (lightlevel >= 48)    spriteModifier = 7.40f;
+					else                          spriteModifier = 6.80f;
 					// Smash the fog down exponentially on sprites in the dark
 					FogDensityCurrent = FogDensityCurrent / spriteModifier;
 				}

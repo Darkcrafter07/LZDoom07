@@ -42,6 +42,7 @@
 
 // externally settable lighting properties
 static float distfogtable[2][256];	// light to fog conversion table for black fog
+static float distgl1xsoftwarefogtable[2][256]; // light to fog conversion table for black fog for GL1x/GL2 software sector light modes
 
 CVAR(Int, gl_weaponlight, 8, CVAR_ARCHIVE);
 CUSTOM_CVAR(Bool, gl_enhanced_nightvision, false, CVAR_ARCHIVE|CVAR_NOINITCALL)
@@ -66,30 +67,153 @@ EXTERN_CVAR(Int, r_fakecontrast)
 //
 //==========================================================================
 
-CUSTOM_CVAR (Int, gl_distfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, gl_distfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
-	for (int i=0;i<256;i++)
+	for (int i = 0; i < 256; i++)
 	{
-
-		if (i<164)
+		if (i < 164)
 		{
-			distfogtable[0][i]= (gl_distfog>>1) + (gl_distfog)*(164-i)/164;
+			distfogtable[0][i] = (gl_distfog >> 1) + (gl_distfog)*(164 - i) / 164;
 		}
-		else if (i<230)
-		{											    
-			distfogtable[0][i]= (gl_distfog>>1) - (gl_distfog>>1)*(i-164)/(230-164);
-		}
-		else distfogtable[0][i]=0;
-
-		if (i<128)
+		else if (i < 230)
 		{
-			distfogtable[1][i]= 6.f + (gl_distfog>>1) + (gl_distfog)*(128-i)/48;
+			distfogtable[0][i] = (gl_distfog >> 1) - (gl_distfog >> 1)*(i - 164) / (230 - 164);
 		}
-		else if (i<216)
-		{											    
-			distfogtable[1][i]= (216.f-i) / ((216.f-128.f)) * gl_distfog / 10;
+		else distfogtable[0][i] = 0;
+
+		if (i < 128)
+		{
+			distfogtable[1][i] = 6.f + (gl_distfog >> 1) + (gl_distfog)*(128 - i) / 48;
 		}
-		else distfogtable[1][i]=0;
+		else if (i < 216)
+		{
+			distfogtable[1][i] = (216.f - i) / ((216.f - 128.f)) * gl_distfog / 10;
+		}
+		else distfogtable[1][i] = 0;
+	}
+}
+
+// There's a need to have a separate fogtable for software/vanilla modes
+CUSTOM_CVAR(Int, gl_distsoftwaregl1xfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	const bool useHQtablegen = true;
+	const float invMul255 = 1.0f / 255.0f;
+
+	if (useHQtablegen)
+	{
+		for (int i = 0; i < 256; i++)
+		{
+			// Normalize index to a 0.0f - 1.0f scale
+			float f = (float)i * invMul255;
+
+			// --- SOFTWARE SECTOR LIGHT MODE #8 (ORIGINAL EXE) ---
+			// We keep the heavy 1.40f multiplier to lock down rich software shadows in the dark,
+			// but we modify the decay power dynamically.
+			float baseDensity0 = (float)gl_distsoftwaregl1xfog * 1.40f;
+
+			// Added an aggressive power-scaling shift (-4.10f * f - 1.65f * (f * f)).
+			// In dark-to-mid zones (f < 0.4), the quadratic component is near zero, keeping the shadows heavy.
+			// In bright sectors (160 to 176, f > 0.6), the (f * f) term kicks in like a booster, 
+			// slamming the fog density down to absolute zero way faster. This fully stops the geometry 
+			// from prematurely drowning in fog at long distances, matching the clear look of the original Dark.
+			distgl1xsoftwarefogtable[0][i] = baseDensity0 * expf(-4.10f * f - 1.65f * (f * f));
+
+			// Hard safety cushion gate right at the edge of fullbright to prevent register overflow
+			if (i >= 235) distgl1xsoftwarefogtable[0][i] = 0.0f;
+
+
+			// --- VANILLA SECTOR LIGHT MODE #16 ---
+			// So far, the formulas may be closer to exe but it looks darker and wrong but let's have it too.
+			// Mapped onto the same high-velocity clearing curve for bright layers
+			float baseDensity1 = 6.0f + (float)gl_distsoftwaregl1xfog * 1.65f;
+			distgl1xsoftwarefogtable[1][i] = baseDensity1 * expf(-4.60f * f - 1.95f * (f * f));
+
+			if (i >= 220) distgl1xsoftwarefogtable[1][i] = 0.0f;
+		}
+	}
+	else
+	{
+		// ---=== PIECEWISE APPROXIMATION OF OUR HQ EXP MATRIX ===---
+		int baseVal = gl_distsoftwaregl1xfog;
+
+		// PATCH: Restored heavy base multipliers back to match 1.40f and 1.65f HQ anchors.
+		// This brings back pristine, pitch-black software shadow definition in dark areas!
+		int sftDarkAnchor = (int)(baseVal * 1.40f);
+		int vanDarkAnchor = 6 + (int)(baseVal * 1.65f);
+
+		for (int i = 0; i < 256; i++)
+		{
+			// 1. --- SOFTWARE SECTOR LIGHT MODE #8 (HQ-ALIGNED PIECEWISE) ---
+			if (i < 32)
+			{
+				distgl1xsoftwarefogtable[0][i] = sftDarkAnchor - (sftDarkAnchor * 0.15f) * i / 32;
+			}
+			else if (i < 64)
+			{
+				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.85f) - (sftDarkAnchor * 0.23f) * (i - 32) / 32;
+			}
+			else if (i < 96)
+			{
+				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.62f) - (sftDarkAnchor * 0.25f) * (i - 64) / 32;
+			}
+			else if (i < 128)
+			{
+				// Zone 3: Central Mid-Tones. The slope begins to take a steep dive here.
+				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.37f) - (sftDarkAnchor * 0.20f) * (i - 96) / 32;
+			}
+			else if (i < 164)
+			{
+				// Zone 4: Upper Mid-Tones. Accelerated drop-off completely mimics the (f * f) booster!
+				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.17f) - (sftDarkAnchor * 0.11f) * (i - 128) / 36;
+			}
+			else if (i < 196)
+			{
+				// Zone 5: Bright Room Baseline. Dropped sharply near zero to keep distant walls clear.
+				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.06f) - (sftDarkAnchor * 0.04f) * (i - 164) / 32;
+			}
+			else if (i < 235)
+			{
+				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.02f) - (sftDarkAnchor * 0.02f) * (i - 196) / (235 - 196);
+			}
+			else
+			{
+				distgl1xsoftwarefogtable[0][i] = 0.0f;
+			}
+
+			// 2. --- VANILLA SECTOR LIGHT MODE #16 (HQ-ALIGNED PIECEWISE) ---
+			if (i < 32)
+			{
+				distgl1xsoftwarefogtable[1][i] = vanDarkAnchor - (vanDarkAnchor * 0.22f) * i / 32;
+			}
+			else if (i < 64)
+			{
+				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.78f) - (vanDarkAnchor * 0.26f) * (i - 32) / 32;
+			}
+			else if (i < 96)
+			{
+				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.52f) - (vanDarkAnchor * 0.24f) * (i - 64) / 32;
+			}
+			else if (i < 128)
+			{
+				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.28f) - (vanDarkAnchor * 0.16f) * (i - 96) / 32;
+			}
+			else if (i < 160)
+			{
+				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.12f) - (vanDarkAnchor * 0.09f) * (i - 128) / 32;
+			}
+			else if (i < 192)
+			{
+				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.03f) - (vanDarkAnchor * 0.03f) * (i - 160) / 32;
+			}
+			else if (i < 220)
+			{
+				distgl1xsoftwarefogtable[1][i] = 0.0f;
+			}
+			else
+			{
+				distgl1xsoftwarefogtable[1][i] = 0.0f;
+			}
+		}
 	}
 }
 
@@ -307,10 +431,10 @@ int gl_CalcLightLevel(int lightlevel, int rellight, bool weapon, int blendfactor
 
 	// Original software behavior activates if lightmode >= 8 and blendfactor > 0.
 	// For legacy mode, we force dark lighting logic for mode 8 and 16 unconditionally.
-	bool darklightmode = (glset.lightmode & 2) || isGL1xSoftware8 || isGL1xVanilla16 ||
+	bool isGL1xFakeSoftwareModes = (glset.lightmode & 2) || isGL1xSoftware8 || isGL1xVanilla16 ||
 		(!gl.legacyMode && glset.lightmode >= 8 && blendfactor > 0);
 
-	if (darklightmode && lightlevel < 192 && !weapon)
+	if (isGL1xFakeSoftwareModes && lightlevel < 192 && !weapon)
 	{
 		if (lightlevel > 100)
 		{
@@ -345,9 +469,9 @@ int gl_CalcLightLevel(int lightlevel, int rellight, bool weapon, int blendfactor
 					if      (rellight >= 16)  contrastModifier = 1.15f; // Brightness boost for bright fake contrast wall
 					else if (rellight >= 8)   contrastModifier = 1.05f; // Slight brightness boost for bright fake contrast wall
 					else if (rellight == 0)   contrastModifier = 1.00f; // Flats or Neutral walls stay clean
-					else if (rellight >= -8)  contrastModifier = 0.85f; // Brighten up slightly darker fake contrast walls
-					else if (rellight >= -16) contrastModifier = 0.80f; // Brighten up darker fake contrast walls
-					else                      contrastModifier = 0.75f; // Brighten up very dark fake contrast walls
+					//else if (rellight >= -8)  contrastModifier = 0.85f; // Brighten up slightly darker fake contrast walls
+					//else if (rellight >= -16) contrastModifier = 0.80f; // Brighten up darker fake contrast walls
+					//else                      contrastModifier = 0.75f; // Brighten up very dark fake contrast walls
 
 					scaled_rellight = (int)(rellight * contrastModifier);
 				}
@@ -383,9 +507,9 @@ int gl_CalcLightLevel(int lightlevel, int rellight, bool weapon, int blendfactor
 				if      (rellight >= 16)  contrastModifier = 1.15f; // Brightness boost for bright fake contrast wall
 				else if (rellight >= 8)   contrastModifier = 1.05f; // Slight brightness boost for bright fake contrast wall
 				else if (rellight == 0)   contrastModifier = 1.00f; // Flats or neutral walls stay clean
-				else if (rellight >= -8)  contrastModifier = 0.85f; // Brighten up slightly darker fake contrast walls
-				else if (rellight >= -16) contrastModifier = 0.80f; // Brighten up darker fake contrast walls
-				else                      contrastModifier = 0.75f; // Brighten up very dark fake contrast walls
+				//else if (rellight >= -8)  contrastModifier = 0.85f; // Brighten up slightly darker fake contrast walls
+				//else if (rellight >= -16) contrastModifier = 0.80f; // Brighten up darker fake contrast walls
+				//else                      contrastModifier = 0.75f; // Brighten up very dark fake contrast walls
 
 				scaled_rellight = (int)(rellight * contrastModifier);
 			}
@@ -510,44 +634,58 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 		// case 2: black fog
 		if ((lightmode < 8 || blendfactor > 0) && !(level.flags3 & LEVEL3_NOLIGHTFADE))
 		{
-			// Dampen the raw fake contrast offset by a safe scaling scalar (0.45f) 
-			// to soften sharp transitions and prevent harsh fog tearing on darker wall seams.
+			// Safe baseline multiplier for our custom profiles
 			int scaled_rellight = rellight;
 			if (isGL1xSoftwareSectorLightmode)
 			{
-				scaled_rellight = (int)(rellight * 0.45f); // Golden ratio multiplier for seamless fixed-pipeline blending
+				scaled_rellight = (int)(rellight * 1.0f); // Pure untouched 1.0f reference contrast
 			}
 
-			// Calculate the true visual lighting environment (sector light + dampened fake contrast offset) BEFORE reading tables
+			// Calculate the true visual lighting environment
 			int visual_lightlevel = lightlevel + scaled_rellight;
 
 			if (isGL1xSoftwareSectorLightmode)
 			{
-				// Clamp the combined brightness level to valid engine ranges so it doesn't break table index boundaries
-				int clamped_visual_light = clamp<int>(visual_lightlevel, 0, 255);
+				// ---=== THE HORIZONTAL NORTH-WALL PIPELINE SHIELD ===---
+				// Negative fake contrast on northern/horizontal walls (scaled_rellight < 0)
+				// pulls visual_lightlevel down. Under exponential tables, this artificial dimming
+				// forces distant horizontal walls to prematurely crush and drown into dark fog.
+				// We inject an active clamp here: if the wall is horizontal, we prevent the index 
+				// from dropping below the sector's baseline lightlevel, fully curing the distant darkening.
+				int lookup_lightlevel = visual_lightlevel;
+				if (scaled_rellight < 0)
+				{
+					lookup_lightlevel = lightlevel; // Protect horizontal indices from diving into thick fog
+				}
 
-				// Feed the visual light directly into distfogtable so fake contrast dynamically shifts the underlying fog baseline
-				density = distfogtable[glset.lightmode != 0][gl_ClampLight(clamped_visual_light)];
+				int clamped_visual_light = clamp<int>(lookup_lightlevel, 0, 255);
 
-				float modifier = 1.0f; // Default to 100% original Dark mode density
+				// Explicitly track the active sub-mode index layer (16 -> layer 1, 8 -> layer 0)
+				int retroTableIndex = (glset.lightmode == 16) ? 1 : 0;
 
-				if      (visual_lightlevel >= 240)   modifier = 0.30f; // Maximum visibility in full light
-				else if (visual_lightlevel >= 224)   modifier = 0.32f;
-				else if (visual_lightlevel >= 208)   modifier = 0.35f;
-				else if (visual_lightlevel >= 192)   modifier = 0.40f;
-				else if (visual_lightlevel >= 176)   modifier = 0.45f;
-				else if (visual_lightlevel >= 160)   modifier = 0.50f;
-				else if (visual_lightlevel >= 144)   modifier = 0.60f;
-				else if (visual_lightlevel >= 136)   modifier = 0.65f;
-				else if (visual_lightlevel >= 128)   modifier = 0.70f;
-				else if (visual_lightlevel >= 112)   modifier = 0.80f;
+				// Feed the protected light directly into our custom exponential table
+				density = distgl1xsoftwarefogtable[retroTableIndex][gl_ClampLight(clamped_visual_light)];
+
+				// The step-wise modifier curve operates on the full visual footprint to keep near contrast intact
+				float modifier = 1.0f;
+				if      (visual_lightlevel >= 240)   modifier = 0.30f; 
+				else if (visual_lightlevel >= 224)   modifier = 0.35f;
+				else if (visual_lightlevel >= 208)   modifier = 0.40f;
+				else if (visual_lightlevel >= 192)   modifier = 0.45f;
+				else if (visual_lightlevel >= 176)   modifier = 0.50f;
+				else if (visual_lightlevel >= 160)   modifier = 0.65f;
+				else if (visual_lightlevel >= 144)   modifier = 0.80f;
+				else if (visual_lightlevel >= 136)   modifier = 0.90f;
+				else if (visual_lightlevel >= 128)   modifier = 0.95f;
+				else if (visual_lightlevel >= 112)   modifier = 1.00f;
 
 				density = density * modifier;
 			}
 			else
 			{
-				// Standard hardware baseline calculation path for regular lighting modes
-				density = distfogtable[glset.lightmode != 0][gl_ClampLight(lightlevel)];
+				// Standard hardware baseline calculation path for regular lighting modes (fully isolated)
+				int clamped_visual_light = clamp<int>(lightlevel, 30, 255);
+				density = distfogtable[glset.lightmode != 0][gl_ClampLight(clamped_visual_light)];
 			}
 		}
 		else
@@ -557,12 +695,10 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 	}
 	else if (level.outsidefogdensity != 0 && APART(level.info->outsidefog) != 0xff && (fogcolor.d & 0xffffff) == (level.info->outsidefog & 0xffffff))
 	{
-		// case 3. outsidefogdensity has already been set as needed
 		density = level.outsidefogdensity;
 	}
 	else  if (level.fogdensity != 0)
 	{
-		// case 4: level has fog density set
 		density = level.fogdensity;
 	}
 	else if (lightlevel < 248)
@@ -571,28 +707,37 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 		int scaled_rellight = rellight;
 		if (isGL1xSoftwareSectorLightmode)
 		{
-			scaled_rellight = (int)(rellight * 0.45f);
+			scaled_rellight = (int)(rellight * 1.0f);
 		}
 
 		int visual_lightlevel = lightlevel + scaled_rellight;
 
 		if (isGL1xSoftwareSectorLightmode)
 		{
-			int clamped_visual_light = clamp<int>(visual_lightlevel, 0, 255);
+			// Apply the exact same horizontal negative shielding matrix to case 5 custom fogs
+			int lookup_lightlevel = visual_lightlevel;
+			if (scaled_rellight < 0)
+			{
+				lookup_lightlevel = lightlevel;
+			}
+
+			int clamped_visual_light = clamp<int>(lookup_lightlevel, 0, 255);
 			density = clamp<int>(255 - clamped_visual_light, 30, 255);
 
-			float modifier = 1.0f;
+			int retroTableIndex = (glset.lightmode == 16) ? 1 : 0;
+			density = distgl1xsoftwarefogtable[retroTableIndex][gl_ClampLight(clamped_visual_light)];
 
-			if      (visual_lightlevel >= 240)   modifier = 0.30f; // Maximum visibility in full light
-			else if (visual_lightlevel >= 224)   modifier = 0.32f;
-			else if (visual_lightlevel >= 208)   modifier = 0.35f;
-			else if (visual_lightlevel >= 192)   modifier = 0.40f;
-			else if (visual_lightlevel >= 176)   modifier = 0.45f;
-			else if (visual_lightlevel >= 160)   modifier = 0.50f;
-			else if (visual_lightlevel >= 144)   modifier = 0.60f;
+			float modifier = 1.0f;
+			if      (visual_lightlevel >= 240)   modifier = 0.30f; 
+			else if (visual_lightlevel >= 224)   modifier = 0.35f;
+			else if (visual_lightlevel >= 208)   modifier = 0.40f;
+			else if (visual_lightlevel >= 192)   modifier = 0.45f;
+			else if (visual_lightlevel >= 176)   modifier = 0.50f;
+			else if (visual_lightlevel >= 160)   modifier = 0.65f;
+			else if (visual_lightlevel >= 144)   modifier = 0.80f;
 			else if (visual_lightlevel >= 136)   modifier = 0.70f;
 			else if (visual_lightlevel >= 128)   modifier = 0.70f;
-			else if (visual_lightlevel >= 112)   modifier = 0.80f;
+			else if (visual_lightlevel >= 112)   modifier = 1.00f;
 
 			density = density * modifier;
 		}
