@@ -17,7 +17,7 @@ class DynamicLight : Actor
 	flagdef spot: lightflags, 6;
 	flagdef dontlightothers: lightflags, 7;   // Bit 7 (Value: 128) - Don't light other actors
 	flagdef dontlightmap: lightflags, 8;      // Bit 8 (Value: 256) - Don't light walls and flats
-	flagdef camglowstraight: lightflags, 9;   // Bit 9 (Value: 512) - Software camglow simulator
+	flagdef camglowdynlight: lightflags, 9;   // Bit 9 (Value: 512) - Software camglow simulator
 
 	enum EArgs
 	{
@@ -343,14 +343,14 @@ class SpotLightFlickerAdditive : SpotLightFlicker
 	}
 }
 
-class SpotLightCamGlowStraight : DynamicLight
+class SpotLightCamGlow : DynamicLight
 {
 	Default
 	{
 		DynamicLight.Type "Point"; 
 		+DYNAMICLIGHT.SPOT
 		+DYNAMICLIGHT.DONTLIGHTOTHERS
-		+DYNAMICLIGHT.CAMGLOWSTRAIGHT
+		+DYNAMICLIGHT.CAMGLOWDYNLIGHT
 	}
 }
 

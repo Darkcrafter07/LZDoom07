@@ -1197,10 +1197,10 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 	// Turn off overbright for the camglow dynlight
 	if (gl_RenderState.mPassType == (EPassType)GLPASS_LIGHTTEX_OVERBRIGHT2_LEGACY)
-	{ if (light != nullptr && light->IsCamGlowStraight()) return false; }
+	{ if (light != nullptr && light->IsDynlightCamglow()) return false; }
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-	if (light != nullptr && light->IsCamGlowStraight()) { radiusWalls *= 0.5f; g_isGL1xDynlightAcamglowOnWall = true; }
+	if (light != nullptr && light->IsDynlightCamglow()) { radiusWalls *= 0.5f; g_isGL1xDynlightAcamglowOnWall = true; }
 
 	if (radiusWalls <= 0.f) return false;
 	if (distLight2Wall > radiusWalls) return false;
@@ -1245,7 +1245,7 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// Manual Cross Product replaces overloaded pipe operators to guarantee compilation.
 	//
 	// THE WALLS PART IMPLEMENTATION BELOW:
-	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
+	if (light != nullptr && light->IsDynlightCamglow() && gl_fogmode != 2)
 	{
 		//	// This network check is not necessary but why not?
 		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
@@ -1501,10 +1501,10 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 
 	// Turn off overbright for the camglow dynlight
 	if (gl_RenderState.mPassType == (EPassType)GLPASS_LIGHTTEX_OVERBRIGHT2_LEGACY)
-	{ if (light != nullptr && light->IsCamGlowStraight()) return false; }
+	{ if (light != nullptr && light->IsDynlightCamglow()) return false; }
 
 	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-	if (light != nullptr && light->IsCamGlowStraight()) { radiusFlats *= 0.5f; g_isGL1xDynlightAcamglowOnFlat = true; }
+	if (light != nullptr && light->IsDynlightCamglow()) { radiusFlats *= 0.5f; g_isGL1xDynlightAcamglowOnFlat = true; }
 
 	if (radiusFlats <= 0.f) return false;
 	if (distLight2Flat > radiusFlats) return false;
@@ -1549,7 +1549,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 	// the Rodrigues formula.
 	// Makes software ellipse rotation on BOTH floors and ceilings synchronized.
 	// ==================================================================
-	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
+	if (light != nullptr && light->IsDynlightCamglow() && gl_fogmode != 2)
 	{
 		//	// This network check is not necessary but why not?
 		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
@@ -1843,7 +1843,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	float radius = light->GetRadius();
 //
 //	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-//	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+//	if (light != nullptr && light->IsDynlightCamglow()) radius *= 0.5f;
 //
 //	const float invMul255 = 1.0f / 255.0f;
 //	const float invMul286 = 1.0f / 286.0f;
@@ -1891,7 +1891,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	// Manual Cross Product replaces overloaded pipe operators to guarantee compilation.
 //	//
 //	// THE WALLS PART IMPLEMENTATION BELOW:
-//	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
+//	if (light != nullptr && light->IsDynlightCamglow() && gl_fogmode != 2)
 //	{
 //		//	// This network check is not necessary but why not?
 //		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)
@@ -2012,7 +2012,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	float radius = light->GetRadius();
 //
 //	//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-//	if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+//	if (light != nullptr && light->IsDynlightCamglow()) radius *= 0.5f;
 //
 //	const float invMul255 = 1.0f / 255.0f;
 //	const float invMul284 = 1.0f / 284.0f;
@@ -2059,7 +2059,7 @@ bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & n
 //	// the Rodrigues formula.
 //	// Makes software ellipse rotation on BOTH floors and ceilings synchronized.
 //	// ==================================================================
-//	if (light != nullptr && light->IsCamGlowStraight() && gl_fogmode != 2)
+//	if (light != nullptr && light->IsDynlightCamglow() && gl_fogmode != 2)
 //	{
 //		//	// This network check is not necessary but why not?
 //		//if (light->target.pp != nullptr && r_viewpoint.camera != nullptr)

@@ -83,7 +83,14 @@ void gl_SetDynSpriteLight(AActor *self, float x, float y, float z, subsector_t *
 	FLightNode * node = subsec->lighthead;
 	while (node)
 	{
-		light=node->lightsource;
+		light = node->lightsource;
+
+		if (gl_RenderState.g_isHUDWeapDynlightPass && light != nullptr && light->IsDynlightCamglow())
+		{
+			node = node->nextLight;
+			continue; // Do NOT light onscreen HUD sprites like weapons with camglow dynlight
+		}
+
 		if (light->ShouldLightActor(self))
 		{
 			float dist;
@@ -110,7 +117,7 @@ void gl_SetDynSpriteLight(AActor *self, float x, float y, float z, subsector_t *
 			radius = light->GetRadius();
 
 			//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-			if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+			if (light != nullptr && light->IsDynlightCamglow()) radius *= 0.5f;
 
 			if (dist < radius * radius)
 			{
@@ -574,6 +581,13 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 				while (node)
 				{
 					FDynamicLight *light = node->lightsource;
+
+					if (gl_RenderState.g_isHUDWeapDynlightPass && light != nullptr && light->IsDynlightCamglow())
+					{
+						node = node->nextLight;
+						continue; // Bypass camglow dynlight for onscreen player weapon model
+					}
+
 					if (light->ShouldLightActor(self))
 					{
 						int group = subsector->sector->PortalGroup;
@@ -582,7 +596,7 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 						float radius = light->GetRadius();
 
 						//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
-						if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+						if (light != nullptr && light->IsDynlightCamglow()) radius *= 0.5f;
 
 						if (radius > 0.0f)
 						{
@@ -737,6 +751,13 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 				while (node)
 				{
 					FDynamicLight *light = node->lightsource;
+
+					if (gl_RenderState.g_isHUDWeapDynlightPass && light != nullptr && light->IsDynlightCamglow())
+					{
+						node = node->nextLight;
+						continue; // Bypass camglow dynlight for onscreen player weapon model
+					}
+
 					if (light->ShouldLightActor(self))
 					{
 						int group = subsector->sector->PortalGroup;
@@ -745,7 +766,7 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 
 						//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
 						//It's also available in GL3+ mode as well as in other renderers, so include it here too
-						if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+						if (light != nullptr && light->IsDynlightCamglow()) radius *= 0.5f;
 
 						if (radius > 0.0f)
 						{
@@ -840,7 +861,7 @@ int gl_Set3DmdlDynLightSimpleVisBounds(AActor *self, int dynlightindex)
 
 					//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
 					//It's also available in GL3+ mode as well as in other renderers, so include it here too
-					if (light != nullptr && light->IsCamGlowStraight()) radius *= 0.5f;
+					if (light != nullptr && light->IsDynlightCamglow()) radius *= 0.5f;
 
 					float radAndActorRad = radius + actorradius;
 					float dx = pos.X - x; float dy = pos.Y - y; float dz = pos.Z - z;

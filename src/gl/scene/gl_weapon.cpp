@@ -223,7 +223,7 @@ void GLSceneDrawer::DrawPSprite(player_t * player, DPSprite *psp, float sx, floa
 	{
 		gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	}
-	gl_RenderState.Apply();
+	gl_RenderState.Apply(0);
 	FQuadDrawer qd;
 	qd.Set(0, Vert.v[0].X, Vert.v[0].Y, 0, fU1, fV1);
 	qd.Set(1, Vert.v[1].X, Vert.v[1].Y, 0, fU1, fV2);
@@ -300,8 +300,11 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 	bool brightflash = false;
 	unsigned int i;
 	int lightlevel = 0;
+	// FIX: Explicitly initialize and clear the colormap object to block Run-Time Check Failure #3
 	FColormap cm;
-	sector_t * fakesec;
+	cm.Clear();
+	// FIX: Prevent fakesec from carrying stack garbage during portal viewport context switches
+	sector_t * fakesec = nullptr;
 	AActor * playermo = players[consoleplayer].camera;
 	player_t * player = playermo->player;
 
@@ -500,7 +503,7 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 
 		if (psp->GetState() != nullptr)
 		{
-			FColormap cmc = cm;
+			FColormap cmc = cm; // Run-Time Check Failure #3 - The variable 'cm' is being used without being initialized. occurred
 			int ll = lightlevel;
 			if (bright)
 			{
@@ -526,11 +529,11 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 			{
 				if (gl_lights && GLRenderer->mLightCount && FixedColormap == CM_DEFAULT && gl_light_sprites)
 				{
+					gl_RenderState.g_isHUDWeapDynlightPass = true;
 					FSpriteModelFrame *smf = playermo->player->ReadyWeapon ? FindModelFrame(playermo->player->ReadyWeapon->GetClass(), psp->GetSprite(), psp->GetState()->GetFrame(), false) : nullptr;
-					if (smf)
-						gl_SetDynModelLight(playermo, weapondynlightindex[psp]);
-					else
-						gl_SetDynSpriteLight(playermo, NULL);
+					if (smf) gl_SetDynModelLight(playermo, weapondynlightindex[psp]); // for 3D-models
+					else     gl_SetDynSpriteLight(playermo, NULL);                    // for sprites
+					gl_RenderState.g_isHUDWeapDynlightPass = false;
 				}
 				SetColor(ll, 0, cmc, trans, true);
 			}
