@@ -40,6 +40,8 @@
 #include "swrenderer/viewport/r_viewport.h"
 #include "swrenderer/r_swcolormaps.h"
 
+#include "g_shared/a_spriteocclusion3d.h"
+
 EXTERN_CVAR(Bool, r_shadercolormaps)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Float, r_visibility)
@@ -197,6 +199,12 @@ void PolyRenderer::ClearBuffers()
 void PolyRenderer::SetSceneViewport()
 {
 	using namespace swrenderer;
+
+	static int lastLevelMaptime = -1; // Reset occlusion cache at all times -
+	if (level.maptime != lastLevelMaptime && r_dynlights_occlude) // - to work between different levels
+	{
+		ResetDynlightOcclusionCache(); lastLevelMaptime = level.maptime;
+	}
 	
 	if (RenderTarget == screen) // Rendering to screen
 	{

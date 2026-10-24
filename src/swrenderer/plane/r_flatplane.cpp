@@ -70,13 +70,13 @@ namespace swrenderer
 		drawerargs.SetSolidColor(3);
 		drawerargs.SetTexture(Thread, texture);
 
-		double planeang = (pl->xform.Angle + pl->xform.baseAngle).Radians();
-		double xstep, ystep, leftxfrac, leftyfrac, rightxfrac, rightyfrac;
-		double x;
+		float planeang = (pl->xform.Angle + pl->xform.baseAngle).Radians();
+		float xstep, ystep, leftxfrac, leftyfrac, rightxfrac, rightyfrac;
+		float x;
 
 		if (planeang != 0)
 		{
-			double cosine = cos(planeang), sine = sin(planeang);
+			float cosine = cos(planeang), sine = sin(planeang);
 			pviewx = pl->xform.xOffs + Thread->Viewport->viewpoint.Pos.X * cosine - Thread->Viewport->viewpoint.Pos.Y * sine;
 			pviewy = pl->xform.yOffs + pl->xform.baseyOffs - Thread->Viewport->viewpoint.Pos.X * sine - Thread->Viewport->viewpoint.Pos.Y * cosine;
 		}
@@ -106,8 +106,8 @@ namespace swrenderer
 			ystep = -ystep;
 		}
 
-		planeang += M_PI / 2;
-		double cosine = cos(planeang), sine = -sin(planeang);
+		planeang += M_PI * 0.5f;
+		float cosine = cos(planeang), sine = -sin(planeang);
 		x = pl->right - viewport->CenterX + 0.5;
 		rightxfrac = _xscale * (cosine + x * xstep);
 		rightyfrac = _yscale * (sine + x * ystep);
@@ -166,7 +166,7 @@ namespace swrenderer
 	void RenderFlatPlane::RenderLine(int y, int x1, int x2)
 	{
 #ifdef RANGECHECK
-		if (x2 < x1 || x1<0 || x2 >= viewwidth || (unsigned)y >= (unsigned)viewheight)
+		if (x2 < x1 || x1 < 0 || x2 >= viewwidth || (unsigned)y >= (unsigned)viewheight)
 		{
 			I_Error("R_MapPlane: %i, %i at %i", x1, x2, y);
 		}
@@ -174,26 +174,26 @@ namespace swrenderer
 
 		auto viewport = Thread->Viewport.get();
 
-		double curxfrac = basexfrac + xstepscale * (x1 - minx);
-		double curyfrac = baseyfrac + ystepscale * (x1 - minx);
+		float curxfrac = basexfrac + xstepscale * (x1 - minx);
+		float curyfrac = baseyfrac + ystepscale * (x1 - minx);
 
-		double distance = viewport->PlaneDepth(y, planeheight);
+		float distance = viewport->PlaneDepth(y, planeheight);
 
-		float zbufferdepth = (float)(1.0 / fabs(planeheight / Thread->Viewport->ScreenToViewY(y, 1.0)));
+		float zbufferdepth = (float)(1.0 / fabs(planeheight / Thread->Viewport->ScreenToViewY(y, 1.0f)));
 
 		drawerargs.SetTextureUStep(distance * xstepscale / drawerargs.TextureWidth());
 		drawerargs.SetTextureUPos((distance * curxfrac + pviewx) / drawerargs.TextureWidth());
 
 		drawerargs.SetTextureVStep(distance * ystepscale / drawerargs.TextureHeight());
 		drawerargs.SetTextureVPos((distance * curyfrac + pviewy) / drawerargs.TextureHeight());
-		
+
 		if (viewport->RenderTarget->IsBgra())
 		{
-			double distance2 = viewport->PlaneDepth(y + 1, planeheight);
-			double xmagnitude = fabs(ystepscale * (distance2 - distance) * viewport->FocalLengthX);
-			double ymagnitude = fabs(xstepscale * (distance2 - distance) * viewport->FocalLengthX);
-			double magnitude = MAX(ymagnitude, xmagnitude);
-			double min_lod = -1000.0;
+			float distance2 = viewport->PlaneDepth(y + 1, planeheight);
+			float xmagnitude = fabs(ystepscale * (distance2 - distance) * viewport->FocalLengthX);
+			float ymagnitude = fabs(xstepscale * (distance2 - distance) * viewport->FocalLengthX);
+			float magnitude = MAX(ymagnitude, xmagnitude);
+			float min_lod = -1000.0f;
 			drawerargs.SetTextureLOD(MAX(log2(magnitude) + r_lod_bias, min_lod));
 		}
 
@@ -225,6 +225,54 @@ namespace swrenderer
 			drawerargs.dc_normal.Y = 0.0f;
 			drawerargs.dc_normal.Z = (y >= viewport->CenterY) ? 1.0f : -1.0f;
 
+			// -----------------------------------------------------------------
+			// SOFTWARE REHDERER VISUAL OCCLUSION SHIELD FLAT PLANAR GATE
+			// -----------------------------------------------------------------
+			// Process global continuous occlusion culling on the thread context level
+			// before allowing the CPU loops to build costly multi-pass drawer arguments.
+			VisiblePlaneLight *check_node = light_list;
+			while (check_node && r_dynlights_occlude) // YEAH IT'S A CRAPPY ATTEMPT but just for consistency with GL
+			{
+				FDynamicLight *light = check_node->lightsource;
+				float radius = light->GetRadius();
+				bool isBigRadiusDynlight = radius > 468.0f;
+
+				if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight) // works bad with big radius dynlights
+				{
+					bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+					if (!isCamglowDynlightHere)
+					{
+						// Thread-safe parameters context mapping directly from viewport thread tree path
+						sector_t* checkSector = light->Sector ? light->Sector : light->target->Sector;
+						int currentGroup = checkSector ? checkSector->PortalGroup : 0;
+						DVector3 lightPosAbs = light->PosAbsolute(currentGroup);
+
+						float adjustedRadius = radius * 0.85f; // Shrink radius to reduce culling agressiveness
+
+						bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(Thread->Viewport->viewpoint.camera, light->target, adjustedRadius, true);
+						bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(Thread->Viewport->viewpoint.Pos, lightPosAbs, checkSector, light->target, adjustedRadius, true);
+						bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(Thread->Viewport->viewpoint.camera, light->target, adjustedRadius, true);
+
+						if (!isDynlightVisibleBehind2Sobstr || !isDynlightVisibleBehind3DFloorSides || isDynlightObstructedBy3DFloorFlats)
+						{
+							if (light->IsActive())
+							{
+								light->Deactivate(); // Hibernate light immediately to bypass pixels drawing
+							}
+						}
+						else
+						{
+							if (!light->IsActive())
+							{
+								light->Activate(); // Restore the light back into active thread chains safely
+							}
+						}
+					}
+				}
+				check_node = check_node->next;
+			}
+
 			// Calculate max lights that can touch the row so we can allocate memory for the list
 			int max_lights = 0;
 			VisiblePlaneLight *cur_node = light_list;
@@ -242,33 +290,36 @@ namespace swrenderer
 			cur_node = light_list;
 			while (cur_node)
 			{
-				double lightX = cur_node->lightsource->X() - Thread->Viewport->viewpoint.Pos.X;
-				double lightY = cur_node->lightsource->Y() - Thread->Viewport->viewpoint.Pos.Y;
-				double lightZ = cur_node->lightsource->Z() - Thread->Viewport->viewpoint.Pos.Z;
-
-				float lx = (float)(lightX * Thread->Viewport->viewpoint.Sin - lightY * Thread->Viewport->viewpoint.Cos);
-				float ly = (float)(lightX * Thread->Viewport->viewpoint.TanCos + lightY * Thread->Viewport->viewpoint.TanSin) - drawerargs.dc_viewpos.Y;
-				float lz = (float)lightZ - drawerargs.dc_viewpos.Z;
-
-				// Precalculate the constant part of the dot here so the drawer doesn't have to.
-				bool is_point_light = cur_node->lightsource->IsAttenuated();
-				float lconstant = ly * ly + lz * lz;
-				float nlconstant = is_point_light ? lz * drawerargs.dc_normal.Z : 0.0f;
-
-				// Include light only if it touches this row
-				float radius = cur_node->lightsource->GetRadius();
-				if (radius * radius >= lconstant && nlconstant >= 0.0f)
+				if (cur_node->lightsource->IsActive())
 				{
-					uint32_t red = cur_node->lightsource->GetRed();
-					uint32_t green = cur_node->lightsource->GetGreen();
-					uint32_t blue = cur_node->lightsource->GetBlue();
+					float lightX = cur_node->lightsource->X() - Thread->Viewport->viewpoint.Pos.X;
+					float lightY = cur_node->lightsource->Y() - Thread->Viewport->viewpoint.Pos.Y;
+					float lightZ = cur_node->lightsource->Z() - Thread->Viewport->viewpoint.Pos.Z;
 
-					auto &light = drawerargs.dc_lights[drawerargs.dc_num_lights++];
-					light.x = lx;
-					light.y = lconstant;
-					light.z = nlconstant;
-					light.radius = 256.0f / radius;
-					light.color = (red << 16) | (green << 8) | blue;
+					float lx = (float)(lightX * Thread->Viewport->viewpoint.Sin - lightY * Thread->Viewport->viewpoint.Cos);
+					float ly = (float)(lightX * Thread->Viewport->viewpoint.TanCos + lightY * Thread->Viewport->viewpoint.TanSin) - drawerargs.dc_viewpos.Y;
+					float lz = (float)lightZ - drawerargs.dc_viewpos.Z;
+
+					// Precalculate the constant part of the dot here so the drawer doesn't have to.
+					bool is_point_light = cur_node->lightsource->IsAttenuated();
+					float lconstant = ly * ly + lz * lz;
+					float nlconstant = is_point_light ? lz * drawerargs.dc_normal.Z : 0.0f;
+
+					// Include light only if it touches this row
+					float radius = cur_node->lightsource->GetRadius();
+					if (radius * radius >= lconstant && nlconstant >= 0.0f)
+					{
+						uint32_t red = cur_node->lightsource->GetRed();
+						uint32_t green = cur_node->lightsource->GetGreen();
+						uint32_t blue = cur_node->lightsource->GetBlue();
+
+						auto &light = drawerargs.dc_lights[drawerargs.dc_num_lights++];
+						light.x = lx;
+						light.y = lconstant;
+						light.z = nlconstant;
+						light.radius = 256.0f / radius;
+						light.color = (red << 16) | (green << 8) | blue;
+					}
 				}
 
 				cur_node = cur_node->next;

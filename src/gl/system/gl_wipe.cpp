@@ -320,13 +320,13 @@ bool OpenGLFrameBuffer::Wiper_Crossfade::Run(int ticks, OpenGLFrameBuffer *fb)
 	gl_RenderState.SetTextureMode(TM_OPAQUE);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	gl_RenderState.ResetColor();
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	fb->wipestartscreen->Bind(0, 0, false);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
 	float a = clamp(Clock / 32.f, 0.f, 1.f);
 	gl_RenderState.SetColorAlpha(0xffffff, a);
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	fb->wipeendscreen->Bind(0, 0, false);
 	mVertexBuf->EnableColorArray(false);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -454,7 +454,7 @@ bool OpenGLFrameBuffer::Wiper_Melt::Run(int ticks, OpenGLFrameBuffer *fb)
 	// Draw the new screen on the bottom.
 	gl_RenderState.SetTextureMode(TM_OPAQUE);
 	gl_RenderState.ResetColor();
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	fb->wipeendscreen->Bind(0, 0, false);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -544,14 +544,14 @@ bool OpenGLFrameBuffer::Wiper_Burn::Run(int ticks, OpenGLFrameBuffer *fb)
 	gl_RenderState.SetTextureMode(TM_OPAQUE);
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	gl_RenderState.ResetColor();
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	fb->wipestartscreen->Bind(0, 0, false);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
 	gl_RenderState.SetTextureMode(TM_MODULATE);
 	gl_RenderState.SetEffect(EFF_BURN);
 	gl_RenderState.ResetColor();
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 
 	// Burn the new screen on top of it.
 	fb->wipeendscreen->Bind(0, 0, false);

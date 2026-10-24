@@ -58,6 +58,7 @@
 
 #include "gl/compatibility/gl_20.h"
 #include "gl/dynlights/gl_dynlightcache.h"
+#include "g_shared/a_spriteocclusion3d.h"
 
 #ifdef _DEBUG
 CVAR(Int, gl_breaksec, -1, 0)
@@ -65,6 +66,10 @@ CVAR(Int, gl_breaksec, -1, 0)
 
 GLFlat* g_isCurrentlyGLFlatDrawing = nullptr;         // for all GL modes
 extern GLFlat* g_isCurrentlyGL1xDynlightFlatDrawing;  // declared in gl_20.cpp
+
+// Scratch storage for the Gouraud pass, reused every frame.
+// Size is grown on demand to fit the largest subsector.
+static TArray<FFlatVertexGouraud> gGouraudScratch;
 
 //==========================================================================
 //
@@ -114,6 +119,7 @@ void gl_SetPlaneTextureRotation(const GLSectorPlane * secplane, FMaterial * glte
 //==========================================================================
 extern FDynLightData lightdata;
 
+// GL3+ analog of "DrawSubsectorLights" from gl_20.cpp
 void GLFlat::SetupSubsectorLights(int pass, subsector_t * sub, int *dli)
 {
 	Plane p;
@@ -129,10 +135,38 @@ void GLFlat::SetupSubsectorLights(int pass, subsector_t * sub, int *dli)
 
 	lightdata.Clear();
 	FLightNode * node = sub->lighthead;
+	int group = sub->sector->PortalGroup;
 	while (node)
 	{
 		FDynamicLight * light = node->lightsource;
-			
+		float radius = light->GetRadius();
+		bool isBigRadiusDynlight = radius > 468.0f;
+
+		if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight && r_dynlights_occlude) // works bad with big radius dynlights
+		{
+			bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+			if (!isCamglowDynlightHere)
+			{
+				float radius = light->GetRadius();
+				DVector3 lightPosAbs = light->PosAbsolute(group);
+				float adjustedRadius = radius * 0.85f;
+
+				bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, light->target, adjustedRadius, true);
+				bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, lightPosAbs, light->Sector, light->target, adjustedRadius, true);
+				bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, light->target, adjustedRadius, true);
+
+				if (!isDynlightVisibleBehind2Sobstr || isDynlightObstructedBy3DFloorFlats || !isDynlightVisibleBehind3DFloorSides)
+				{
+					// PURE CPU LOOP SKIP: Do NOT call Deactivate() here.
+					// This keeps the shader buffers active, allowing weapon flashes and 
+					// zombie gunfire to decay and fade out naturally without freezing on corpses.
+					node = node->nextLight;
+					continue;
+				}
+			}
+		}
+
 		if (!light->IsActive())
 		{
 			node=node->nextLight;
@@ -262,7 +296,7 @@ void GLFlat::DrawSubsectors(int pass, bool processlights, bool istrans)
 {
 	int dli = dynlightindex;
 
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	if (vboindex >= 0)
 	{
 		int index = vboindex;
@@ -598,164 +632,254 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		break;
 
-	case GLPASS_LIGHTEFFECTS_LEGACY:
+	//case GLPASS_LIGHTEFFECTS_LEGACY:
+	//{
+	//	FMaterial *bm = gltexture ? gltexture->GetBrightmapLegacy() : nullptr;
+	//	if (bm) // Brightmaps
+	//	{
+	//		int totalLight = lightlevel + rel;
+	//		if (totalLight > 255) totalLight = 255;
+	//		if (totalLight < 0) totalLight = 0;
+	//
+	//		float intensityFactor;
+	//		if (totalLight < 96) intensityFactor = 1.0f;
+	//		else
+	//		{
+	//			const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
+	//			float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
+	//			factor = factor + 0.1f * factor * (1.0f - factor);
+	//			intensityFactor = (factor * 0.99f) + 0.01f;
+	//		}
+	//
+	//		if (intensityFactor > 1.0f) intensityFactor = 1.0f;
+	//		if (intensityFactor < 0.0f) intensityFactor = 0.0f;
+	//
+	//		gl_RenderState.SetColor(intensityFactor, intensityFactor, intensityFactor, 1.0f);
+	//		gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
+	//		gl_SetPlaneTextureRotation(&plane, bm);
+	//		DrawSubsectors(pass, false, false);
+	//		gl_RenderState.EnableTextureMatrix(false);
+	//
+	//		// Re-sync hardware matrix state safely inside brightmap context
+	//		glMatrixMode(GL_MODELVIEW);
+	//		gl_RenderState.Apply(0);
+	//	}
+	//}
+	//break;
+
+	case GLPASS_LIGHTEFFECTS_LEGACY: // with big dynlights baking
 	{
+		const float overallGlowIntensity = 0.9f;
 		FMaterial *bm = gltexture ? gltexture->GetBrightmapLegacy() : nullptr;
-		if (bm) // Brightmaps
+
+		// Calculate total current light level including extra light modifications
+		int totalLight = lightlevel + rel;
+		if (totalLight > 255) totalLight = 255;
+		if (totalLight < 0) totalLight = 0;
+
+		float intensityFactor;
+		if (totalLight < 96)
 		{
-			int totalLight = lightlevel + rel;
-			if (totalLight > 255) totalLight = 255;
-			if (totalLight < 0) totalLight = 0;
+			// Full effect below 96 light level to prevent early dimming
+			intensityFactor = 1.0f;
+		}
+		else
+		{
+			// Optimized inverse light factor for the 96-255 range using multiplication
+			const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
+			float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
 
-			float intensityFactor;
-			if (totalLight < 96) intensityFactor = 1.0f;
-			else
-			{
-				const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
-				float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
-				factor = factor + 0.1f * factor * (1.0f - factor);
-				intensityFactor = (factor * 0.99f) + 0.01f;
-			}
+			// Add a subtle ~2.5% parabola bump to mid-range without overbrightening high values
+			factor = factor + 0.1f * factor * (1.0f - factor);
 
-			if (intensityFactor > 1.0f) intensityFactor = 1.0f;
-			if (intensityFactor < 0.0f) intensityFactor = 0.0f;
+			// Scale intensity to smoothly drop from 1.0 (at 96) down to 0.01 (at 255)
+			intensityFactor = (factor * 0.99f) + 0.01f;
+		}
 
+		if (intensityFactor > 1.0f) intensityFactor = 1.0f;
+		if (intensityFactor < 0.0f) intensityFactor = 0.0f;
+
+		// Switch the texture mode for the whole remainder of the frame
+		gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
+		glEnable(GL_TEXTURE_2D);
+
+		if (bm) // PASS A: BRIGHTMAPS RENDERING
+		{
+			// Apply calculated intensity as modulation color
 			gl_RenderState.SetColor(intensityFactor, intensityFactor, intensityFactor, 1.0f);
+
 			gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
 			gl_SetPlaneTextureRotation(&plane, bm);
 			DrawSubsectors(pass, false, false);
 			gl_RenderState.EnableTextureMatrix(false);
+		}
 
-			// Re-sync hardware matrix state safely inside brightmap context
-			glMatrixMode(GL_MODELVIEW);
-			gl_RenderState.Apply(0);
+		// --- PASS B: FLATS HUGE DYNLIGHT RADIUS BAKING TO BOOST FPS
+		const bool useSmoothGouradFlatDynlightBake = true;
+		float intensityModifier = 1.0f;
+		{
+			// Otherwise it gets too bright on initially bright flats
+			if      (lightlevel <= 136)                     { intensityModifier *= 0.995f; }
+			else if (lightlevel >= 137 && lightlevel < 144) { intensityModifier *= 0.950f; }
+			else if (lightlevel >= 144 && lightlevel < 152) { intensityModifier *= 0.800f; }
+			else if (lightlevel >= 152 && lightlevel < 160) { intensityModifier *= 0.750f; }
+			else if (lightlevel >= 160 && lightlevel < 168) { intensityModifier *= 0.600f; }
+			else if (lightlevel >= 168 && lightlevel < 176) { intensityModifier *= 0.550f; }
+			else if (lightlevel >= 176 && lightlevel < 184) { intensityModifier *= 0.450f; }
+			else if (lightlevel >= 184 && lightlevel < 192) { intensityModifier *= 0.650f; }
+			else if (lightlevel >= 192 && lightlevel < 200) { intensityModifier *= 0.600f; }
+			else if (lightlevel >= 200 && lightlevel < 216) { intensityModifier *= 0.500f; }
+			else if (lightlevel >= 216 && lightlevel < 232) { intensityModifier *= 0.450f; }
+			else if (lightlevel >= 232 && lightlevel < 248) { intensityModifier *= 0.550f; }
+			else if (lightlevel >= 255)                     { intensityModifier *= 0.575f; }
+		}
+		intensityModifier *= 1.35f;
+		if (useSmoothGouradFlatDynlightBake) // looks way better
+		{
+			if (gl_legacy_dynlight_baked_huge && sector && sector->subsectorcount > 0)
+			{
+				// Backup baseline blending states from public trackers to prevent cache drifts
+				int backupSrcBlend = gl_RenderState.mSrcBlend;
+				int backupDstBlend = gl_RenderState.mDstBlend;
+				int backupTexMode = gl_RenderState.mTextureMode;
+
+				// Modulation: the flat texture times the per-vertex light color
+				gl_SetTextureMode(TM_MODULATE);
+				gl_RenderState.SetMaterial(gltexture, CLAMP_NONE, 0, -1, false);
+				gl_RenderState.SetColor(1.0f, 1.0f, 1.0f, 1.0f); // color comes from vertices
+
+				// Texture matrix must be set AFTER the material and BEFORE Apply
+				gl_SetPlaneTextureRotation(&plane, gltexture);
+
+				// SECURED BLENDING HOOK VIA PUBLIC REGISTRIES:
+				gl_RenderState.mSrcBlend = GL_DST_COLOR;
+				gl_RenderState.mDstBlend = GL_ZERO;
+
+				gl_RenderState.Apply(0); // Commit state machine updates into hardware cleanly
+
+				// Hardware anti-z-fighting: draw slightly in front of the regular flat
+				glDepthFunc(GL_LEQUAL);
+				glDepthMask(GL_FALSE);
+				glEnable(GL_POLYGON_OFFSET_FILL);
+				glPolygonOffset(-0.5f, -0.5f);
+
+				// THE 3D-FLOORS PLANE ANCHOR
+				// CRITICAL FIX: Extract the pristine 'secplane_t' straight from the current 
+				// GLFlat instance context tracker ('this->plane.plane') instead of base sector.
+				// This dynamically scales height ZatPoint calculations for flying 3D platforms,
+				// permanently crushing the light-detachment floating anomalies.
+				const secplane_t &activeRenderPlane = this->plane.plane; // The 3D-floor link
+
+				for (int i = 0; i < sector->subsectorcount; ++i)
+				{
+					subsector_t *subSec = sector->subsectors[i];
+					if (!subSec || subSec->numlines == 0) continue;
+
+					if (gGouraudScratch.Size() < subSec->numlines)
+						gGouraudScratch.Resize(subSec->numlines);
+
+					FFlatVertexGouraud *verts = &gGouraudScratch[0];
+
+					// Colors first; skip the subsector if no large light reaches it
+					// FIXED TYPING: Passed the real activeRenderPlane directly into the evaluator.
+					if (!gl_FillSubsectorGouraud(subSec, activeRenderPlane, sector->PortalGroup, 
+						verts, this->ceiling, intensityModifier)) continue;
+
+					// World-space UVs; orientation comes from the texture matrix set above
+					gl_FillSubsectorUV(subSec, activeRenderPlane, gltexture, verts);
+					gl_DrawGouraudFan(verts, (int)subSec->numlines);
+				}
+
+				// Restore the state the rest of the frame expects, exactly as it was.
+				gl_RenderState.EnableTextureMatrix(false);
+
+				glDisable(GL_POLYGON_OFFSET_FILL);
+				glDepthMask(GL_TRUE);
+				glDepthFunc(GL_EQUAL);
+
+				// Frame restoration:
+				// Symmetrically flash back the un-corrupted backup parameters into public slots.
+				// Purge broken savedColor and force call ResetColor().
+				// Helps to restore weapon HUD visibility and sprites under all look angles.
+				gl_RenderState.mTextureMode = backupTexMode; // Re-track previous texture mode
+				gl_RenderState.mSrcBlend = backupSrcBlend;   // Restore baseline blending factors
+				gl_RenderState.mDstBlend = backupDstBlend;
+
+				// THE SHIELD: Call reset color routine
+				gl_RenderState.ResetColor();
+				gl_RenderState.Apply(0);
+			}
+		}
+		else // way worse flat light baking, unused but kept for historical record
+		{
+			float accumulatedLight[3] = { 0.0f, 0.0f, 0.0f };
+			float subsectorsValidCount = 0.0f;
+
+			// Accumulate static lightmap data across all geometric partitions of this sector
+			for (int i = 0; i < this->sector->subsectorcount; ++i)
+			{
+				subsector_t *subSec = this->sector->subsectors[i];
+				if (subSec)
+				{
+					float singleSubLight[3] = { 0.0f, 0.0f, 0.0f };
+
+					// Pass 'this->plane' as 2nd arg matching GLSectorPlane types.
+					if (gl_GetFlatStaticLightmaps(subSec, this->plane, this->ceiling, singleSubLight))
+					{
+						accumulatedLight[0] += singleSubLight[0];
+						accumulatedLight[1] += singleSubLight[1];
+						accumulatedLight[2] += singleSubLight[2];
+						subsectorsValidCount += 1.0f;
+					}
+				}
+			}
+
+			// If at least one active subsector registers large static dynamic lights in range...
+			if (subsectorsValidCount > 0.0f)
+			{
+				// Compute balanced average lightmap values across the surface layout
+				float avgR = accumulatedLight[0] / subsectorsValidCount;
+				float avgG = accumulatedLight[1] / subsectorsValidCount;
+				float avgB = accumulatedLight[2] / subsectorsValidCount;
+
+				if (avgR > 1.0f) avgR = 1.0f; if (avgG > 1.0f) avgG = 1.0f; if (avgB > 1.0f) avgB = 1.0f;
+
+				// Switch to hardware modulation mode to process diffuse texture blending
+				gl_RenderState.SetTextureMode(TM_MODULATE);
+				gl_RenderState.SetMaterial(gltexture, CLAMP_NONE, 0, -1, false);
+				gl_RenderState.SetColor(avgR, avgG, avgB, intensityModifier);
+
+				// ANTI-Z-FIGHTING PIPELINE
+				glDepthFunc(GL_LEQUAL);
+				glDepthMask(false);
+				glEnable(GL_POLYGON_OFFSET_FILL);
+				glPolygonOffset(-0.5f, -0.5f);
+
+				gl_SetPlaneTextureRotation(&plane, gltexture);
+
+				// Re-invoke the core optimized batching routine to dump the geometry directly onto the GPU.
+				DrawSubsectors(pass, false, false);
+				gl_RenderState.EnableTextureMatrix(false);
+
+				// Rollback temporary pipeline offset states cleanly immediately after dispatch completes
+				glDisable(GL_POLYGON_OFFSET_FILL);
+				glDepthMask(true);
+				glDepthFunc(GL_EQUAL);
+
+				// Re-synchronize back to brightmap state layer for any subsequent execution threads
+				gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
+			}
 		}
 	}
 	break;
 
 	}
 	gl_RenderState.SetAddColor(0);
-
 	g_isCurrentlyGLFlatDrawing = nullptr; // we're not drawing flats anymore
 }
 
 
-
-	//case GLPASS_LIGHTEFFECTS_LEGACY: // with big dynlights baking
-	//{
-	//	const float overallGlowIntensity = 0.9f;
-	//	FMaterial *bm = gltexture ? gltexture->GetBrightmapLegacy() : nullptr;
-
-	//	// Calculate total current light level including extra light modifications
-	//	int totalLight = lightlevel + rel;
-	//	if (totalLight > 255) totalLight = 255;
-	//	if (totalLight < 0) totalLight = 0;
-
-	//	float intensityFactor;
-	//	if (totalLight < 96)
-	//	{
-	//		// Full effect below 96 light level to prevent early dimming
-	//		intensityFactor = 1.0f;
-	//	}
-	//	else
-	//	{
-	//		// Optimized inverse light factor for the 96-255 range using multiplication
-	//		const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
-	//		float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
-
-	//		// Add a subtle ~2.5% parabola bump to mid-range without overbrightening high values
-	//		factor = factor + 0.1f * factor * (1.0f - factor);
-
-	//		// Scale intensity to smoothly drop from 1.0 (at 96) down to 0.01 (at 255)
-	//		intensityFactor = (factor * 0.99f) + 0.01f;
-	//	}
-
-	//	if (intensityFactor > 1.0f) intensityFactor = 1.0f;
-	//	if (intensityFactor < 0.0f) intensityFactor = 0.0f;
-
-	//	gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
-	//	glEnable(GL_TEXTURE_2D);
-
-	//	if (bm) // PASS A: RENDER NATIVE BRIGHTMAP TEXTURE MASK ASSET
-	//	{
-	//		// Apply calculated intensity as modulation color
-	//		gl_RenderState.SetColor(intensityFactor, intensityFactor, intensityFactor, 1.0f);
-
-	//		gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
-	//		gl_SetPlaneTextureRotation(&plane, bm);
-	//		DrawSubsectors(pass, false, false);
-	//		gl_RenderState.EnableTextureMatrix(false);
-	//	}
-
-	//	// --- PASS B: VERTEX LIGHTMAP BAKING FOR FLOORS/CEILINGS VIA NATIVE SUBSECTORS LOOP ---
-	//	if (gl_legacy_dynlight_baked_huge && this->sector && this->sector->subsectorcount > 0)
-	//	{
-	//		float accumulatedLight[3] = { 0.0f, 0.0f, 0.0f };
-	//		float subsectorsValidCount = 0.0f;
-
-	//		// Accumulate static lightmap data across all geometric partitions of this sector
-	//		for (int i = 0; i < this->sector->subsectorcount; ++i)
-	//		{
-	//			subsector_t *subSec = this->sector->subsectors[i];
-	//			if (subSec)
-	//			{
-	//				float singleSubLight[3] = { 0.0f, 0.0f, 0.0f };
-
-	//				// --- COMPILER TYPING SOLUTION CLEANLY BALANCED ---
-	//				// We pass the native 'this->plane' object directly matching GLSectorPlane types!
-	//				if (gl_GetFlatStaticLightmaps(subSec, this->plane, singleSubLight))
-	//				{
-	//					accumulatedLight[0] += singleSubLight[0];
-	//					accumulatedLight[1] += singleSubLight[1];
-	//					accumulatedLight[2] += singleSubLight[2];
-	//					subsectorsValidCount += 1.0f;
-	//				}
-	//			}
-	//		}
-
-	//		// If at least one active subsector registers large static dynamic lights in range...
-	//		if (subsectorsValidCount > 0.0f)
-	//		{
-	//			// Compute balanced average lightmap values across the surface layout
-	//			float avgR = (accumulatedLight[0] / subsectorsValidCount) * overallGlowIntensity;
-	//			float avgG = (accumulatedLight[1] / subsectorsValidCount) * overallGlowIntensity;
-	//			float avgB = (accumulatedLight[2] / subsectorsValidCount) * overallGlowIntensity;
-
-	//			if (avgR > 1.0f) avgR = 1.0f;
-	//			if (avgG > 1.0f) avgG = 1.0f;
-	//			if (avgB > 1.0f) avgB = 1.0f;
-
-	//			// Switch to hardware modulation mode to process diffuse texture blending
-	//			gl_RenderState.SetTextureMode(TM_MODULATE);
-	//			gl_RenderState.SetMaterial(gltexture, CLAMP_NONE, 0, -1, false);
-	//			gl_RenderState.SetColor(avgR, avgG, avgB, 1.0f);
-
-	//			// HARDWARE ANTI-Z-FIGHTING PIPELINE SECURE
-	//			glDepthFunc(GL_LEQUAL);
-	//			glDepthMask(false);
-	//			glEnable(GL_POLYGON_OFFSET_FILL);
-	//			glPolygonOffset(-0.5f, -0.5f);
-
-	//			gl_SetPlaneTextureRotation(&plane, gltexture);
-
-	//			// Re-invoke the core optimized batching routine to dump the geometry directly onto the GPU!
-	//			DrawSubsectors(pass, false, false);
-	//			gl_RenderState.EnableTextureMatrix(false);
-
-	//			// Rollback temporary pipeline offset states cleanly immediately after dispatch completes
-	//			glDisable(GL_POLYGON_OFFSET_FILL);
-	//			glDepthMask(true);
-	//			glDepthFunc(GL_EQUAL);
-
-	//			// Re-synchronize back to brightmap state layer for any subsequent execution threads
-	//			gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
-	//		}
-	//	}
-	//}
-	//break;
-
-
-	//case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX_SLOW:
+	//case GLPASS_BRIGHTEN_LEGACY_LIGHTTEX_SLOW: // unused for historical record
 	//	// Cleaned up legacy overbright brightening pass for flats
 	//	// Uses low-level DrawLightsCompat routine integrated with fixed constants
 	//	gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ONE);

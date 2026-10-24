@@ -25,7 +25,6 @@ private:
 	void PolySubsector(subsector_t * sub);
 	void RenderPolyBSPNode(void *node);
 	void AddPolyobjs(subsector_t *sub);
-	void RenderMergedLine(seg_t *seg, angle_t startAngle, angle_t endAngle);
 	void AddLines(subsector_t * sub, sector_t * sector);
 	void AddSpecialPortalLines(subsector_t * sub, sector_t * sector, line_t *line);
 	void RenderThings(subsector_t * sub, sector_t * sector);

@@ -329,12 +329,12 @@ void FSkyVertexBuffer::RenderDome(FMaterial *tex, int mode)
 		PalEntry pe = tex->tex->GetSkyCapColor(false);
 		gl_RenderState.SetObjectColor(pe);
 		gl_RenderState.EnableTexture(false);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		RenderRow(GL_TRIANGLE_FAN, 0);
 
 		pe = tex->tex->GetSkyCapColor(true);
 		gl_RenderState.SetObjectColor(pe);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		RenderRow(GL_TRIANGLE_FAN, rc);
 		gl_RenderState.EnableTexture(true);
 		// The color array can only be activated now if this is drawn without shader
@@ -344,7 +344,7 @@ void FSkyVertexBuffer::RenderDome(FMaterial *tex, int mode)
 		}
 	}
 	gl_RenderState.SetObjectColor(0xffffffff);
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	for (int i = 1; i <= mRows; i++)
 	{
 		RenderRow(GL_TRIANGLE_STRIP, i);
@@ -432,7 +432,7 @@ void RenderDome(FMaterial * tex, float x_offset, float y_offset, bool mirror, in
 		gl_RenderState.ResetColor();
 
 		// 3. Flush the cleaned states straight to the GPU hardware registers right now
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 
 		// 4. Low-level hardware fallback override path for strict legacy OpenGL 1.1 compliance
 		glEnable(GL_FOG);
@@ -469,25 +469,25 @@ static void RenderBox(FTextureID texno, FMaterial * gltex, float x_offset, bool 
 		// north
 		tex = FMaterial::ValidateTexture(sb->faces[0], false);
 		gl_RenderState.SetMaterial(tex, CLAMP_XY, 0, -1, false);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		glDrawArrays(GL_TRIANGLE_STRIP, GLRenderer->mSkyVBO->FaceStart(0), 4);
 
 		// east
 		tex = FMaterial::ValidateTexture(sb->faces[1], false);
 		gl_RenderState.SetMaterial(tex, CLAMP_XY, 0, -1, false);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		glDrawArrays(GL_TRIANGLE_STRIP, GLRenderer->mSkyVBO->FaceStart(1), 4);
 
 		// south
 		tex = FMaterial::ValidateTexture(sb->faces[2], false);
 		gl_RenderState.SetMaterial(tex, CLAMP_XY, 0, -1, false);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		glDrawArrays(GL_TRIANGLE_STRIP, GLRenderer->mSkyVBO->FaceStart(2), 4);
 
 		// west
 		tex = FMaterial::ValidateTexture(sb->faces[3], false);
 		gl_RenderState.SetMaterial(tex, CLAMP_XY, 0, -1, false);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		glDrawArrays(GL_TRIANGLE_STRIP, GLRenderer->mSkyVBO->FaceStart(3), 4);
 	}
 	else 
@@ -495,20 +495,20 @@ static void RenderBox(FTextureID texno, FMaterial * gltex, float x_offset, bool 
 		faces=1;
 		tex = FMaterial::ValidateTexture(sb->faces[0], false);
 		gl_RenderState.SetMaterial(tex, CLAMP_XY, 0, -1, false);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		glDrawArrays(GL_TRIANGLE_STRIP, GLRenderer->mSkyVBO->FaceStart(-1), 10);
 	}
 
 	// top
 	tex = FMaterial::ValidateTexture(sb->faces[faces], false);
 	gl_RenderState.SetMaterial(tex, CLAMP_XY, 0, -1, false);
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	glDrawArrays(GL_TRIANGLE_STRIP, GLRenderer->mSkyVBO->FaceStart(sb->fliptop? 6:5), 4);
 
 	// bottom
 	tex = FMaterial::ValidateTexture(sb->faces[faces+1], false);
 	gl_RenderState.SetMaterial(tex, CLAMP_XY, 0, -1, false);
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	glDrawArrays(GL_TRIANGLE_STRIP, GLRenderer->mSkyVBO->FaceStart(4), 4);
 
 	gl_RenderState.EnableModelMatrix(false);
@@ -571,7 +571,7 @@ void GLSkyPortal::DrawContents()
 
 			gl_RenderState.EnableTexture(false);
 			gl_RenderState.SetObjectColor(FadeColor);
-			gl_RenderState.Apply(0);
+			gl_RenderState.Apply(nullptr);
 			glDrawArrays(GL_TRIANGLES, 0, 12);
 			gl_RenderState.EnableTexture(true);
 			gl_RenderState.SetObjectColor(0xffffffff);
@@ -597,7 +597,7 @@ void GLSkyPortal::DrawContents()
 
 		// 2. Force the state machine to flush all changes directly into the GPU registers right now
 		// This guarantees that any sticky fadecolors or equal depth funcs completely drop!
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 
 		// 3. Secondary low-level fallback clean for raw OpenGL 1.1 hardware compliance
 		glEnable(GL_FOG);

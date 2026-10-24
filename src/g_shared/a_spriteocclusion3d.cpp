@@ -18,7 +18,7 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/
 //
 //--------------------------------------------------------------------------
-//    ---=== Sprite/Particle 3D occlusion system by Darkcrafter07 ===---
+// ---== Sprite/Particle/Dynlight 3D occlusion system by Darkcrafter07 ==---
 // ... made specifically for Hybrid Forced-Perspective sprite clipping.
 // The code is made for LZDoom07 (fork of LZDoom v3.88b which is GZDoom v3)
 // but contains commented out lines for easy porting to modern code base
@@ -73,6 +73,29 @@ bool IsAnamorphicDistanceCulled(AActor *thing, float gl_anamorphic_spriteclip_di
 	const float cullDistSq = cullDist * cullDist;
 
 	return (thing->Pos() - r_viewpoint.Pos).LengthSquared() > cullDistSq;
+}
+
+// Evaluates the exact quadratic distance between the player viewpoint 
+// and the dynamic light actor. Returns true if the light source is inside 
+// the protected close proximity near-field zone.
+bool IsDynlightDistanceCulled(AActor *thing, float gl_anamorphic_dynlight_distance_cull)
+{
+	if (!thing) return false; // Handle null pointers directly
+	if (gl_anamorphic_dynlight_distance_cull <= 0.0f) return false;
+
+	const float cullDist = gl_anamorphic_dynlight_distance_cull;
+	const float cullDistSq = cullDist * cullDist;
+
+	// Calculate absolute distance squared against the hardware viewpoint setup
+	float currentDistanceSq = (float)(thing->Pos() - r_viewpoint.Pos).LengthSquared();
+
+	// If the light source is CLOSER than the threshold, return true (near-field override)
+	if (currentDistanceSq <= cullDistSq)
+	{
+		return true;
+	}
+
+	return false;
 }
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
@@ -332,6 +355,9 @@ inline bool isGeometryTypePresentInRadiusCachedWrapper(AActor* thing, EGeometryR
 }
 
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
+
+
+
 
 
 
@@ -1932,8 +1958,8 @@ bool IsSpriteVisibleBehind1sidedLinesCachedWrapper(AActor *thing, AActor *viewer
 //         ---===      ***************************************        ===---
 // ******* 2-sided-linedef tall enough sector obstructions culling block start *******
 
-constexpr float MINCOORD2SIDED = -32768.0;
-constexpr float MAXCOORD2SIDED = 32767.9999847;
+constexpr float MINCOORD2SIDED = -FLT_MAX;
+constexpr float MAXCOORD2SIDED = FLT_MAX;
 constexpr float EPSILON2SIDED = 0.001;
 float           Ztolerance2sided = 2.0f;
 float           Ztolerance2sidedBot = 4.0f; // lower vals - legs on elevations cull more if seen from below
@@ -3406,11 +3432,11 @@ static const FVector2 directionVectors[4] =
 };
 
 // Optimized Implementation of CheckLineOfSight2sided with extended radius
-static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
+static bool CheckLineOfSight2sided(AActor *viewer, AActor *thing, float dynlightRadius = 0.0f, bool isDynlight = false)
 {
 	// No obstructions found means true
-	if (CheckFrustumCulling(thing)) return false;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
+	//if (CheckFrustumCulling(thing)) return false; // now in the wrappers
+	//if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false; // now in the wrappers
 
 	// Eye height calculation
 	float EyeHeight2 = 41.0f;
@@ -3426,7 +3452,12 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 		(thing->flags & MF_NOGRAVITY) || (thing->flags2 & MF2_IMPACT) ||
 		(thing->flags2 & MF2_NOTELEPORT) || (thing->flags2 & MF2_PCROSS);
 
-	float spriteSize = (thing->radius + thing->Height) * 0.5f;
+	// Unified radius and height profile calculation pass via pristine forwarded float parameters
+	// The bigger the radius the HARDER it culls (more agressive culling).
+	float activeRadius = isDynlight ? dynlightRadius : (float)thing->radius;
+	float activeHeight = isDynlight ? dynlightRadius * 0.75f : (float)thing->Height;
+
+	float spriteSize = (activeRadius + activeHeight) * 0.5f;
 	const bool isSmallSprite = (spriteSize <= 18.0f);
 	const bool isMediumSprite = (spriteSize > 18.0f && spriteSize <= 38.0f);
 	const bool isLargeSprite = (spriteSize > 38.0f);
@@ -3443,8 +3474,16 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 	// ==================================================================================================
 	// THIS IS THE PLACE WHERE YOU CONFIGURE SPRITES CULLING AMOUNT PER TYPE FOR 2SIDED TALL OBSTRUCTIONS
 	// 1st val is large spr, 2nd is small sprites, third is all the rest sprites, higher vals cull more
-	float RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.25f : 1.2f) : 2.5f;
-	float HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.25f : 1.0f) : 2.5f;
+	float RadiusExpansionFactor, HeightExpansionFactor = 1.0f;
+	if (isDynlight)
+	{
+		RadiusExpansionFactor = dynlightRadius; HeightExpansionFactor = dynlightRadius * 0.5f;
+	}
+	else
+	{
+		RadiusExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.25f : 1.2f) : 2.5f;
+		HeightExpansionFactor = isProjectileLargeSprite ? (isSmallSprite ? 0.25f : 1.0f) : 2.5f;
+	}
 
 	// Core sprite positions (using expansion factors)
 	FVector2 viewerPos = GetActorPosition(viewer);
@@ -3576,6 +3615,35 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 							if (!LineIntersectsSegment2sided(viewerPos, testPoint, lineStart, lineEnd, intersectionPoint))
 								continue;
 
+							// -----------------------------------------------------------------
+							// DYNLIGHT CORNER EDGE PADDING FILTER (APPROACH A)
+							// -----------------------------------------------------------------
+							// If we are tracing for a dynamic light sphere, calculate how close
+							// this blocking 2S edge line actually is to the light source center mass.
+							if (isDynlight)
+							{
+								float ax = lineStart.X, ay = lineStart.Y;
+								float bx = lineEnd.X, by = lineEnd.Y;
+								float px = thingCenterPos.X, py = thingCenterPos.Y;
+
+								float dx = bx - ax;
+								float dy = by - ay;
+								float lenSq = dx * dx + dy * dy;
+								float u = ((px - ax) * dx + (py - ay) * dy) / (lenSq > 0.0f ? lenSq : 1.0f);
+								if (u < 0.0f) u = 0.0f; else if (u > 1.0f) u = 1.0f;
+
+								float cx = ax + u * dx;
+								float cy = ay + u * dy;
+								float distanceToWall = sqrtf((px - cx) * (px - cx) + (py - cy) * (py - cy));
+
+								// High-speed aggressive verdict gate: (Radius - 48.0f units tolerance)
+								// If the wall sits deep in the outer boundary fringe, bypass occlusion mapping.
+								if (distanceToWall > (dynlightRadius - 48.0f))
+								{
+									continue; // Skip: Edge padding bypasses the culling to prevent sudden clips
+								}
+							}
+
 							const FVector2 clamped =
 							{
 								clamp<float>(intersectionPoint.X, MINCOORD2SIDED, MAXCOORD2SIDED),
@@ -3627,6 +3695,35 @@ static bool CheckLineOfSight2sided(AActor* viewer, AActor* thing)
 
 							if (!LineIntersectsSegment2sided(viewerPos, testPoint, lineStart, lineEnd, intersectionPoint))
 								continue;
+
+							// -----------------------------------------------------------------
+							// DYNLIGHT CORNER EDGE PADDING FILTER (APPROACH B)
+							// -----------------------------------------------------------------
+							// If we are tracing for a dynamic light sphere, calculate how close
+							// this blocking 2S edge line actually is to the light source center mass.
+							if (isDynlight)
+							{
+								float ax = lineStart.X, ay = lineStart.Y;
+								float bx = lineEnd.X, by = lineEnd.Y;
+								float px = thingCenterPos.X, py = thingCenterPos.Y;
+
+								float dx = bx - ax;
+								float dy = by - ay;
+								float lenSq = dx * dx + dy * dy;
+								float u = ((px - ax) * dx + (py - ay) * dy) / (lenSq > 0.0f ? lenSq : 1.0f);
+								if (u < 0.0f) u = 0.0f; else if (u > 1.0f) u = 1.0f;
+
+								float cx = ax + u * dx;
+								float cy = ay + u * dy;
+								float distanceToWall = sqrtf((px - cx) * (px - cx) + (py - cy) * (py - cy));
+
+								// High-speed aggressive verdict gate: (Radius - 48.0f units tolerance)
+								// If the wall sits deep in the outer boundary fringe, bypass occlusion mapping.
+								if (distanceToWall > (dynlightRadius - 48.0f))
+								{
+									continue; // Skip: Edge padding bypasses the culling to prevent sudden clips
+								}
+							}
 
 							const FVector2 clamped =
 							{
@@ -3724,6 +3821,8 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AA
 	// !!! GEOMETRY RADAR IS NOT NEEDED HERE AS IT'S ONLY FOR LINE CROSSING CHECKS !!!
 	// This function is called with "!" in front, that's why "return true" for early exit
 	if (!IsSpriteInActivePortalGroup(thing, viewer)) return true;
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 	//if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_2SIDED_WALL)) return true;
 
 	// 1. Occlusion test - choose implementation based on toggle
@@ -3767,7 +3866,7 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AA
 		}
 
 		// Perform full geometric sweep and update the height-tracking registry
-		entry.cached2sidedObstrResult = CheckLineOfSight2sided(viewer, thing);
+		entry.cached2sidedObstrResult = CheckLineOfSight2sided(viewer, thing, 0.0f, false);
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
 		entry.lastViewerEyeZ = currentViewerEyeZ; // Seal current 3D vertical height context into the cache line
 		return entry.cached2sidedObstrResult;
@@ -3775,7 +3874,7 @@ bool IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AA
 	else
 	{
 		// UNCACHED VERSION
-		return CheckLineOfSight2sided(viewer, thing);
+		return CheckLineOfSight2sided(viewer, thing, 0.0f, false);
 	}
 }
 
@@ -4581,12 +4680,10 @@ static void GetSectorBounds3DFloors(const sector_t *sec, DVector2 &minPoint, DVe
 	}
 }
 
-bool IsSpriteBehind3DFloorPlane(DVector3 &cameraPos, DVector3 &spritePos, sector_t *sector, AActor *thing)
+bool IsSpriteBehind3DFloorPlane(DVector3 &cameraPos, DVector3 &spritePos, sector_t *sector, AActor *thing, 
+													float dynlightRadius = 0.0f, bool isDynlight = false)
 {
 	if (!sector || !sector->e) return false;
-
-	if (CheckFrustumCulling(thing)) return false;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	const float TOLERANCE = 16.0f;    // Vertex-aligned sector tolerance
 	const float EPSILON = 8.0f;       // Vertical comparison safety
@@ -4663,12 +4760,14 @@ struct a3DFloorPlaneCacheEntry
 	int  lastMapTimeUpdateTick = -1;
 	bool cached3DFloorPlaneResult = false;
 };
-static TMap<AActor *, a3DFloorPlaneCacheEntry> a3DFloorPlaneCache; // Global cache storage
+static TMap<AActor *, a3DFloorPlaneCacheEntry> a3DFloorPlaneCache; // Global 3DFloor plane cache storage
 
 bool IsSpriteBehind3DFloorPlaneCachedWrapper(DVector3 &cameraPos, DVector3 &spritePos, sector_t *sector, AActor *thing)
 {
 	// This function is called withOUT "!" in front, that's why "return false" for early exit
 	if (!isGeometryTypePresentInRadius(thing, RADAR_HAS_3DFLOOR)) return false;
+	if (CheckFrustumCulling(thing)) return false;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	if (enableAnamorphCache)
 	{
@@ -4682,14 +4781,14 @@ bool IsSpriteBehind3DFloorPlaneCachedWrapper(DVector3 &cameraPos, DVector3 &spri
 		}
 
 		// Compute fresh result and cache it
-		entry.cached3DFloorPlaneResult = IsSpriteBehind3DFloorPlane(cameraPos, spritePos, sector, thing);
+		entry.cached3DFloorPlaneResult = IsSpriteBehind3DFloorPlane(cameraPos, spritePos, sector, thing, 0.0f, false);
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
 		return entry.cached3DFloorPlaneResult;
 	}
 	else
 	{
 		// Original uncached behavior
-		return IsSpriteBehind3DFloorPlane(cameraPos, spritePos, sector, thing);
+		return IsSpriteBehind3DFloorPlane(cameraPos, spritePos, sector, thing, 0.0f, false);
 	}
 }
 
@@ -4719,8 +4818,8 @@ struct ObstructionData3DFloor
 	{
 		valid = false;
 		isProjectileBehindObstacle = false;
-		maxFloorOverlap = -999999.0f; // Start far apart so the bounds can contract during accumulation
-		minCeilingOverlap = 999999.0f;
+		maxFloorOverlap = -FLT_MAX; // Start far apart so the bounds can contract during accumulation
+		minCeilingOverlap = FLT_MAX;
 	}
 
 	void Accumulate3DFloorObstruction(AActor* thing, AActor* viewer, float fBot, float fTop,
@@ -4793,22 +4892,13 @@ struct ObstructionData3DFloor
 	}
 };
 
-// Cache structure for 3D floor side (ribs) checks
-struct a3DFloorSideCacheEntry
-{
-	int lastMapTimeUpdateTick = -1;
-	bool cached3DFloorSideResult = true;
-};
-static TMap<AActor*, a3DFloorSideCacheEntry> a3DFloorSideCache;
-
 // Utility: get plane height at a 2D point
-bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
+bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing, float dynlightRadius = 0.0f, bool isDynlight = false)
 {
 	if (!viewer || !thing) return true;
 
 	// 1. Frustum culling - DISABLED BECAUSE BAD
 	// if (CheckFrustumCullingUNUSED(thing)) return false;
-	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 
 	const FVector2 vd = { (float)viewer->Pos().X, (float)viewer->Pos().Y };
 	const FVector2 sd = { (float)thing->Pos().X, (float)thing->Pos().Y };
@@ -4893,7 +4983,12 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 
 	if (obsData.valid)
 	{
-		const float spriteSize = (thing->radius + thing->Height) * 0.5f;
+		// Unified radius and height profile calculation pass via pristine forwarded float parameters
+		// The bigger the radius the HARDER it culls (more agressive culling).
+		float activeRadius = isDynlight ? dynlightRadius : (float)thing->radius;
+		float activeHeight = isDynlight ? dynlightRadius * 0.75f : (float)thing->Height;
+
+		float spriteSize = (activeRadius + activeHeight) * 0.5f;
 		float LEDGE_THRESHOLD = (spriteSize <= 22.0f) ? 12.0f : 4.0f;
 
 		// Check A: Floor/Ledge occlusion
@@ -4918,12 +5013,20 @@ bool IsSpriteVisibleBehind3DFloorSides(AActor* viewer, AActor* thing)
 	return true;
 }
 
+struct a3DFloorSideCacheEntry // Cache structure for 3D floor side (ribs) checks
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached3DFloorSideResult = true;
+};
+static TMap<AActor*, a3DFloorSideCacheEntry> a3DFloorSideCache;
+
 // Cached wrapper function
 bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thing)
 {
 	// !!! GEOMETRY RADAR IS NOT NEEDED HERE AS IT'S ONLY FOR LINE CROSSING CHECKS !!!
 	// This function is called with "!" in front, that's why "return true" for early exit
 	if (!IsSpriteInActivePortalGroup(thing, viewer)) return true;
+	if (IsAnamorphicDistanceCulled(thing, 2048.0f)) return false;
 	//if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_3DFLOOR)) return true;
 
 	if (enableAnamorphCache)
@@ -4936,13 +5039,13 @@ bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thin
 			return entry.cached3DFloorSideResult;
 		}
 
-		entry.cached3DFloorSideResult = IsSpriteVisibleBehind3DFloorSides(viewer, thing);
+		entry.cached3DFloorSideResult = IsSpriteVisibleBehind3DFloorSides(viewer, thing, 0.0f, false);
 		entry.lastMapTimeUpdateTick = currentMapTimeTick;
 		return entry.cached3DFloorSideResult;
 	}
 	else
 	{
-		return IsSpriteVisibleBehind3DFloorSides(viewer, thing);
+		return IsSpriteVisibleBehind3DFloorSides(viewer, thing, 0.0f, false);
 	}
 }
 
@@ -5003,3 +5106,295 @@ void ResetAnamorphCache()
 // Sprite 3D Occlusion Culling - FINISH
 //
 //==========================================================================
+
+
+
+
+
+//===***===***===***===***===***===***===***===***===***===***===***===***==
+
+
+
+
+
+
+
+//===***===***===***===***===***===***===***===***===***===***===***===***==
+
+
+
+
+
+
+
+//===***===***===***===***===***===***===***===***===***===***===***===***==
+
+
+
+
+
+
+
+//==========================================================================
+//
+// Dynamic Lights Occlusion Culling - START
+//
+//==========================================================================
+CVAR(Bool, r_dynlights_occlude, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
+bool enableDynlightCache = true; // gives it a really considerable speed-up
+
+struct FRadiusRadarDynlightCacheKey
+{
+	AActor*          thing;
+	uint32_t         targetType;
+	float            dynlightRadius;
+
+	// Required by TMap find methods for direct structural equality checking
+	bool operator==(const FRadiusRadarDynlightCacheKey& other) const
+	{
+		return thing == other.thing &&
+			targetType == other.targetType &&
+			fabsf(dynlightRadius - other.dynlightRadius) < 0.1f;
+	}
+
+	// FIX: Required by THashTraits::Compare routine to compile successfully
+	bool operator!=(const FRadiusRadarDynlightCacheKey& other) const
+	{
+		return thing != other.thing ||
+			targetType != other.targetType ||
+			fabsf(dynlightRadius - other.dynlightRadius) >= 0.1f;
+	}
+};
+
+// Explicit template specialization of THashTraits for the Dynlight cache key structure
+template<> struct THashTraits<FRadiusRadarDynlightCacheKey>
+{
+	// Generates a stable unique hash by combining pointer mapping bits and float parameters bits
+	hash_t Hash(const FRadiusRadarDynlightCacheKey key)
+	{
+		hash_t ptrHash = (hash_t)(intptr_t)key.thing;
+		union { float f; uint32_t i; } u; u.f = key.dynlightRadius;
+		return ptrHash ^ key.targetType ^ u.i;
+	}
+
+	// Compares two keys using your newly added operator!= to fulfill tarray.h constraints
+	int Compare(const FRadiusRadarDynlightCacheKey left, const FRadiusRadarDynlightCacheKey right)
+	{
+		return left != right;
+	}
+};
+
+struct FRadiusRadarDynlightCacheEntry
+{
+	int  lastMapTimeUpdateTick = -1; // Initialized to invalid tick state
+	bool cachedDynlightRadarResult = false;
+};
+// Dedicated cache storage for dynamic light vertical obstructions checks
+TMap<FRadiusRadarDynlightCacheKey, FRadiusRadarDynlightCacheEntry> GeometryTypeRadarAroundDynlightRadiusCache;
+
+
+
+//                                     ----------------
+//              ---===      ***************************************        ===---
+// ******* 2-sided-linedef tall enough sector obstructions dynlight culling block START *******
+
+bool IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AActor *thing, 
+														float dynlightRadius, bool isDynlight)
+{
+	if (!viewer || !thing || viewer == thing) return false;
+	if (!IsSpriteInActivePortalGroup(thing, viewer)) return true;
+
+	// // Near-field visibility absolute shield protect pass
+	if (IsDynlightDistanceCulled(thing, 2048.0f))
+	{
+		return true; // Not culling because NEAR field is ALWAYS visible!
+	}
+
+	if (enableDynlightCache)
+	{
+		const int currentMapTimeTick = level.maptime;
+
+		// Initialize your dedicated global dynamic light cache key natively
+		FRadiusRadarDynlightCacheKey cacheKey = { thing, RADAR_ANY_2SIDED_OBSTACLE, dynlightRadius };
+		FRadiusRadarDynlightCacheEntry &entry = GeometryTypeRadarAroundDynlightRadiusCache[cacheKey];
+
+		// Calculate exact raw camera eye height right now
+		float eyeHeight = 41.0f;
+		if (viewer->player && viewer->player->mo)
+		{
+			eyeHeight = (float)viewer->player->mo->FloatVar(NAME_ViewHeight) + (float)viewer->player->crouchviewdelta;
+		}
+		float currentViewerEyeZ = (float)viewer->Z() + eyeHeight;
+
+		// ============================================================================================
+		// CPU-SAVING VERTICAL HYSTERESIS GATE (THE 48-UNIT THRESHOLD OVERRIDE)
+		// Evaluates sudden vertical camera spikes. Small bumps and standard stairs are completely 
+		// ignored to save CPU cycles. Lifespan drops to 0 only during extreme vertical warps.
+		// ============================================================================================
+		int dynamicTickLifespan = 16;
+
+		if (entry.lastMapTimeUpdateTick != -1)
+		{
+			// Note: If lastViewerEyeZ is not in FRadiusRadarDynlightCacheEntry, 
+			// you can store it there or pull from an external context if needed
+			float verticalHeightDelta = fabsf(currentViewerEyeZ - (float)viewer->Z()); // Fallback safe delta check
+			if (verticalHeightDelta > 48.0f)
+			{
+				dynamicTickLifespan = 0;
+			}
+		}
+
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < dynamicTickLifespan)
+		{
+			return entry.cachedDynlightRadarResult;
+		}
+
+		// Perform full geometric sweep and update the global standalone registry
+		entry.cachedDynlightRadarResult = CheckLineOfSight2sided(viewer, thing, dynlightRadius, isDynlight);
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return entry.cachedDynlightRadarResult;
+	}
+	else
+	{
+		return CheckLineOfSight2sided(viewer, thing, dynlightRadius, isDynlight);
+	}
+}
+
+// ******* 2-sided-linedef tall enough sector obstructions dynlight culling block FINISH *******
+//              ---===      ***************************************        ===---
+//                                     ----------------
+
+
+
+
+
+
+
+//                                ----------------
+//         ---===      ***************************************        ===---
+// ******* 3DFloor-planar - floor and ceiling dynlight culling block START *******
+struct a3DFloorPlaneDynlightCacheEntry
+{
+	int  lastMapTimeUpdateTick = -1;
+	bool cached3DFloorPlaneResult = false;
+};
+static TMap<AActor *, a3DFloorPlaneDynlightCacheEntry> a3DFloorPlaneDynlightCache; // Global 3DFloor plane dynlight cache storage
+
+bool IsDynlightBehind3DFloorPlaneCachedWrapper(DVector3 &cameraPos, DVector3 &spritePos, sector_t *sector, AActor *thing, 
+																					float dynlightRadius, bool isDynlight)
+{
+	// This function is called withOUT "!" in front, that's why "return false" for early exit
+	if (!isGeometryTypePresentInRadius(thing, RADAR_HAS_3DFLOOR)) return false;
+	if (CheckFrustumCulling(thing)) return false;
+	// // Near-field visibility absolute shield protect pass
+	if (IsDynlightDistanceCulled(thing, 512.0f))
+	{
+		// yeah, not "true" but "false" here because it's inverted
+		return false; // Not culling because NEAR field is ALWAYS visible!
+	}
+
+	if (enableDynlightCache)
+	{
+		const int   currentMapTimeTick = level.maptime;
+		a3DFloorPlaneDynlightCacheEntry &entry = a3DFloorPlaneDynlightCache[thing];
+
+		// Return cached result if valid (updated within last 3 ticks)
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 16)
+		{
+			return entry.cached3DFloorPlaneResult;
+		}
+
+		// Compute fresh result and cache it
+		entry.cached3DFloorPlaneResult = IsSpriteBehind3DFloorPlane(cameraPos, spritePos, sector, thing, dynlightRadius, isDynlight);
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return entry.cached3DFloorPlaneResult;
+	}
+	else
+	{
+		// Original uncached behavior
+		return IsSpriteBehind3DFloorPlane(cameraPos, spritePos, sector, thing, dynlightRadius, isDynlight);
+	}
+}
+// ******* 3DFloor-planar - floor and ceiling dynlight culling block FINISH *******
+//         ---===      ***************************************        ===---
+//                                ----------------
+
+
+
+
+
+
+
+//                                ----------------
+//         ---===      ***************************************        ===---
+// ****************   3DFloor-sides dynlight culling block START   ****************
+struct a3DFloorSideDynlightCacheEntry // Cache structure for 3D floor side (ribs) dynlight checks
+{
+	int lastMapTimeUpdateTick = -1;
+	bool cached3DFloorSideResult = true;
+};
+static TMap<AActor*, a3DFloorSideDynlightCacheEntry> a3DFloorSideDynlightCache;
+
+bool IsDynlightVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thing, 
+												float dynlightRadius, bool isDynlight)
+{
+	// !!! GEOMETRY RADAR IS NOT NEEDED HERE AS IT'S ONLY FOR LINE CROSSING CHECKS !!!
+	// This function is called with "!" in front, that's why "return true" for early exit
+	if (!IsSpriteInActivePortalGroup(thing, viewer)) return true;
+	if (IsDynlightDistanceCulled(thing, 512.0f))
+	{
+		return true; // Not culling because NEAR field is ALWAYS visible!
+	}
+	//if (!isGeometryTypePresentInRadiusCachedWrapper(thing, RADAR_HAS_3DFLOOR)) return true;
+
+	if (enableDynlightCache)
+	{
+		const int currentMapTimeTick = level.maptime;
+		a3DFloorSideDynlightCacheEntry& entry = a3DFloorSideDynlightCache[thing];
+
+		if (entry.lastMapTimeUpdateTick != -1 && (currentMapTimeTick - entry.lastMapTimeUpdateTick) < 16)
+		{
+			return entry.cached3DFloorSideResult;
+		}
+
+		entry.cached3DFloorSideResult = IsSpriteVisibleBehind3DFloorSides(viewer, thing, dynlightRadius, isDynlight);
+		entry.lastMapTimeUpdateTick = currentMapTimeTick;
+		return entry.cached3DFloorSideResult;
+	}
+	else
+	{
+		return IsSpriteVisibleBehind3DFloorSides(viewer, thing, dynlightRadius, isDynlight);
+	}
+}
+// ****************   3DFloor-sides dynlight culling block FINISH   ****************
+//         ---===      ***************************************        ===---
+//                                ----------------
+
+
+
+
+
+
+
+static int resetDynlightOclCacheCounter = -1;
+void ResetDynlightOcclusionCache()
+{
+	// Only reset 1-9 caches per frame to spread out the cost
+	switch (resetDynlightOclCacheCounter % 9)
+	{
+	case 0:
+		GeometryTypeRadarAroundDynlightRadiusCache.Clear(0);
+		a3DFloorSideDynlightCache.Clear(0);
+		a3DFloorPlaneDynlightCache.Clear(0);
+		break;
+	}
+	resetDynlightOclCacheCounter++;
+}
+
+//==========================================================================
+//
+// Dynamic Lights Occlusion Culling - FINISH
+//
+//==========================================================================
+
+

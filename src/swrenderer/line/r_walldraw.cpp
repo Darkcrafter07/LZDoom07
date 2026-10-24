@@ -52,10 +52,14 @@
 #include "swrenderer/r_renderthread.h"
 #include "swrenderer/r_memory.h"
 
+#include "g_shared\a_spriteocclusion3d.h"
+
 namespace swrenderer
 {
 	WallSampler::WallSampler(RenderViewport *viewport, int y1, double texturemid, float swal, double yrepeat, fixed_t xoffset, double xmagnitude, FTexture *texture)
 	{
+		float xmagnitudeSP = 0.0f;
+		xmagnitudeSP = (float)xmagnitude;
 		xoffset += FLOAT2FIXED(xmagnitude * 0.5);
 
 		if (!viewport->RenderTarget->IsBgra())
@@ -69,8 +73,8 @@ namespace swrenderer
 
 				// Find start uv in [0-base_height[ range.
 				// Not using xs_ToFixed because it rounds the result and we need something that always rounds down to stay within the range.
-				double uv_stepd = swal * yrepeat;
-				double v = (texturemid + uv_stepd * (y1 - viewport->CenterY + 0.5)) / height;
+				float uv_stepd = swal * yrepeat;
+				float v = (texturemid + uv_stepd * (y1 - viewport->CenterY + 0.5f)) / height;
 				v = v - floor(v);
 				v *= height;
 				v *= (1 << uv_fracbits);
@@ -104,10 +108,10 @@ namespace swrenderer
 		else
 		{
 			// Normalize to 0-1 range:
-			double uv_stepd = swal * yrepeat;
-			double v = (texturemid + uv_stepd * (y1 - viewport->CenterY + 0.5)) / texture->GetHeight();
+			float uv_stepd = swal * yrepeat;
+			float v = (texturemid + uv_stepd * (y1 - viewport->CenterY + 0.5f)) / texture->GetHeight();
 			v = v - floor(v);
-			double v_step = uv_stepd / texture->GetHeight();
+			float v_step = uv_stepd / texture->GetHeight();
 
 			if (std::isnan(v) || std::isnan(v_step)) // this should never happen, but it apparently does..
 			{
@@ -122,10 +126,10 @@ namespace swrenderer
 			uv_max = 0;
 
 			// Texture mipmap and filter selection:
-			double ymagnitude = fabs(uv_stepd);
-			double magnitude = MAX(ymagnitude, xmagnitude);
-			double min_lod = -1000.0;
-			double lod = MAX(log2(magnitude) + r_lod_bias, min_lod);
+			float ymagnitude = fabsf(uv_stepd);
+			float magnitude = MAX(ymagnitude, xmagnitudeSP);
+			float min_lod = -1000.0f;
+			float lod = MAX(log2(magnitude) + r_lod_bias, min_lod);
 			bool magnifying = lod < 0.0f;
 
 			int mipmap_offset = 0;
@@ -188,7 +192,7 @@ namespace swrenderer
 		if (r_dynlights && light_list)
 		{
 			auto viewport = Thread->Viewport.get();
-			
+
 			int tx = x;
 			bool mirror = !!(Thread->Portal->MirrorFlags & RF_XFLIP);
 			if (mirror)
@@ -198,6 +202,55 @@ namespace swrenderer
 			drawerargs.dc_viewpos.Y = zcol;
 			drawerargs.dc_viewpos.Z = (float)((viewport->CenterY - y1 - 0.5) / viewport->InvZtoScale * zcol);
 			drawerargs.dc_viewpos_step.Z = (float)(-zcol / viewport->InvZtoScale);
+
+			// -----------------------------------------------------------------
+			// SOFTWARE RENDERER VISUAL OCCLUSION SHIELD TIMELINE GATE
+			// -----------------------------------------------------------------
+			// Intercept the linked light nodes chain directly inside the pixel column loop.
+			// Pre-evaluate obstruction parameters using your flawless global cache wrapper 
+			// before allowing the CPU to proceed into heavy trigonometric matrix scaling.
+			FLightNode *check_node = light_list;
+			while (check_node && r_dynlights_occlude) // YEAH IT'S A CRAPPY ATTEMPT but just for consistency with GL
+			{
+				FDynamicLight *light = check_node->lightsource;
+				float radius = light->GetRadius();
+				bool isBigRadiusDynlight = radius > 468.0f;
+
+				if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight) // works bad with big radius dynlights
+				{
+					bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+					if (!isCamglowDynlightHere)
+					{
+						// Fetch direct sector context safely from the thread context viewport
+						sector_t* checkSector = light->Sector ? light->Sector : light->target->Sector;
+						int currentGroup = checkSector ? checkSector->PortalGroup : 0;
+						DVector3 lightPosAbs = light->PosAbsolute(currentGroup);
+
+						float adjustedRadius = radius * 0.85f; // Shrink radius to reduce culling agressiveness
+
+						bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(Thread->Viewport->viewpoint.camera, light->target, adjustedRadius, true);
+						bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(Thread->Viewport->viewpoint.Pos, lightPosAbs, checkSector, light->target, adjustedRadius, true);
+						bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(Thread->Viewport->viewpoint.camera, light->target, adjustedRadius, true);
+
+						if (!isDynlightVisibleBehind2Sobstr || !isDynlightVisibleBehind3DFloorSides || isDynlightObstructedBy3DFloorFlats)
+						{
+							if (light->IsActive())
+							{
+								light->Deactivate(); // Safe freeze: Purges the light from software cycles instantly!
+							}
+						}
+						else
+						{
+							if (!light->IsActive())
+							{
+								light->Activate(); // Restore light pipeline state back cleanly
+							}
+						}
+					}
+				}
+				check_node = check_node->nextLight;
+			}
 
 			// Calculate max lights that can touch column so we can allocate memory for the list
 			int max_lights = 0;
@@ -218,9 +271,9 @@ namespace swrenderer
 			{
 				if (cur_node->lightsource->IsActive())
 				{
-					double lightX = cur_node->lightsource->X() - Thread->Viewport->viewpoint.Pos.X;
-					double lightY = cur_node->lightsource->Y() - Thread->Viewport->viewpoint.Pos.Y;
-					double lightZ = cur_node->lightsource->Z() - Thread->Viewport->viewpoint.Pos.Z;
+					float lightX = cur_node->lightsource->X() - Thread->Viewport->viewpoint.Pos.X;
+					float lightY = cur_node->lightsource->Y() - Thread->Viewport->viewpoint.Pos.Y;
+					float lightZ = cur_node->lightsource->Z() - Thread->Viewport->viewpoint.Pos.Z;
 
 					float lx = (float)(lightX * Thread->Viewport->viewpoint.Sin - lightY * Thread->Viewport->viewpoint.Cos) - drawerargs.dc_viewpos.X;
 					float ly = (float)(lightX * Thread->Viewport->viewpoint.TanCos + lightY * Thread->Viewport->viewpoint.TanSin) - drawerargs.dc_viewpos.Y;

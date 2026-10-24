@@ -77,6 +77,9 @@
 #include "vm.h"
 #include "memarena.h"
 
+#include "gl/dynlights/gl_dynlightcache.h"
+#include "g_shared/a_spriteocclusion3d.h"
+
 static FMemArena DynLightArena(sizeof(FDynamicLight) * 200);
 static TArray<FDynamicLight*> FreeList;
 static FRandom randLight;
@@ -398,16 +401,23 @@ void FDynamicLight::Tick()
 //==========================================================================
 void FDynamicLight::UpdateLocation()
 {
-	double oldx= X();
-	double oldy= Y();
+	double oldx = X();
+	double oldy = Y();
 	float oldradius = radius;
 
 	if (IsActive())
 	{
+		// If the light descriptor was forcefully released or context-purged 
+		// by an aggressive rendering culler, drop this update pass.
+		if (this->target == nullptr)
+		{
+			return; // Safe exit preventing crashes
+		}
+
 		AActor *target = this->target;	// perform the read barrier only once.
 
 		// Offset is calculated in relation to the owning actor.
-		DAngle angle = target->Angles.Yaw;
+		DAngle angle = target->Angles.Yaw; // Now 100% safe!
 		double s = angle.Sin();
 		double c = angle.Cos();
 

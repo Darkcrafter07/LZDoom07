@@ -2786,7 +2786,7 @@ GLTEXMNU_SORTDRAWLIST 	= "Sort draw lists by texture";
 GLLIGHTMNU_TITLE 	= "DYNAMIC LIGHTS";
 GLLIGHTMNU_LIGHTSENABLED 	= "Dynamic Lights (OpenGL)";
 GLLIGHTMNU_LIGHT3DMODELCACHE 	= "Cache 3D mdl light (FAST)";
-//GLLIGHTMNU_LEGACYDYNLIGHTBAKEHUGE = "Bake huge GL1 lights";
+GLLIGHTMNU_LEGACYDYNLIGHTBAKEHUGE = "Bake huge GL1 lights (FAST)";
 GLLIGHTMNU_LIGHTDEFS 	= "Enable light definitions";
 GLLIGHTMNU_CLIPLIGHTS 	= "Clip lights";
 GLLIGHTMNU_LIGHTSPRITES 	= "Lights affect sprites";
@@ -2938,6 +2938,7 @@ TCMNU_MINFILTER				= "Linear filter when downscaling";
 TCMNU_MAGFILTER				= "Linear filter when upscaling";
 TCMNU_MIPMAP				= "Use mipmapped textures";
 TCMNU_DYNLIGHTS				= "Dynamic lights (Software)";
+TCMNU_DYNLIGHTSOCCLUDE			= "Occlude Dynlights (FAST)";
 
 // LZDoom07 sector light mode naming conflict removal for fog
 OPTVAL_FOG_OFF 				= "Off";

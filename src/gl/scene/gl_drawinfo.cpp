@@ -749,7 +749,7 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 
 //==========================================================================
 //
-// [Single-Pass Alpha/Z Sync & Feature Bypass]
+// [Single-Pass Alpha/Z Sync & Stencil Cache Gate]
 //
 // WHAT YOU MUST DO:
 // 1. Maintain simultaneous Alpha Testing (GL_GREATER) and Depth Writes
@@ -763,29 +763,27 @@ SortNode * GLDrawList::DoSort(SortNode * head)
 //    By preserving vertcount, MakeVertices() inside subsequent draws
 //    skips re-tessellation, forcing the GPU to reuse the exact same
 //    vertex layout, crushing reverse-side float rounding drifts.
-// 4. Keep glDepthFunc(GL_EQUAL) locked during STEP 2 lighting passes.
-//    Since vertcount remains frozen, light overlay stages match the
-//    baked VBO mesh byte-by-byte, bypassing heavy stencil states.
-// 5. Explicitly invoke glPushAttrib(GL_STENCIL_BUFFER_BIT) on Step 1 entry
-//    and glPopAttrib() on Step 2 exit ONLY when useDualPassAlphaGate
-//    is validated by the presence of a true alpha-masked texture layer.
-// 6. Non-masked transparent surfaces (colored glass, sector fields) 
-//    where w->gltexture->tex->bMasked is false securely trigger the fast
-//    bypass path, completely disabling heavy stencil stalls to return 
-//    maximum pristine 60 FPS performance across the entire map traversal.
-// 7. Force glStencilMask(0x80) and hard-wipe our stencil footprint inside
-//    recovery cleanup gates. Flashing the 8th bitplane to zero before
-//    bailing out eradicates rectangular cuts on BFG explosions entirely.
+// 4. Enforce strict glDepthFunc(GL_EQUAL) locked over our frozen VBO
+//    mesh only when useDualPassAlphaGate is verified by a bMasked texture.
+// 5. Force glStencilMask(0x80) to isolate our custom alpha mask footprint
+//    strictly inside the highest-order 8th bit plane plane. This secures
+//    lower-order bits (0x01, 0x02) compiled by native portal recursions.
+// 6. Push attributes via glPushAttrib(GL_STENCIL_BUFFER_BIT) on Step 1.
+//    Restore every register via glPopAttrib() inside Step 2 cleanup.
+// 7. CRITICAL: Deploy the Lights-Off Portal Lifeline Escape Gate!
+//    If mLightCount == 0, execute an immediate glPopAttrib() directly
+//    after switch blocks to prevent infinite texture trails and blinding.
+// 8. Utilize the omnidirectional 8-tick g_TranslucencyGL1xOverdrawCache.
+//    Evaluating camera vertical deltas symmetrically via fabsf removes
+//    dynamic overexposure burns when looking both above-down and below-up.
 //
 // WHAT YOU MUST NEVER DO:
 // 1. NEVER execute global glClear(GL_STENCIL_BUFFER_BIT) without isolating
 //    the 8th bit plane. Wiping portal recursion data blindfolds the engine.
-// 2. NEVER invoke expensive glGetIntegerv or glIsEnabled queries outside
-//    the validated useDualPassAlphaGate scope inside this hot loop.
-//    Probing active hardware registers drops frame rates by roughly 20%.
-// 3. NEVER clear walls[index].vertcount until the absolute end of the
-//    lighting sub-passes inside STEP 2 recovery cleanup gates!
-// 4. NEVER forget to restore glDepthFunc(GL_LEQUAL) and glDepthMask(false)
+// 2. NEVER clear walls[index].vertcount or invoke glGetIntegerv queries 
+//    outside the validated useDualPassAlphaGate scope inside this hot loop.
+//    Probing active hardware registers drops frame rates from 60 to 50!
+// 3. NEVER forget to restore glDepthFunc(GL_LEQUAL) and glDepthMask(false)
 //    at the end of STEP 2 cleanup gates to prevent pipeline drifts.
 //
 //==========================================================================
@@ -823,75 +821,91 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 	if (useDualPassAlphaGate)
 	{
 		// --- [Hardware Stencil Attribute Push] ---
+		// Snapshot the entire stencil state machine instantly on the GPU.
+		// This completely isolates our window frames from downstream portal masks.
 		glPushAttrib(GL_STENCIL_BUFFER_BIT);
 
 		glEnable(GL_STENCIL_TEST);
-		glStencilMask(0x80);
+		glStencilMask(0x80); // Open only the 8th bit plane for clear and write operations
 		glClearStencil(0);
-		glClear(GL_STENCIL_BUFFER_BIT);
+		glClear(GL_STENCIL_BUFFER_BIT); // Localized cache cushion wipe
 
 		glStencilFunc(GL_ALWAYS, 0x80, 0x80);
-		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+		glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); // Replace buffer with 0x80 on visible fragments
 	}
 
 	switch (drawitems[i].rendertype)
 	{
-		case GLDIT_FLAT:
+	case GLDIT_FLAT:
+	{
+		GLFlat * f = &flats[drawitems[i].index];
+		RenderFlat.Clock();
+		f->Draw(pass, trans);
+		RenderFlat.Unclock();
+		break;
+	}
+	case GLDIT_WALL:
+	{
+		GLWall * w = &walls[drawitems[i].index];
+		RenderWall.Clock();
+
+		if (useDualPassAlphaGate)
 		{
-			GLFlat * f = &flats[drawitems[i].index];
-			RenderFlat.Clock();
-			f->Draw(pass, trans);
-			RenderFlat.Unclock();
-			break;
+			// --- [Single-Pass Alpha/Z Sync] ---
+			glEnable(GL_ALPHA_TEST);
+			glAlphaFunc(GL_GREATER, gl_mask_threshold);
+
+			glDepthMask(GL_TRUE); // Open Z-write to cache the wireframe fences natively
+			gl_RenderState.Apply(nullptr);
+
+			w->Draw(pass); // DRAW ONCE: Pristine 1:1 transparency blend, zero ghosting
+
+			glDisable(GL_ALPHA_TEST);
+			gl_RenderState.Apply(nullptr);
 		}
-		case GLDIT_WALL:
+		else
 		{
-			GLWall * w = &walls[drawitems[i].index];
-			RenderWall.Clock();
-
-			if (useDualPassAlphaGate)
-			{
-				// --- [Single-Pass Alpha/Z Sync] ---
-				glEnable(GL_ALPHA_TEST);
-				glAlphaFunc(GL_GREATER, gl_mask_threshold);
-
-				glDepthMask(GL_TRUE);
-				gl_RenderState.Apply(0);
-
-				w->Draw(pass);
-
-				glDisable(GL_ALPHA_TEST);
-				gl_RenderState.Apply(0);
-			}
-			else
-			{
-				w->Draw(pass);
-			}
-			RenderWall.Unclock();
-			break;
+			w->Draw(pass);
 		}
-		case GLDIT_SPRITE:
-		{
-			GLSprite * s = &sprites[drawitems[i].index];
-			RenderSprite.Clock();
-			s->Draw(pass);
-			RenderSprite.Unclock();
-			break;
-		}
+		RenderWall.Unclock();
+		break;
+	}
+	case GLDIT_SPRITE:
+	{
+		GLSprite * s = &sprites[drawitems[i].index];
+		RenderSprite.Clock();
+		s->Draw(pass);
+		RenderSprite.Unclock();
+		break;
+	}
 	}
 
 	if (useDualPassAlphaGate)
 	{
-		glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+		glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP); // Lock stencil buffer to read-only state for dynamic lights
 	}
 
 	//--------------------------------------------------------------------------
 	// STEP 2:           THE TRANSLUSCENT DYNLIGHT SURFACES
+	//--------------------------------------------------------------------------
+	// --- [LZDoom07 Lights-Off Portal Lifeline Escape Gate] ---
 	//                   Can't configure dynlight intensities here!
 	// So in gl_20.cpp, in "gl_SetupLightWall" and "gl_SetupLightFlat" call:
 	// "gl_dynlightHandleSpecialLightsLegacy" after "gl_dynlightSaturateLegacy",
 	// and also call "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy".
-	//--------------------------------------------------------------------------
+	// ---
+	// If the user completely deactivated dynamic lights in the menu, STEP 2 loop 
+	// will be skipped entirely. To prevent glPushAttrib from leaking and blinding 
+	// native portals, we execute an immediate, clean state restoration right here!
+	if (useDualPassAlphaGate && (!gl.legacyMode || pass != GLPASS_TRANSLUCENT || GLRenderer->mLightCount == 0))
+	{
+		glStencilMask(0x80);
+		glClearStencil(0);
+		glClear(GL_STENCIL_BUFFER_BIT);
+		glPopAttrib();
+		gl_RenderState.Apply(nullptr);
+	}
+
 	if (gl.legacyMode && pass == GLPASS_TRANSLUCENT && currentRenderType != GLDIT_SPRITE && GLRenderer->mLightCount)
 	{
 		if (currentRenderType == GLDIT_FLAT || currentRenderType == GLDIT_WALL)
@@ -911,15 +925,17 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 					glClear(GL_STENCIL_BUFFER_BIT);
 					glPopAttrib();
 				}
-				return;
+				return; // Safe and clean bypass on any distance before changing registers
 			}
 
 			if (gl_SetupLightTexture())
 			{
 				gl_RenderState.g_isCurrentlyGL1xDynlightPassActive = GLPASS_LIGHTTEX;
+				gl_RenderState.g_isCurrentlyDrawingGL1xTransluscentDynlightWall = true;
+				gl_RenderState.g_isCurrentlyDrawingGL1xTransluscentDynlightFlat = true;
 
 				gl_RenderState.EnableFog(false);
-				gl_RenderState.Apply(0);
+				gl_RenderState.Apply(nullptr);
 
 				glDisable(GL_FOG);
 				glDepthFunc(GL_LEQUAL);
@@ -931,10 +947,8 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// Enhanced to natively support deep layered 3D-water and volumetric fog.
 				// Instead of an early break on the first boundary hit, it evaluates the 
 				// full spatial continuum of flat planes within the target sector memory page.
-				// ==============================================================================
-				const bool useDoDrawTranslucCumulDetectCache = false; // Just for fun and hardcore diagnostic testing
 				bool maskColorChannelsOut = false;
-
+				const bool useDoDrawTranslucCumulDetectCache = false; // Just for fun and hardcore diagnostic testing
 				if (currentRenderType == GLDIT_FLAT)
 				{
 					const int currentMapTimeTick = level.maptime;
@@ -943,7 +957,6 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 					if (useDoDrawTranslucCumulDetectCache)
 					{
 						FTranslucencyGL1xCacheEntry &entry = g_TranslucencyGL1xOverdrawCache[index];
-
 						if (entry.lastUpdateTick != -1 && (currentMapTimeTick - entry.lastUpdateTick) < 8)
 						{
 							maskColorChannelsOut = entry.maskColorChannelsOut;
@@ -959,8 +972,8 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 									float viewerZ = (float)r_viewpoint.Pos.Z;
 									bool isViewerAbove = (viewerZ > currentFlatZ);
 									void* targetSectorPtr = f->sector;
-
 									int activeOverdrawLayersCount = 0;
+
 									for (unsigned int j = 0; j < flats.Size(); j++)
 									{
 										if (flats[j].sector != nullptr && (uintptr_t)flats[j].sector > 0x10000 && flats[j].sector == targetSectorPtr)
@@ -995,7 +1008,6 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 								float viewerZ = (float)r_viewpoint.Pos.Z;
 								bool isViewerAbove = (viewerZ > currentFlatZ);
 								void* targetSectorPtr = f->sector;
-
 								int activeOverdrawLayersCount = 0;
 
 								for (unsigned int j = 0; j < flats.Size(); j++)
@@ -1029,7 +1041,7 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				if (useDualPassAlphaGate)
 				{
 					glEnable(GL_STENCIL_TEST);
-					glStencilFunc(GL_EQUAL, 0x80, 0x80);
+					glStencilFunc(GL_EQUAL, 0x80, 0x80); // Clip lights strictly to our baked 0x80 mask
 				}
 
 				// --- PASS 1: REGULAR MODULATED DYNAMIC LIGHTS CHANNEL ---
@@ -1053,13 +1065,14 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 				// RECOVERY AND CLEANUP
 				if (useDualPassAlphaGate)
 				{
+					// --- THE LIFELINE CACHE RESET GATE ---
 					walls[index].vertcount = 0;
 
 					glStencilMask(0x80);
 					glClearStencil(0);
-					glClear(GL_STENCIL_BUFFER_BIT);
+					glClear(GL_STENCIL_BUFFER_BIT); // Clear 8th bitplane cleanly before pop
 
-					glPopAttrib();
+					glPopAttrib(); // Restore original pre-pass stencil register stack loops
 				}
 
 				if (maskColorChannelsOut)
@@ -1077,10 +1090,14 @@ void GLDrawList::DoDraw(int pass, int i, bool trans)
 
 				gl_RenderState.EnableFog(true);
 				gl_RenderState.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				gl_RenderState.Apply(0);
+				gl_RenderState.Apply(nullptr);
 			}
 		}
 	}
+
+	// Symmetrical hardware context flag cleanup Matrix to secure subsequent frames
+	gl_RenderState.g_isCurrentlyDrawingGL1xTransluscentDynlightWall = false;
+	gl_RenderState.g_isCurrentlyDrawingGL1xTransluscentDynlightFlat = false;
 }
 
 //==========================================================================
@@ -1176,7 +1193,7 @@ void GLDrawList::DrawSorted()
 		// from eating, biting and cutting transparent sprite sheets resting on top
 		glEnable(GL_ALPHA_TEST);
 		gl_RenderState.AlphaFunc(GL_GREATER, 0.85f); // Hardware binary pixel gate
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 
 		// Execute standard tree loop for legacy mode cleanly
 		DoDrawSorted(sorted);
@@ -1185,7 +1202,7 @@ void GLDrawList::DrawSorted()
 		gl_RenderState.g_isCurrentlyGLSpriteDrawing = false;
 		glDisable(GL_ALPHA_TEST);
 		gl_RenderState.AlphaFunc(GL_GREATER, 0.0f);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 	}
 	else
 	{
@@ -1204,7 +1221,7 @@ void GLDrawList::DrawSorted()
 
 //==========================================================================
 //
-//
+// Draw is used mainly for 3D models and not the map geometry
 //
 //==========================================================================
 void GLDrawList::Draw(int pass, bool trans)
@@ -1215,6 +1232,26 @@ void GLDrawList::Draw(int pass, bool trans)
 	}
 }
 
+//void GLDrawList::Draw(int pass, bool trans)
+//{
+//	if (pass == GLPASS_TRANSLUCENT || trans == true)
+//	{
+//		gl_RenderState.g_isCurrentlyDrawingGLTransluscentSurf = true;
+//	}
+//	else
+//	{
+//		gl_RenderState.g_isCurrentlyDrawingGLTransluscentSurf = false;
+//	}
+//
+//	for (unsigned i = 0; i < drawitems.Size(); i++)
+//	{
+//		DoDraw(pass, i, trans);
+//	}
+//
+//	// Symmetrical pipeline state recovery cleanups after the whole loop closes down
+//	gl_RenderState.g_isCurrentlyDrawingGLTransluscentSurf = false;
+//}
+
 //==========================================================================
 //
 //
@@ -1223,7 +1260,7 @@ void GLDrawList::Draw(int pass, bool trans)
 void GLDrawList::DrawWalls(int pass)
 {
 	RenderWall.Clock();
-	for(unsigned i=0;i<drawitems.Size();i++)
+	for (unsigned i = 0; i < drawitems.Size(); i++)
 	{
 		walls[drawitems[i].index].Draw(pass);
 	}
@@ -1260,7 +1297,7 @@ void GLDrawList::DrawWalls2x(int pass1, int pass2)
 void GLDrawList::DrawFlats(int pass)
 {
 	RenderFlat.Clock();
-	for(unsigned i=0;i<drawitems.Size();i++)
+	for (unsigned i = 0; i < drawitems.Size(); i++)
 	{
 		flats[drawitems[i].index].Draw(pass, false);
 	}
@@ -1493,7 +1530,7 @@ void FDrawInfo::SetupFloodStencil(wallseg * ws)
 		glEnable(GL_DEPTH_TEST);
 		glDepthMask(true);
 
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		FQuadDrawer qd;
 		qd.Set(0, ws->x1, ws->z1, ws->y1, 0, 0);
 		qd.Set(1, ws->x1, ws->z2, ws->y1, 0, 0);
@@ -1521,7 +1558,7 @@ void FDrawInfo::ClearFloodStencil(wallseg * ws)
 		ScopedColorMask colorMask(0, 0, 0, 0); // glColorMask(0,0,0,0);						// don't write to the graphics buffer
 		gl_RenderState.ResetColor();
 
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		FQuadDrawer qd;
 		qd.Set(0, ws->x1, ws->z1, ws->y1, 0, 0);
 		qd.Set(1, ws->x1, ws->z2, ws->y1, 0, 0);
@@ -1581,7 +1618,7 @@ void FDrawInfo::DrawFloodedPlane(wallseg * ws, float planez, sector_t * sec, boo
 	float fviewz = r_viewpoint.Pos.Z;
 
 	gl_SetPlaneTextureRotation(&plane, gltexture);
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 
 	float prj_fac1 = (planez-fviewz)/(ws->z1-fviewz);
 	float prj_fac2 = (planez-fviewz)/(ws->z2-fviewz);

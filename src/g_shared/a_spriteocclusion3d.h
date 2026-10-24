@@ -18,7 +18,7 @@
 // along with this program.  If not, see http://www.gnu.org/licenses/
 //
 //--------------------------------------------------------------------------
-//    ---=== Sprite/Particle 3D occlusion system by Darkcrafter07 ===---
+// ---== Sprite/Particle/Dynlight 3D occlusion system by Darkcrafter07 ==---
 // ... made specifically for Hybrid Forced-Perspective sprite clipping.
 // The code is made for LZDoom07 (fork of LZDoom v3.88b which is GZDoom v3)
 // but contains commented out lines for easy porting to modern code base
@@ -82,8 +82,8 @@
 //bool visible1sidesInfTallObstr = IsSpriteVisibleBehind1sidedLinesCachedWrapper(thing, r_viewpoint.camera, thingpos);
 //bool visible2sideTallEnoughObstr = IsSpriteVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, thing);
 //bool visible2sideMidTex = CheckFacingMidTextureProximityWrapper(thing, r_viewpoint.camera, thingpos);
-//bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, thing);
 //bool a3DfloorPlaneObstructed = IsSpriteBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, thingpos, thing->Sector, thing);
+//bool visible3dfloorSides = IsSpriteVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, thing);
 
 
 
@@ -115,3 +115,19 @@ bool IsSpriteVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thin
 bool IsSpriteBehind3DFloorPlaneCachedWrapper(DVector3& cameraPos, DVector3& spritePos, sector_t* sector, AActor* thing);
 
 void ResetAnamorphCache();
+
+// ========================= DYNAMIC LIGHTS OCCLUSION ---=== START ===--- ============================================================
+EXTERN_CVAR(Bool, r_dynlights_occlude);
+bool IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(AActor *viewer, AActor *thing, 
+														float dynlightRadius, bool isDynlight);
+
+bool IsDynlightBehind3DFloorPlaneCachedWrapper(DVector3 &cameraPos, DVector3 &spritePos, sector_t *sector, 
+													AActor *thing, float dynlightRadius, bool isDynlight);
+
+bool IsDynlightVisibleBehind3DFloorSidesCachedWrapper(AActor* viewer, AActor* thing, 
+											float dynlightRadius, bool isDynlight);
+
+void ResetDynlightOcclusionCache();
+// ======================== DYNAMIC LIGHTS OCCLUSION ---=== FINISH ===--- ============================================================
+
+

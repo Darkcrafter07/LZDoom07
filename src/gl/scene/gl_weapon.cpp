@@ -223,7 +223,7 @@ void GLSceneDrawer::DrawPSprite(player_t * player, DPSprite *psp, float sx, floa
 	{
 		gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	}
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	FQuadDrawer qd;
 	qd.Set(0, Vert.v[0].X, Vert.v[0].Y, 0, fU1, fV1);
 	qd.Set(1, Vert.v[1].X, Vert.v[1].Y, 0, fU1, fV2);

@@ -305,7 +305,7 @@ void FGLModelRenderer::SetMaterial(FTexture *skin, bool clampNoFilter, int trans
 	// texture setup to prevent it from blending over our brightmap layer.
 	if (gl.legacyMode && gl_RenderState.GetTextureMode() == TM_BRIGHTMAP_LEGACY)
 	{
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		return;
 	}
 
@@ -314,7 +314,7 @@ void FGLModelRenderer::SetMaterial(FTexture *skin, bool clampNoFilter, int trans
 	if (tex != nullptr)
 	{
 		gl_RenderState.SetMaterial(tex, clampNoFilter ? CLAMP_NOFILTER : CLAMP_NONE, translation, -1, false);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 
 		if (modellightindex != -1) gl_RenderState.ApplyLightIndex(modellightindex);
 	}

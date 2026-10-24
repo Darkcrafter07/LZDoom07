@@ -37,6 +37,8 @@
 #include "g_levellocals.h"
 #include "a_dynlight.h"
 
+#include "g_shared/a_spriteocclusion3d.h"
+
 EXTERN_CVAR(Bool, r_drawmirrors)
 EXTERN_CVAR(Bool, r_fogboundary)
 
@@ -418,6 +420,54 @@ void RenderPolyWall::SetDynLights(PolyRenderThread *thread, PolyDrawArgs &args)
 	{
 		args.SetLights(nullptr, 0); // [SP] Don't draw dynlights if invul/lightamp active
 		return;
+	}
+
+	// -----------------------------------------------------------------
+	// POLYRENDERER VISUAL OCCLUSION SHIELD GATE
+	// -----------------------------------------------------------------
+	// Intercept the linked light nodes chain directly using the global view state
+	// before letting the CPU calculate max lights counters and allocate frame memory.
+	FLightNode *check_node = light_list;
+	while (check_node && r_dynlights_occlude)
+	{
+		FDynamicLight *light = check_node->lightsource;
+		float radius = light->GetRadius();
+		bool isBigRadiusDynlight = radius > 468.0f;
+
+		if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight && r_dynlights_occlude) // works bad with big radius dynlights
+		{
+			bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+			if (!isCamglowDynlightHere)
+			{
+				// Standard hardware-alike sector and absolute group position mapping
+				sector_t* checkSector = light->Sector ? light->Sector : light->target->Sector;
+				int currentGroup = checkSector ? checkSector->PortalGroup : 0;
+				DVector3 lightPosAbs = light->PosAbsolute(currentGroup);
+
+				float adjustedRadius = radius * 0.85f; // Shrink radius a tad bit to cull them less
+
+				bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, light->target, adjustedRadius, true);
+				bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, lightPosAbs, checkSector, light->target, adjustedRadius, true);
+				bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, light->target, adjustedRadius, true);
+
+				if (!isDynlightVisibleBehind2Sobstr || !isDynlightVisibleBehind3DFloorSides || isDynlightObstructedBy3DFloorFlats)
+				{
+					if (light->IsActive())
+					{
+						light->Deactivate(); // Hibernate light immediately to bypass poly drawing passes
+					}
+				}
+				else
+				{
+					if (!light->IsActive())
+					{
+						light->Activate(); // Restore the light back into the active pipeline cleanly
+					}
+				}
+			}
+		}
+		check_node = check_node->nextLight;
 	}
 
 	// Calculate max lights that can touch the wall so we can allocate memory for the list

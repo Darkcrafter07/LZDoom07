@@ -46,6 +46,8 @@
 #include "swrenderer/viewport/r_viewport.h"
 #include "swrenderer/scene/r_light.h"
 
+#include "g_shared/a_spriteocclusion3d.h"
+
 // [SP] r_blendmethod - false = rgb555 matching (ZDoom classic), true = rgb666 (refactored)
 CVAR(Bool, r_blendmethod, false, CVAR_GLOBALCONFIG | CVAR_ARCHIVE)
 EXTERN_CVAR(Int, gl_particles_style)
@@ -2812,7 +2814,7 @@ namespace swrenderer
 		const uint8_t **tiltlighting = thread->tiltlighting;
 
 		int width = x2 - x1;
-		double iz, uz, vz;
+		float iz, uz, vz;
 		uint8_t *fb;
 		uint32_t u, v;
 		int i;
@@ -2849,7 +2851,7 @@ namespace swrenderer
 		i = 0;
 		do
 		{
-			double z = 1.f / iz;
+			float z = 1.f / iz;
 
 			u = int64_t(uz*z) + pviewx;
 			v = int64_t(vz*z) + pviewy;
@@ -2867,10 +2869,10 @@ namespace swrenderer
 		#define SPANSIZE 16
 		#define INVSPAN	0.0625f
 
-		double startz = 1.f / iz;
-		double startu = uz*startz;
-		double startv = vz*startz;
-		double izstep, uzstep, vzstep;
+		float startz = 1.f / iz;
+		float startu = uz*startz;
+		float startv = vz*startz;
+		float izstep, uzstep, vzstep;
 
 		izstep = plane_sz[0] * SPANSIZE;
 		uzstep = plane_su[0] * SPANSIZE;
@@ -2884,9 +2886,9 @@ namespace swrenderer
 			uz += uzstep;
 			vz += vzstep;
 
-			double endz = 1.f / iz;
-			double endu = uz*endz;
-			double endv = vz*endz;
+			float endz = 1.f / iz;
+			float endu = uz*endz;
+			float endv = vz*endz;
 			uint32_t stepu = (uint32_t)int64_t((endu - startu) * INVSPAN);
 			uint32_t stepv = (uint32_t)int64_t((endv - startv) * INVSPAN);
 			u = (uint32_t)(int64_t(startu) + pviewx);
@@ -2913,14 +2915,14 @@ namespace swrenderer
 			}
 			else
 			{
-				double left = width;
+				float left = width;
 				iz += plane_sz[0] * left;
 				uz += plane_su[0] * left;
 				vz += plane_sv[0] * left;
 
-				double endz = 1.f / iz;
-				double endu = uz*endz;
-				double endv = vz*endz;
+				float endz = 1.f / iz;
+				float endu = uz*endz;
+				float endv = vz*endz;
 				left = 1.f / left;
 				uint32_t stepu = (uint32_t)int64_t((endu - startu) * left);
 				uint32_t stepv = (uint32_t)int64_t((endv - startv) * left);
@@ -2957,8 +2959,8 @@ namespace swrenderer
 		}
 		else
 		{
-			double lstep = (lend - lstart) / width;
-			double lval = lstart;
+			float lstep = (lend - lstart) / width;
+			float lval = lstart;
 			for (int i = 0; i <= width; i++)
 			{
 				tiltlighting[i] = basecolormapdata + (GETPALOOKUP(lval, planeshade) << COLORMAPSHIFT);

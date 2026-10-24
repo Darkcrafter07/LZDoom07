@@ -54,6 +54,27 @@
 #include "gl/shaders/gl_shader.h"
 
 
+struct FLightColorContext
+{
+	float r, g, b;
+	float maxColor;
+	float minColor;
+	float chroma;
+	float localChroma;
+	float invMul255 = 0.003921568627451f; // 1/255
+
+	FLightColorContext(FDynamicLight* light)
+	{
+		r = light->GetRed()   * 0.003921568627451f; // invMul255
+		g = light->GetGreen() * 0.003921568627451f; // invMul255
+		b = light->GetBlue()  * 0.003921568627451f; // invMul255
+
+		maxColor = r; if (g > maxColor) maxColor = g; if (b > maxColor) maxColor = b;
+		minColor = r; if (g < minColor) minColor = g; if (b < minColor) minColor = b;
+		chroma = maxColor - minColor;
+		localChroma = chroma; // Default baseline initial sync
+	}
+};
 
 // Menu patching for legacy mode capabilities
 void gl_PatchMenu();
@@ -68,15 +89,22 @@ bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & n
 bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive);
 
 // Bakes big radius static dynlights into gl_walls_draw.cpp, case "GLPASS_LIGHTEFFECTS_LEGACY" to save on CPU
-bool gl_GetWallStaticLightmaps(seg_t *seg, float ztop, float zbottom, float *topLightmapColor, float *bottomLightmapColor);
+//bool gl_GetWallStaticLightmaps(seg_t *seg, float *ztop, float *zbottom, float x1, float y1, 
+//					float x2, float y2, float overallGlowIntensity, float outColors[4][3]);
+
 // Bakes big radius static dynlights into gl_flats.cpp, case "GLPASS_LIGHTEFFECTS_LEGACY" to save on CPU
-bool gl_GetFlatStaticLightmaps(subsector_t *sub, const GLSectorPlane &secPlane, float *lightmapColor);
+bool gl_FillSubsectorGouraud(subsector_t *sub, const secplane_t &plane, int group, FFlatVertexGouraud *out, bool ceiling, float scale);
+void gl_FillSubsectorUV(subsector_t *sub, const secplane_t &plane, FMaterial *gltexture, FFlatVertexGouraud *out);
+void gl_DrawGouraudFan(const FFlatVertexGouraud *verts, int count);
+// Worse and unused flat colored dynlight baking for historical record
+bool gl_GetFlatStaticLightmaps(subsector_t *sub, const GLSectorPlane &secPlane, bool ceiling, float *lightmapColor);
 
 // Binds the native dynamic light spotlight filter mask texture (glLight) to the render state
 bool gl_SetupLightTexture();
 
 // Main rendering loops for legacy multipass fallback path
 void gl_FillScreen();
+
 
 #endif // __GL_20_H__
 
@@ -264,7 +292,7 @@ void gl_FillScreen();
 // 3. Solution: Deploy standalone Thread-Local Context State Links 
 //    (g_isCurrentlyGL1xDynlightFlatDrawing / g_isCurrentlyGL1xDynlightWallDrawing) inside 
 //    gl_20.cpp, securely bridged with a logic gate invert negation operator 
-//    (!isTrueTranslucentFlat) right before calling Setup light systems!
+//    (!isTrulyTranslucentGL1xFlat) right before calling Setup light systems!
 // 4. Symmetrical Sanitizer & Taming: The setup engine calls your custom 
 //    standalone "gl_dynlightTameBigLightsOnMirroredSurfacesLegacy" filter 
 //    (using correct 0.22f intensity thresholds for monochrome lamps).

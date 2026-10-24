@@ -73,6 +73,8 @@ enum EPassType
 
 class FRenderState
 {
+
+public:
 	bool mTextureEnabled;
 	bool mFogEnabled;
 	bool mGlowEnabled;
@@ -132,7 +134,6 @@ class FRenderState
 
 	bool ApplyShader();
 
-public:
 	EPassType mPassType = NORMAL_PASS;
 
 	VSMatrix mProjectionMatrix;
@@ -145,8 +146,13 @@ public:
 	{
 		Reset();
 
-		g_isCurrentlyGLSpriteDrawing = false; // [Darkcrafter07] - if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
-		g_isCurrentlyGL1xDynlightPassActive = false; // [Darkcrafter07] - GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
+		// === [Darkcrafter07] ===
+		g_isCurrentlyGLSpriteDrawing = false; // if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
+		g_isCurrentlyGL1xDynlightPassActive = false; // GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
+		g_isCurrentlyDrawingGL1xTransluscentDynlightWall = false; // track whether a transluscent GL1x/GL2x dynlight lit wall is drawing now
+		g_isCurrentlyDrawingGL1xTransluscentDynlightFlat = false; // track whether a transluscent GL1x/GL2x dynlight lit flat is drawing now
+		g_isHUDWeapDynlightPass = false; // if it's a HUD onscreen weapon lit by camglow dynlight (currently used for GL1/GL2x only)
+		// =======================
 	}
 
 	void Reset();
@@ -166,7 +172,7 @@ public:
 			
 			// Force-disable active texturing to safely unbind broken pipeline slots
 			EnableTexture(false);
-			Apply(0);
+			Apply(nullptr);
 			return; // Registry clean, safe to exit now!
 		}
 
@@ -460,8 +466,13 @@ public:
 		if (d >= 0.0f) mLightParms[2] = d * (-LOG2E / 64000.f);
 	}
 
-	bool g_isCurrentlyGLSpriteDrawing; // [Darkcrafter07] - if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
-	bool g_isCurrentlyGL1xDynlightPassActive; // [Darkcrafter07] GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
+	// === [Darkcrafter07] ===
+	bool g_isCurrentlyGLSpriteDrawing; // if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
+	bool g_isCurrentlyGL1xDynlightPassActive; // GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
+	bool g_isCurrentlyDrawingGL1xTransluscentDynlightWall; // track whether a transluscent GL1x/GL2x dynlight lit wall is drawing now
+	bool g_isCurrentlyDrawingGL1xTransluscentDynlightFlat; // track whether a transluscent GL1x/GL2x dynlight lit flat is drawing now
+	bool g_isHUDWeapDynlightPass; // if it's a HUD onscreen weapon lit by camglow dynlight (currently used for GL1/GL2x only)
+	// =======================
 
 	void SetLightParms(float f, float d)
 	{

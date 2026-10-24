@@ -234,6 +234,6 @@ FGLPostProcessState::~FGLPostProcessState()
 		// Reset states to default modulate settings to keep menus alive
 		gl_RenderState.SetTextureMode(TM_MODULATE);
 		gl_RenderState.SetObjectColor(0xffffffff);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 	}
 }

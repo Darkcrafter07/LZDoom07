@@ -328,7 +328,7 @@ void GLWall::DrawDecal(DBaseDecal *decal)
 
 	if (lightlist == NULL)
 	{
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		qd.Render(GL_TRIANGLE_FAN);
 	}
 	else
@@ -351,7 +351,7 @@ void GLWall::DrawDecal(DBaseDecal *decal)
 				mDrawer->SetFog(thisll, rel, &thiscm, RenderStyle == STYLE_Add);
 				gl_RenderState.SetSplitPlanes((*lightlist)[k].plane, lowplane);
 
-				gl_RenderState.Apply(0);
+				gl_RenderState.Apply(nullptr);
 				qd.Render(GL_TRIANGLE_FAN);
 			}
 			if (low1 <= dv[0].z && low2 <= dv[3].z) break;

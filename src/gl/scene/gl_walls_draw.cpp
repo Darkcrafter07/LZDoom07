@@ -49,13 +49,12 @@
 #include "gl/renderer/gl_quaddrawer.h"
 
 #include "gl/compatibility/gl_20.h"
+#include "g_shared/a_spriteocclusion3d.h"
 
 EXTERN_CVAR(Bool, gl_seamless)
 
 GLWall* g_isCurrentlyGLWallDrawing = nullptr;         // for all GL modes
 extern GLWall* g_isCurrentlyGL1xDynlightWallDrawing;  // declared in gl_20.cpp
-
-const bool gl_legacy_dynlight_baked_huge = false;
 
 //==========================================================================
 //
@@ -64,7 +63,7 @@ const bool gl_legacy_dynlight_baked_huge = false;
 //==========================================================================
 FDynLightData lightdata;
 
-
+// GL3+ analog of "RenderLightsCompat" from gl_20.cpp
 void GLWall::SetupLights()
 {
 	if (gl.legacyMode) return;
@@ -108,9 +107,39 @@ void GLWall::SetupLights()
 	}
 	else node = NULL;
 
-	// Iterate through all dynamic lights which touch this wall and render them
+	// Iterate through all dynamic lights which touch this wall and render them.
+	int group = seg->frontsector ? seg->frontsector->PortalGroup : 0;
 	while (node)
 	{
+		FDynamicLight * light = node->lightsource;
+		float radius = light->GetRadius();
+		bool isBigRadiusDynlight = radius > 468.0f;
+
+		if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight && r_dynlights_occlude) // works bad with big radius dynlights
+		{
+			bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+			if (!isCamglowDynlightHere)
+			{
+				float radius = light->GetRadius();
+				DVector3 lightPosAbs = light->PosAbsolute(group);
+				float adjustedRadius = radius * 0.85f;
+
+				bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, light->target, adjustedRadius, true);
+				bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, lightPosAbs, light->Sector, light->target, adjustedRadius, true);
+				bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, light->target, adjustedRadius, true);
+
+				if (!isDynlightVisibleBehind2Sobstr || !isDynlightVisibleBehind3DFloorSides || isDynlightObstructedBy3DFloorFlats)
+				{
+					// PURE CPU LOOP SKIP: Do NOT call Deactivate() here.
+					// This keeps the shader buffers active, allowing weapon flashes and 
+					// zombie gunfire to decay and fade out naturally without freezing on corpses.
+					node = node->nextLight;
+					continue;
+				}
+			}
+		}
+
 		if (node->lightsource->IsActive())
 		{
 			iter_dlight++;
@@ -206,7 +235,7 @@ void GLWall::MakeVertices(bool nosplit)
 
 void GLWall::RenderWall(int textured)
 {
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	gl_RenderState.ApplyLightIndex(dynlightindex);
 	if (gl.buffermethod != BM_DEFERRED)
 	{
@@ -569,7 +598,7 @@ void GLWall::Draw(int pass)
 				// Enforce discrete multiplicative blending for hardware Gouraud shading engine
 				gl_RenderState.BlendFunc(GL_DST_COLOR, GL_ZERO);
 				gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-				gl_RenderState.Apply(0);
+				gl_RenderState.Apply(nullptr);
 
 				// Enforce pixel depth matching to protect multi-pass layout sync
 				glDepthFunc(GL_EQUAL);
@@ -642,7 +671,7 @@ void GLWall::Draw(int pass)
 			{
 				// Regular walls without Doom64 sector gradient lighting
 				gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-				gl_RenderState.Apply(0);
+				gl_RenderState.Apply(nullptr);
 				RenderWall(RWF_TEXTURED);
 			}
 			break;
@@ -650,7 +679,7 @@ void GLWall::Draw(int pass)
 		else // GL3+ way
 		{
 			gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-			gl_RenderState.Apply(0);
+			gl_RenderState.Apply(nullptr);
 			RenderWall(RWF_TEXTURED);
 		}
 		break;
@@ -721,7 +750,7 @@ void GLWall::Draw(int pass)
 	
 					float vtx[] = { x1, zb0, y1, x1, zt0, y1, x2, zt1, y2, x2, zb1, y2 };
 	
-					gl_RenderState.Apply(0);
+					gl_RenderState.Apply(nullptr);
 					glEnable(GL_TEXTURE_2D);
 					glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 	
@@ -771,7 +800,7 @@ void GLWall::Draw(int pass)
 	
 			// Force the state machine to flush all changes directly into the GPU hardware registers.
 			// This completely clears the left-over GL_DST_COLOR, GL_ONE blending state!
-			gl_RenderState.Apply(0);
+			gl_RenderState.Apply(nullptr);
 	
 			// Secondary fallback clean for raw OpenGL 1.1 hardware registers
 			glEnable(GL_FOG);
@@ -812,7 +841,7 @@ void GLWall::Draw(int pass)
 		if (bm) // PASS A: RENDER BRIGHTMAPS
 		{
 			gl_RenderState.SetMaterial(bm, flags & 3, 0, -1, false);
-			gl_RenderState.Apply(0);
+			gl_RenderState.Apply(nullptr);
 
 			glBegin(GL_QUADS);
 			for (int i = 0; i < 4; i++)
@@ -829,9 +858,9 @@ void GLWall::Draw(int pass)
 		}
 
 		if (gl_legacy_dynlight_baked_huge) // PASS B: VERTEX LIGHTMAP BAKING FOR BIG DYNLIGHTS
+		//if (gl_legacy_dynlight_baked_huge && seg->sidedef->lighthead != nullptr) // in case of emergency
 		{
-			FLightNode *node = 
-				(seg != nullptr && seg->sidedef != nullptr) ? 
+			FLightNode *node = (seg != nullptr && seg->sidedef != nullptr) ? 
 				(!(seg->sidedef->Flags & WALLF_POLYOBJ) ? 
 					seg->sidedef->lighthead : (sub ? sub->lighthead : nullptr)) : nullptr;
 
@@ -841,6 +870,7 @@ void GLWall::Draw(int pass)
 				float g_accum[4] = { 0.f, 0.f, 0.f, 0.f };
 				float b_accum[4] = { 0.f, 0.f, 0.f, 0.f };
 				bool hasActiveBigLights = false;
+				bool isCamglowDynlightHere = false;
 
 				// Re-extract original float bounds exactly matching your hardware quad layout
 				float zb0 = (float)zbottom[0]; float zt0 = (float)ztop[0];
@@ -853,31 +883,41 @@ void GLWall::Draw(int pass)
 				vtxPoints[2] = DVector3(x2, y2, zt1); // Vertex 2: Top-Right
 				vtxPoints[3] = DVector3(x2, y2, zb1); // Vertex 3: Bottom-Right
 
+				// Extract active light level context by evaluating both sides 
+				// of the 2S linedef to prevent massive overbrightening on sector junctions.
+				int fakeContrastValue = 0;
+				int contrastlevlight = 0;
 				const float invMul255 = 1.0f / 255.0f;
 
-				float intensityModifier = 0.75f;
-				//{
-				//	if      (lightlevel <= 136)                     { intensityModifier = 0.57f; }
-				//	else if (lightlevel >= 137 && lightlevel < 144) { intensityModifier = 0.55f; }
-				//	else if (lightlevel >= 144 && lightlevel < 152) { intensityModifier = 0.50f; }
-				//	else if (lightlevel >= 152 && lightlevel < 160) { intensityModifier = 0.45f; }
-				//	else if (lightlevel >= 160 && lightlevel < 168) { intensityModifier = 0.36f; }
-				//	else if (lightlevel >= 168 && lightlevel < 176) { intensityModifier = 0.34f; }
-				//	else if (lightlevel >= 176 && lightlevel < 184) { intensityModifier = 0.32f; }
-				//	else if (lightlevel >= 184 && lightlevel < 192) { intensityModifier = 0.30f; }
-				//	else if (lightlevel >= 192 && lightlevel < 200) { intensityModifier = 0.27f; }
-				//	else if (lightlevel >= 200 && lightlevel < 216) { intensityModifier = 0.25f; }
-				//	else if (lightlevel >= 216 && lightlevel < 232) { intensityModifier = 0.22f; }
-				//	else if (lightlevel >= 232 && lightlevel < 248) { intensityModifier = 0.18f; }
-				//	else if (lightlevel >= 255)                     { intensityModifier = 0.15f; }
-				//}
+				float intensityModifier = 1.0f;
+				{
+					// Otherwise it gets too bright on initially bright walls
+					if      (contrastlevlight <= 136)                           { intensityModifier *= 0.995f; }
+					else if (contrastlevlight >= 137 && contrastlevlight < 144) { intensityModifier *= 0.950f; }
+					else if (contrastlevlight >= 144 && contrastlevlight < 152) { intensityModifier *= 0.800f; }
+					else if (contrastlevlight >= 152 && contrastlevlight < 160) { intensityModifier *= 0.750f; }
+					else if (contrastlevlight >= 160 && contrastlevlight < 168) { intensityModifier *= 0.600f; }
+					else if (contrastlevlight >= 168 && contrastlevlight < 176) { intensityModifier *= 0.550f; }
+					else if (contrastlevlight >= 176 && contrastlevlight < 184) { intensityModifier *= 0.600f; }
+					else if (contrastlevlight >= 184 && contrastlevlight < 192) { intensityModifier *= 0.750f; }
+					else if (contrastlevlight >= 192 && contrastlevlight < 200) { intensityModifier *= 0.800f; }
+					else if (contrastlevlight >= 200 && contrastlevlight < 216) { intensityModifier *= 0.850f; }
+					else if (contrastlevlight >= 216 && contrastlevlight < 232) { intensityModifier *= 0.900f; }
+					else if (contrastlevlight >= 232 && contrastlevlight < 248) { intensityModifier *= 0.950f; }
+					else if (contrastlevlight >= 255)                           { intensityModifier *= 0.995f; }
+				}
+				intensityModifier *= 0.75f;
+
+				float fakeContrastScaleFactor = 1.0f + ((float)fakeContrastValue / 128.0f);
+				if (fakeContrastScaleFactor < 0.2f) fakeContrastScaleFactor = 0.2f; // Safe clamp floor bounds
 
 				while (node) // Parse through the active segment light nodes thread chain
 				{
 					FDynamicLight *light = node->lightsource;
+					if (light->IsDynlightCamglow()) isCamglowDynlightHere = true;
 
 					// Target exclusively large broad static lamps (> 468 radius) to kill multi-pass lag
-					if (light && light->IsActive() && light->GetRadius() > 468.0f)
+					if (light && light->IsActive() && /* !isCamglowDynlightHere && */ light->GetRadius() > 468.0f)
 					{
 						hasActiveBigLights = true;
 
@@ -911,15 +951,28 @@ void GLWall::Draw(int pass)
 							b_accum[i] += lb * cs;
 						}
 					}
-					node = node->nextLight; // Move safely down the chain link
+					node = node->nextLight; // Move safely down the chain link, otherwise FREEZING CRASH
 				}
 
 				if (hasActiveBigLights)
 				{
+					for (int v = 0; v < 4; v++)
+					{
+						if (r_accum[v] > 1.0f) r_accum[v] = 1.0f;
+						if (g_accum[v] > 1.0f) g_accum[v] = 1.0f;
+						if (b_accum[v] > 1.0f) b_accum[v] = 1.0f;
+					}
+
 					// Re-bind the diffuse wall texture so that our lightmaps blend identically to glowing flats
 					gl_RenderState.SetTextureMode(TM_MODULATE);
 					gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-					gl_RenderState.Apply(0);
+
+					//gl_RenderState.SetObjectColor(0xffffffff); // Secure un-shattered sector shading colors.
+					//gl_RenderState.SetObjectColor2(0);
+					//gl_RenderState.SetAddColor(0);
+					//gl_RenderState.EnableGradient(false);
+
+					gl_RenderState.Apply(nullptr); // Commit state machine updates into hardware cleanly
 
 					// ANTI-Z-FIGHTING PIPELINE SECURE
 					glDepthFunc(GL_LEQUAL);
@@ -932,26 +985,19 @@ void GLWall::Draw(int pass)
 					glBegin(GL_QUADS);
 					// Vertex 0: Bottom-Left Boundary
 					glTexCoord2f(tcs[0].u, tcs[0].v);
-					glColor4f(r_accum[0] > 1.0f ? 1.0f : r_accum[0], g_accum[0] > 1.0f ? 1.0f : 
-						g_accum[0], b_accum[0] > 1.0f ? 1.0f : b_accum[0], 1.0f);
+					glColor4f(r_accum[0], g_accum[0], b_accum[0], 1.0f);
 					glVertex3f(x1, zb0, y1);
-
 					// Vertex 1: Top-Left Upper Edge
 					glTexCoord2f(tcs[1].u, tcs[1].v);
-					glColor4f(r_accum[1] > 1.0f ? 1.0f : r_accum[1], g_accum[1] > 1.0f ? 1.0f : 
-						g_accum[1], b_accum[1] > 1.0f ? 1.0f : b_accum[1], 1.0f);
+					glColor4f(r_accum[1], g_accum[1], b_accum[1], 1.0f);
 					glVertex3f(x1, zt0, y1);
-
 					// Vertex 2: Top-Right Upper Edge
 					glTexCoord2f(tcs[2].u, tcs[2].v);
-					glColor4f(r_accum[2] > 1.0f ? 1.0f : r_accum[2], g_accum[2] > 1.0f ? 1.0f : 
-						g_accum[2], b_accum[2] > 1.0f ? 1.0f : b_accum[2], 1.0f);
+					glColor4f(r_accum[2], g_accum[2], b_accum[2], 1.0f);
 					glVertex3f(x2, zt1, y2);
-
 					// Vertex 3: Bottom-Right Boundary
 					glTexCoord2f(tcs[3].u, tcs[3].v);
-					glColor4f(r_accum[3] > 1.0f ? 1.0f : r_accum[3], g_accum[3] > 1.0f ? 1.0f : 
-						g_accum[3], b_accum[3] > 1.0f ? 1.0f : b_accum[3], 1.0f);
+					glColor4f(r_accum[3], g_accum[3], b_accum[3], 1.0f);
 					glVertex3f(x2, zb1, y2);
 					glEnd();
 
@@ -962,7 +1008,7 @@ void GLWall::Draw(int pass)
 
 					// Re-synchronize back to brightmap state layer for the next conditional passes
 					gl_RenderState.SetTextureMode(TM_BRIGHTMAP_LEGACY);
-					gl_RenderState.Apply(0); // Commit registry reset securely
+					gl_RenderState.Apply(nullptr); // Flush blending trackers into hardware!
 				}
 			}
 		}
@@ -970,7 +1016,7 @@ void GLWall::Draw(int pass)
 		if (hasWallGlow) // PASS C: RENDER PROCEDURAL SECTOR GLOW GRADIENTS (GLOWING FLATS)
 		{
 			gl_RenderState.SetMaterial(gltexture, flags & 3, 0, -1, false);
-			gl_RenderState.Apply(0);
+			gl_RenderState.Apply(nullptr);
 
 			glDepthFunc(GL_LEQUAL);
 			glDepthMask(false);
@@ -1080,7 +1126,7 @@ void GLWall::Draw(int pass)
 		// Clean hardware recovery matrix gate
 		glMatrixMode(GL_MODELVIEW);
 		gl_RenderState.SetTextureMode(TM_MODULATE);
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 	}
 	break;
 	}

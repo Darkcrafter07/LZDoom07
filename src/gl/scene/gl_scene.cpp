@@ -73,6 +73,7 @@
 #include "gl/dynlights/gl_dynlightcache.h"
 
 #include "gl/compatibility/gl_20.h"
+#include "g_shared/a_spriteocclusion3d.h"
 
 //==========================================================================
 //
@@ -166,7 +167,7 @@ void GLSceneDrawer::Set3DViewport(bool mainview)
 		GLRenderer->mBuffers->BindSceneFB(useSSAO);
 		gl_RenderState.SetPassType(useSSAO ? GBUFFER_PASS : NORMAL_PASS);
 		gl_RenderState.EnableDrawBuffers(gl_RenderState.GetPassDrawBufferCount());
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 	}
 
 	// Always clear all buffers with scissor test disabled.
@@ -264,6 +265,17 @@ void GLSceneDrawer::CreateScene()
 {
 	angle_t a1 = FrustumAngle();
 	InitClipper(r_viewpoint.Angles.Yaw.BAMs() + a1, r_viewpoint.Angles.Yaw.BAMs() - a1);
+
+	static int lastLevelMaptime = -1; // Reset the caches at all times
+	if (level.maptime != lastLevelMaptime && r_dynlights_occlude)
+	{
+		ResetDynlightOcclusionCache(); lastLevelMaptime = level.maptime;
+	}
+
+	//if (gl.legacyMode && level.maptime != lastLevelMaptime)
+	//{
+	//	ResetGL1xDynlightSaturationCache(); lastLevelMaptime = level.maptime;
+	//}
 
 	// reset the portal manager
 	GLPortal::StartFrame();
@@ -670,7 +682,7 @@ void GLSceneDrawer::DrawScene(int drawmode)
 		GLRenderer->AmbientOccludeScene();
 		GLRenderer->mBuffers->BindSceneFB(true);
 		gl_RenderState.EnableDrawBuffers(gl_RenderState.GetPassDrawBufferCount());
-		gl_RenderState.Apply(0);
+		gl_RenderState.Apply(nullptr);
 		gl_RenderState.ApplyMatrices();
 	}
 
@@ -687,7 +699,7 @@ void gl_FillScreen()
 {
 	gl_RenderState.AlphaFunc(GL_GEQUAL, 0.f);
 	gl_RenderState.EnableTexture(false);
-	gl_RenderState.Apply(0);
+	gl_RenderState.Apply(nullptr);
 	// The fullscreen quad is stored at index 4 in the main vertex buffer.
 	GLRenderer->mVBO->RenderArray(GL_TRIANGLE_STRIP, FFlatVertexBuffer::FULLSCREEN_INDEX, 4);
 }

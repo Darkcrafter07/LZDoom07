@@ -72,6 +72,23 @@ struct FFlatVertex
 	}
 };
 
+// Gouraud flat vertex: position, texcoords and per-vertex light color.
+// Kept separate from FFlatVertex so the main flat VBO stays unchanged.
+struct FFlatVertexGouraud
+{
+	float x, z, y;     // world position
+	float u, v;        // texture coordinates
+	float r, g, b, a;  // per-vertex light color (modulates the flat)
+
+	void Set(float xx, float zz, float yy, float uu, float vv,
+		float rr, float gg, float bb, float aa = 1.0f)
+	{
+		x = xx; z = zz; y = yy;
+		u = uu; v = vv;
+		r = rr; g = gg; b = bb; a = aa;
+	}
+};
+
 struct FSimpleVertex
 {
 	float x, z, y;	// world position

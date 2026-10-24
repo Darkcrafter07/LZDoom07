@@ -207,7 +207,7 @@ struct FDynamicLight
 
 	inline DVector3 PosRelative(int portalgroup) const
 	{
-		return Pos + Displacements.getOffset(Sector->PortalGroup, portalgroup);
+		return Pos + Displacements.getOffset(Sector->PortalGroup, portalgroup); // Exception thrown: read access violation. **light** was nullptr. occurred
 	}
 
 	bool ShouldLightActor(AActor *check)

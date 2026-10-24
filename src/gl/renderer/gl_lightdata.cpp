@@ -20,7 +20,7 @@
 //--------------------------------------------------------------------------
 //
 /*
-** gl_light.cpp
+** gl_lightdata.cpp
 ** Light level / fog management / dynamic lights
 **
 **/
@@ -667,7 +667,7 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 				density = distgl1xsoftwarefogtable[retroTableIndex][gl_ClampLight(clamped_visual_light)];
 
 				// The step-wise modifier curve operates on the full visual footprint to keep near contrast intact
-				float modifier = 1.0f;
+				float                                modifier = 1.0f;
 				if      (visual_lightlevel >= 240)   modifier = 0.30f; 
 				else if (visual_lightlevel >= 224)   modifier = 0.35f;
 				else if (visual_lightlevel >= 208)   modifier = 0.40f;
@@ -727,7 +727,7 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 			int retroTableIndex = (glset.lightmode == 16) ? 1 : 0;
 			density = distgl1xsoftwarefogtable[retroTableIndex][gl_ClampLight(clamped_visual_light)];
 
-			float modifier = 1.0f;
+			float                                modifier = 1.0f;
 			if      (visual_lightlevel >= 240)   modifier = 0.30f; 
 			else if (visual_lightlevel >= 224)   modifier = 0.35f;
 			else if (visual_lightlevel >= 208)   modifier = 0.40f;

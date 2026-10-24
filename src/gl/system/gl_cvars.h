@@ -66,7 +66,7 @@ EXTERN_CVAR(Bool, gl_camglowlight)
 
 EXTERN_CVAR(Bool, gl_usegl1mode)
 
-//EXTERN_CVAR(Bool, gl_legacy_dynlight_baked_huge)
+EXTERN_CVAR(Bool, gl_legacy_dynlight_baked_huge)
 
 EXTERN_CVAR(Bool, gl_legacy_dynlight_compress_range)
 EXTERN_CVAR(Float, gl_legacy_dynlight_brightness)

@@ -59,6 +59,8 @@
 #include "swrenderer/things/r_playersprite.h"
 #include <chrono>
 
+#include "g_shared/a_spriteocclusion3d.h"
+
 #ifdef WIN32
 void PeekThreadedErrorPane();
 #endif
@@ -410,6 +412,12 @@ namespace swrenderer
 		fillshort(zeroarray, MAXWIDTH, 0);
 
 		R_InitShadeMaps();
+
+		static int lastLevelMaptime = -1; // Reset occlusion cache at all times -
+		if (level.maptime != lastLevelMaptime && r_dynlights_occlude) // - to work between different levels
+		{
+			ResetDynlightOcclusionCache(); lastLevelMaptime = level.maptime;
+		}
 	}
 
 	void RenderScene::Deinit()
