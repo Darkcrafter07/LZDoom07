@@ -618,12 +618,10 @@ void FRenderState::ApplyFixedFunction(AActor *actor)
 			{ lightlevel = g_isCurrentlyGLFlatDrawing->sector->lightlevel; }
 		}
 
-		// Determine if we are rendering inside pure black fog (classic Doom dark fade on all levels aka diminishing lighting)
-		bool isBlackFog = (fogColInitR < 5 && fogColInitG < 5 && fogColInitB < 5);
-
-		// Check condition triggers for custom tracking branches
-		bool isGL1xSoftwareBlackFog = (isBlackFog && gl.legacyMode && (gl_lightmode == 8 || gl_lightmode == 16));
-		bool isGL1xColoredDynlightsFog = (gl_lights && fogColInitR >= 5 && fogColInitG >= 5 && fogColInitB >= 5);
+		// Determine if we are rendering inside pure black fog (classic Doom dark fade on all levels aka diminished lighting)
+		const bool isBlackFog = (fogColInitR < 5 && fogColInitG < 5 && fogColInitB < 5);
+		const bool isGL1xSoftwareBlackFog = (isBlackFog && gl.legacyMode && (gl_lightmode == 8 || gl_lightmode == 16));
+		const bool isGL1xColoredDynlightsFog = (gl_lights && fogColInitR >= 5 && fogColInitG >= 5 && fogColInitB >= 5);
 
 		// ---=== STEP 1: EMBED THE UNIFIED SCALE MATRIX LAYOUT ===---
 		if (isGL1xSoftwareBlackFog || isGL1xColoredDynlightsFog)
@@ -662,12 +660,14 @@ void FRenderState::ApplyFixedFunction(AActor *actor)
 				if (currentLine != nullptr)
 				{
 					DVector2 delta = currentLine->Delta();
-					float lenSq = (float)(delta.X * delta.X + delta.Y * delta.Y);
+					float dxSq = (float)(delta.X * delta.X);
+					float dySq = (float)(delta.Y * delta.Y);
+					float lenSq = dxSq + dySq;
 
 					if (lenSq > 0.0001f)
 					{
-						// Calculate cosAngle square (interp factor: 1.0 = strict horizontal, 0.0 = strict vertical)
-						float cosAngleSq = (float)(delta.X * delta.X) / lenSq;
+						//float cosAngleSq = (float)(delta.X * delta.X) / lenSq;
+						float cosAngleSq = divnr<float, 2>(dxSq, lenSq);
 
 						// If the wall falls into the horizontal spectrum (cosAngleSq > 0.0) and distance is huge
 						if (cosAngleSq > 0.01f && lightlevel >= 128)
@@ -689,25 +689,26 @@ void FRenderState::ApplyFixedFunction(AActor *actor)
 			// ---=== STEP 2: EVALUATE TARGET TRACK CHANNELS ===---
 			if (isGL1xSoftwareBlackFog)
 			{
-				// Software/Vanilla modes have less fog on actors, especially the brighter ligtlevel gets
+				float                             actorModifier = 1.00f;
 				if (g_isCurrentlyGLSpriteDrawing)
 				{
-					float                         spriteModifier = 1.00f;
-					if      (lightlevel >= 240)   spriteModifier = 3.20f;
-					else if (lightlevel >= 224)   spriteModifier = 3.58f;
-					else if (lightlevel >= 208)   spriteModifier = 4.00f;
-					else if (lightlevel >= 192)   spriteModifier = 4.40f;
-					else if (lightlevel >= 176)   spriteModifier = 5.60f;
-					else if (lightlevel >= 160)   spriteModifier = 6.40f;
-					else if (lightlevel >= 144)   spriteModifier = 7.00f;
-					else if (lightlevel >= 136)   spriteModifier = 8.60f;
-					else if (lightlevel >= 128)   spriteModifier = 9.20f;
-					else if (lightlevel >= 112)   spriteModifier = 8.80f;
-					else if (lightlevel >= 80)    spriteModifier = 8.00f;
-					else if (lightlevel >= 48)    spriteModifier = 7.40f;
-					else                          spriteModifier = 6.80f;
+					// Software/Vanilla modes less fog on actors, especially the brighter ligtlevel gets
+					if      (lightlevel >= 176)   actorModifier = 0.710f;
+					else if (lightlevel >= 160)   actorModifier = 0.625f;
+					else if (lightlevel >= 144)   actorModifier = 0.570f;
+					else if (lightlevel >= 136)   actorModifier = 0.465f;
+					else if (lightlevel >= 128)   actorModifier = 0.434f;
+					else if (lightlevel >= 112)   actorModifier = 0.454f;
+					else if (lightlevel >= 80)    actorModifier = 0.500f;
+					else if (lightlevel >= 48)    actorModifier = 0.540f;
+					else                          actorModifier = 0.588f;
 					// Smash the fog down exponentially on sprites in the dark
-					FogDensityCurrent = FogDensityCurrent / spriteModifier;
+					FogDensityCurrent *= actorModifier;
+				}
+				if (g_isCurrentlyGLModelWorldDrawing)
+				{
+					actorModifier *= 0.25f; // 4x less black fog on 3D models
+					FogDensityCurrent *= actorModifier;
 				}
 				else
 				{
@@ -956,85 +957,200 @@ void FRenderState::DrawColormapOverlay()
 //
 //==========================================================================
 
-void gl_dynlightGL1xSaturateSlow_unused(float &r, float &g, float &b, float current_boost, float radius, FLightColorContext &ctx)
-{
-	// Prevent logic executions on zero/dead light nodes
-	if (ctx.maxColor > 0.001f)
-	{
-		float avgColor = (r + g + b) * 0.3333f;
+//void gl_dynlightGL1xSaturateSlow_unused(float &r, float &g, float &b, float current_boost, float radius, FLightColorContext &ctx)
+//{
+//	// Prevent logic executions on zero/dead light nodes
+//	if (ctx.maxColor > 0.001f)
+//	{
+//		float avgColor = (r + g + b) * 0.3333f;
+//
+//		// Amplificate channels relative to how much they exceed the baseline average color
+//		r += (r - avgColor) * current_boost;
+//		g += (g - avgColor) * current_boost;
+//		b += (b - avgColor) * current_boost;
+//
+//		// Re-evaluate limits after saturation boost locally
+//		float localMax = r; if (g > localMax) localMax = g; if (b > localMax) localMax = b;
+//		float localMin = r; if (g < localMin) localMin = g; if (b < localMin) localMin = b;
+//		ctx.localChroma = localMax - localMin;
+//
+//		// HARD CRITERIA: Execute hue shifting ONLY on colored lights larger than 768 units radius
+//		if (ctx.chroma >= 0.10f && ctx.localChroma > 0.05f && radius >= 768.0f)
+//		{
+//			// --- STEP-BY-STEP CASCADE HUE SHIFT CALCULATION (+5 per size tier) ---
+//			float                                             sizeShiftModifier = 0.0f; // Base level
+//			if      (radius >= 384.0f && radius <= 800.0f)    sizeShiftModifier = 3.2f;
+//			else if (radius >= 800.0f && radius <= 1600.0f)   sizeShiftModifier = 4.5f;
+//			else if (radius >= 1600.0f && radius <= 3000.0f)  sizeShiftModifier = 5.0f;
+//			else if (radius >= 3000.0f && radius <= 6000.0f)  sizeShiftModifier = 5.5f;
+//			else if (radius >= 6000.0f && radius <= 12000.0f) sizeShiftModifier = 6.5f;
+//			else if (radius >= 12000.0f)                      sizeShiftModifier = 7.0f;
+//
+//			float raw_shift = gl_legacy_dynlight_hue_shift + sizeShiftModifier;
+//			float final_shift = 0.0f;
+//
+//			// Guard condition: inside [-20; 20] range hue modulation remains untouched
+//			if (fabsf(raw_shift) > 20.0f)
+//			{
+//				if (raw_shift > 0.0f) final_shift = raw_shift - 20.0f;
+//				else final_shift = raw_shift + 20.0f;
+//			}
+//
+//			if (final_shift < 0.0f) final_shift = 360.0f + fmodf(final_shift, 360.0f);
+//			if (final_shift >= 360.0f) final_shift = fmodf(final_shift, 360.0f);
+//
+//			// Execute chromatic spectrum translation if final rotation angle is valid
+//			if (final_shift > 0.001f)
+//			{
+//				float h = 0.0f;
+//				if (localMax == r) { h = (g - b) / ctx.localChroma; if (h < 0.0f) h += 6.0f; }
+//				else if (localMax == g) { h = (b - r) / ctx.localChroma + 2.0f; }
+//				else { h = (r - g) / ctx.localChroma + 4.0f; }
+//				h *= 60.0f;
+//
+//				h += final_shift;
+//				if (h >= 360.0f) h -= 360.0f;
+//
+//				float hPrime = h / 60.0f;
+//				float x = ctx.localChroma * (1.0f - fabsf(fmodf(hPrime, 2.0f) - 1.0f));
+//				float r1 = 0.0f, g1 = 0.0f, b1 = 0.0f;
+//
+//				if      (hPrime >= 0.0f && hPrime < 1.0f) { r1 = ctx.localChroma; g1 = x; }
+//				else if (hPrime >= 1.0f && hPrime < 2.0f) { r1 = x; g1 = ctx.localChroma; }
+//				else if (hPrime >= 2.0f && hPrime < 3.0f) { g1 = ctx.localChroma; b1 = x; }
+//				else if (hPrime >= 3.0f && hPrime < 4.0f) { g1 = x; b1 = ctx.localChroma; }
+//				else if (hPrime >= 4.0f && hPrime < 5.0f) { r1 = x; b1 = ctx.localChroma; }
+//				else                                      { r1 = ctx.localChroma; b1 = x; }
+//
+//				float m = localMin;
+//				r = r1 + m;
+//				g = g1 + m;
+//				b = b1 + m;
+//			}
+//		}
+//
+//		if (r < 0.0f) r = 0.0f; else if (r > 1.0f) r = 1.0f;
+//		if (g < 0.0f) g = 0.0f; else if (g > 1.0f) g = 1.0f;
+//		if (b < 0.0f) b = 0.0f; else if (b > 1.0f) b = 1.0f;
+//	}
+//}
 
-		// Amplificate channels relative to how much they exceed the baseline average color
-		r += (r - avgColor) * current_boost;
-		g += (g - avgColor) * current_boost;
-		b += (b - avgColor) * current_boost;
+//void gl_dynlightSaturateLegacy_faster_unused(float &r, float &g, float &b, float current_boost, float radius, FLightColorContext &ctx)
+//{
+//	// 1. FAST INSTRINSICS FOR MAX/MIN (Compiles directly into CMOV assembly instructions, 0% branch mispredictions!)
+//	float localMax = std::max({ r, g, b });
+//	float localMin = std::min({ r, g, b });
+//	ctx.localChroma = localMax - localMin;
+//
+//	// Early exit gate for dead or purely colorless gray/white light nodes
+//	if (ctx.maxColor <= 0.001f || ctx.chroma < 0.10f || ctx.localChroma <= 0.05f || radius < 768.0f)
+//	{
+//		// Amplificate channels safely for standard color mass
+//		r += (r - (r + g + b) * 0.333333f) * current_boost;
+//		g += (g - (r + g + b) * 0.333333f) * current_boost;
+//		b += (b - (r + g + b) * 0.333333f) * current_boost;
+//
+//		// Pure hardware recovery fast clamp layout
+//		r = clamp(r, 0.0f, 1.0f);
+//		g = clamp(g, 0.0f, 1.0f);
+//		b = clamp(b, 0.0f, 1.0f);
+//		return;
+//	}
+//
+//	// 2. CORE AMPLIFICATION CONVEYOR
+//	float avgColor = (r + g + b) * 0.333333f;
+//	r += (r - avgColor) * current_boost;
+//	g += (g - avgColor) * current_boost;
+//	b += (b - avgColor) * current_boost;
+//
+//	// Re-evaluate limits after saturation boost using lightning-fast std math
+//	localMax = std::max({ r, g, b });
+//	localMin = std::min({ r, g, b });
+//	ctx.localChroma = localMax - localMin;
+//
+//	// 3. FLAT CASCADE RADIUS LOOKUP TABLE (WITHOUT BOX SPLIT)
+//	float sizeShiftModifier = 0.0f;
+//	if (radius <= 1600.0f) sizeShiftModifier = (radius <= 800.0f) ? 3.2f : 4.5f;
+//	else if (radius <= 6000.0f) sizeShiftModifier = (radius <= 3000.0f) ? 5.0f : 5.5f;
+//	else                        sizeShiftModifier = (radius <= 12000.0f) ? 6.5f : 7.0f;
+//
+//	float raw_shift = gl_legacy_dynlight_hue_shift + sizeShiftModifier;
+//	float final_shift = 0.0f;
+//
+//	// Optimized fast boundaries guard without calling heavy math
+//	if (raw_shift > 20.0f)       final_shift = raw_shift - 20.0f;
+//	else if (raw_shift < -20.0f) final_shift = raw_shift + 20.0f;
+//
+//	// HIGH-SPEED FRACTIONAL REPLACEMENT FOR FMODF
+//	// Since raw_shift angle sits in tightly bound ranges, replace heavy fmodf 
+//	// with branchless flat float-to-int subtraction logic loops.
+//	if (final_shift < 0.0f)
+//	{
+//		final_shift += 360.0f * (static_cast<int>(-final_shift / 360.0f) + 1);
+//	}
+//	if (final_shift >= 360.0f)
+//	{
+//		final_shift -= 360.0f * static_cast<int>(final_shift / 360.0f);
+//	}
+//
+//	// 4. ULTRAFAST SPECTRUM TRANSLATION MATRIX
+//	if (final_shift > 0.001f)
+//	{
+//		// Reciprocal Calculation Pass: Compute inverse chroma ONCE to kill heavy divisions!
+//		float rcpChroma = 1.0f / ctx.localChroma;
+//		float h = 0.0f;
+//
+//		if (localMax == r)
+//		{
+//			h = (g - b) * rcpChroma;
+//			if (h < 0.0f) h += 6.0f;
+//		}
+//		else if (localMax == g)
+//		{
+//			h = (b - r) * rcpChroma + 2.0f;
+//		}
+//		else
+//		{
+//			h = (r - g) * rcpChroma + 4.0f;
+//		}
+//		h *= 60.0f;
+//
+//		h += final_shift;
+//		if (h >= 360.0f) h -= 360.0f;
+//
+//		// FAST INTERPOLATION LOOKUP MAPPING (Bypasses fmodf and fabsf completely!)
+//		float hPrime = h * 0.01666667f; // h / 60.0f
+//		int hPrimeInt = static_cast<int>(hPrime);
+//		float fraction = hPrime - hPrimeInt;
+//
+//		float x = ctx.localChroma * (1.0f - (hPrimeInt & 1 ? fraction : 1.0f - fraction));
+//		float r1 = 0.0f, g1 = 0.0f, b1 = 0.0f;
+//
+//		// Unrolled linear lookup case blocks instead of conditional switches
+//		switch (hPrimeInt)
+//		{
+//		case 0:  r1 = ctx.localChroma; g1 = x; break;
+//		case 1:  r1 = x; g1 = ctx.localChroma; break;
+//		case 2:  g1 = ctx.localChroma; b1 = x; break;
+//		case 3:  g1 = x; b1 = ctx.localChroma; break;
+//		case 4:  r1 = x; b1 = ctx.localChroma; break;
+//		default: r1 = ctx.localChroma; b1 = x; break;
+//		}
+//
+//		r = r1 + localMin;
+//		g = g1 + localMin;
+//		b = b1 + localMin;
+//	}
+//
+//	// Final pristine hardware security clamp
+//	r = clamp(r, 0.0f, 1.0f);
+//	g = clamp(g, 0.0f, 1.0f);
+//	b = clamp(b, 0.0f, 1.0f);
+//}
 
-		// Re-evaluate limits after saturation boost locally
-		float localMax = r; if (g > localMax) localMax = g; if (b > localMax) localMax = b;
-		float localMin = r; if (g < localMin) localMin = g; if (b < localMin) localMin = b;
-		ctx.localChroma = localMax - localMin;
-
-		// HARD CRITERIA: Execute hue shifting ONLY on colored lights larger than 768 units radius
-		if (ctx.chroma >= 0.10f && ctx.localChroma > 0.05f && radius >= 768.0f)
-		{
-			// --- STEP-BY-STEP CASCADE HUE SHIFT CALCULATION (+5 per size tier) ---
-			float                                             sizeShiftModifier = 0.0f; // Base level
-			if      (radius >= 384.0f && radius <= 800.0f)    sizeShiftModifier = 3.2f;
-			else if (radius >= 800.0f && radius <= 1600.0f)   sizeShiftModifier = 4.5f;
-			else if (radius >= 1600.0f && radius <= 3000.0f)  sizeShiftModifier = 5.0f;
-			else if (radius >= 3000.0f && radius <= 6000.0f)  sizeShiftModifier = 5.5f;
-			else if (radius >= 6000.0f && radius <= 12000.0f) sizeShiftModifier = 6.5f;
-			else if (radius >= 12000.0f)                      sizeShiftModifier = 7.0f;
-
-			float raw_shift = gl_legacy_dynlight_hue_shift + sizeShiftModifier;
-			float final_shift = 0.0f;
-
-			// Guard condition: inside [-20; 20] range hue modulation remains untouched
-			if (fabsf(raw_shift) > 20.0f)
-			{
-				if (raw_shift > 0.0f) final_shift = raw_shift - 20.0f;
-				else final_shift = raw_shift + 20.0f;
-			}
-
-			if (final_shift < 0.0f) final_shift = 360.0f + fmodf(final_shift, 360.0f);
-			if (final_shift >= 360.0f) final_shift = fmodf(final_shift, 360.0f);
-
-			// Execute chromatic spectrum translation if final rotation angle is valid
-			if (final_shift > 0.001f)
-			{
-				float h = 0.0f;
-				if (localMax == r) { h = (g - b) / ctx.localChroma; if (h < 0.0f) h += 6.0f; }
-				else if (localMax == g) { h = (b - r) / ctx.localChroma + 2.0f; }
-				else { h = (r - g) / ctx.localChroma + 4.0f; }
-				h *= 60.0f;
-
-				h += final_shift;
-				if (h >= 360.0f) h -= 360.0f;
-
-				float hPrime = h / 60.0f;
-				float x = ctx.localChroma * (1.0f - fabsf(fmodf(hPrime, 2.0f) - 1.0f));
-				float r1 = 0.0f, g1 = 0.0f, b1 = 0.0f;
-
-				if      (hPrime >= 0.0f && hPrime < 1.0f) { r1 = ctx.localChroma; g1 = x; }
-				else if (hPrime >= 1.0f && hPrime < 2.0f) { r1 = x; g1 = ctx.localChroma; }
-				else if (hPrime >= 2.0f && hPrime < 3.0f) { g1 = ctx.localChroma; b1 = x; }
-				else if (hPrime >= 3.0f && hPrime < 4.0f) { g1 = x; b1 = ctx.localChroma; }
-				else if (hPrime >= 4.0f && hPrime < 5.0f) { r1 = x; b1 = ctx.localChroma; }
-				else                                      { r1 = ctx.localChroma; b1 = x; }
-
-				float m = localMin;
-				r = r1 + m;
-				g = g1 + m;
-				b = b1 + m;
-			}
-		}
-
-		if (r < 0.0f) r = 0.0f; else if (r > 1.0f) r = 1.0f;
-		if (g < 0.0f) g = 0.0f; else if (g > 1.0f) g = 1.0f;
-		if (b < 0.0f) b = 0.0f; else if (b > 1.0f) b = 1.0f;
-	}
-}
 
 
+// Here comes the fastest optimized version, let's do it Ken Silverman reciptable way
 struct FKenRecipTable
 {
 	uint32_t table[2048];
@@ -3765,7 +3881,7 @@ void GLSceneDrawer::RenderMultipassStuff()
 {
 	// ******* FIRST PASS: EMPTY BACKGROUND WITH SECTOR LIGHT ONLY ******
 	// Part 1: solid geometry. This is set up so that there are no transparent parts
-	// remove any remaining texture bindings and shaders whick may get in the way.
+	// remove any remaining texture bindings and shaders which may get in the way.
 	gl_RenderState.EnableTexture(false);
 	gl_RenderState.EnableBrightmap(false);
 	gl_RenderState.Apply(nullptr);

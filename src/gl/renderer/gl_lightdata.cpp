@@ -59,6 +59,8 @@ CVAR(Bool, gl_lightadditivesurfaces, false, CVAR_ARCHIVE);
 
 EXTERN_CVAR(Int, r_fakecontrast)
 
+extern GLWall* g_isCurrentlyGLWallDrawing;
+extern bool isUsingVolumetric3DModelLegacyDynlight;
 
 
 //==========================================================================
@@ -94,7 +96,7 @@ CUSTOM_CVAR(Int, gl_distfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 }
 
 // There's a need to have a separate fogtable for software/vanilla modes
-CUSTOM_CVAR(Int, gl_distsoftwaregl1xfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, gl1x_distfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	const bool useHQtablegen = true;
 	const float invMul255 = 1.0f / 255.0f;
@@ -109,7 +111,7 @@ CUSTOM_CVAR(Int, gl_distsoftwaregl1xfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 			// --- SOFTWARE SECTOR LIGHT MODE #8 (ORIGINAL EXE) ---
 			// We keep the heavy 1.40f multiplier to lock down rich software shadows in the dark,
 			// but we modify the decay power dynamically.
-			float baseDensity0 = (float)gl_distsoftwaregl1xfog * 1.40f;
+			float baseDensity0 = (float)gl1x_distfog * 1.40f;
 
 			// Added an aggressive power-scaling shift (-4.10f * f - 1.65f * (f * f)).
 			// In dark-to-mid zones (f < 0.4), the quadratic component is near zero, keeping the shadows heavy.
@@ -125,7 +127,7 @@ CUSTOM_CVAR(Int, gl_distsoftwaregl1xfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 			// --- VANILLA SECTOR LIGHT MODE #16 ---
 			// So far, the formulas may be closer to exe but it looks darker and wrong but let's have it too.
 			// Mapped onto the same high-velocity clearing curve for bright layers
-			float baseDensity1 = 6.0f + (float)gl_distsoftwaregl1xfog * 1.65f;
+			float baseDensity1 = 6.0f + (float)gl1x_distfog * 1.65f;
 			distgl1xsoftwarefogtable[1][i] = baseDensity1 * expf(-4.60f * f - 1.95f * (f * f));
 
 			if (i >= 220) distgl1xsoftwarefogtable[1][i] = 0.0f;
@@ -134,7 +136,7 @@ CUSTOM_CVAR(Int, gl_distsoftwaregl1xfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 	else
 	{
 		// ---=== PIECEWISE APPROXIMATION OF OUR HQ EXP MATRIX ===---
-		int baseVal = gl_distsoftwaregl1xfog;
+		int baseVal = gl1x_distfog;
 
 		// PATCH: Restored heavy base multipliers back to match 1.40f and 1.65f HQ anchors.
 		// This brings back pristine, pitch-black software shadow definition in dark areas!
@@ -419,101 +421,133 @@ void gl_GetRenderStyle(FRenderStyle style, bool drawopaque, bool allowcolorblend
 //
 //==========================================================================
 
-int gl_CalcLightLevel(int lightlevel, int rellight, bool weapon, int blendfactor)
+// Gets called everywhere in the code
+int gl_CalcLightLevelWrapper(int lightlevel, int rellight, bool weapon, int blendfactor)
+{
+	if (gl.legacyMode && (gl_lightmode == 8 || gl_lightmode == 16) )
+	{
+		return gl_CalcLightLevelGL1xSoftwareModes(lightlevel, rellight, weapon, blendfactor);
+	}
+	else
+	{
+		return gl_CalcLightLevelStandard(lightlevel, rellight, weapon, blendfactor);
+	}
+}
+
+int gl_CalcLightLevelStandard(int lightlevel, int rellight, bool weapon, int blendfactor)
 {
 	int light;
 
 	if (lightlevel <= 0) return 0;
 
-	// Check for our custom legacy modes
-	bool isGL1xSoftware8 = (gl.legacyMode && glset.lightmode == 8);
-	bool isGL1xVanilla16 = (gl.legacyMode && glset.lightmode == 16);
+	bool darklightmode = (glset.lightmode & 2) || (glset.lightmode >= 8 && blendfactor > 0);
 
-	// Original software behavior activates if lightmode >= 8 and blendfactor > 0.
-	// For legacy mode, we force dark lighting logic for mode 8 and 16 unconditionally.
-	bool isGL1xFakeSoftwareModes = (glset.lightmode & 2) || isGL1xSoftware8 || isGL1xVanilla16 ||
-		(!gl.legacyMode && glset.lightmode >= 8 && blendfactor > 0);
-
-	if (isGL1xFakeSoftwareModes && lightlevel < 192 && !weapon)
+	if (darklightmode && lightlevel < 192 && !weapon)
 	{
 		if (lightlevel > 100)
 		{
-			if (isGL1xVanilla16)
+			light = xs_CRoundToInt(192.f - (192 - lightlevel)* 1.87f);
+			if (light + rellight < 20)
 			{
-				// Mode 16 drops brightness much faster (2.15f instead of 1.87f) for a darker, high-contrast look
-				light = xs_CRoundToInt(192.f - (192 - lightlevel) * 2.15f);
+				light = 20 + (light + rellight - 20) / 5;
 			}
 			else
 			{
-				// Standard Software (Mode 8) formula
-				light = xs_CRoundToInt(192.f - (192 - lightlevel) * 1.87f);
+				light += rellight;
 			}
+		}
+		else
+		{
+			light = (lightlevel + rellight) / 5;
+		}
+
+	}
+	else
+	{
+		light = lightlevel + rellight;
+	}
+
+	return clamp(light, 0, 255);
+}
+
+int gl_CalcLightLevelGL1xSoftwareModes(int lightlevel, int rellight, bool weapon, int blendfactor)
+{
+	if (lightlevel <= 0) return 0;
+
+	int light;
+	int scaled_rellight = rellight;
+	int divisor = gl_lightmode == 16 ? 7 : 5; // div by 7 for for Vanilla mode for darker experience
+
+	bool isDrawingGL1xWall = false;
+	if (g_isCurrentlyGLWallDrawing != nullptr) isDrawingGL1xWall = true;
+
+	int gl1xWallTame = isDrawingGL1xWall ? 128 : 64; // subtract walls more, thus flats are brighter
+	float gl1xSoftwareSectLightMul = gl_lightmode == 8 ? 1.87f : 2.15f; // div by 2.15 makes it darker
+
+	float contrastModifier = 1.0f;
+	const float invMul32 = 1.0f / 32.0f;
+
+	if (lightlevel < 192 && !weapon)
+	{
+		if (lightlevel > 100)
+		{
+			// ---=== THE CONTINUOUS FLOATING ANCHOR SYSTEM ===---
+			// To eliminate the sharp staircasing pops caused by rigid if-else blocks,
+			// transition the mathematical anchor from 192.f up to 224.f continuously.
+			// Normalized 't' factor links directly to the current sector brightness scale.
+			float t = ((float)lightlevel - 100.0f) / (192.0f - gl1xWallTame);
+			//if (t < 0.0f) t = 0.0f; if (t > 1.0f) t = 1.0f;
+
+			// Seamlessly slides the anchor point from 192.f up to 224.f based on zones setup
+			float floatingAnchor = 192.0f + (224.0f - 192.0f) * t;
+
+			// Single, continuous non-linear calculation sweep avoids single-frame register jumps
+			light = xs_CRoundToInt
+			(floatingAnchor - (floatingAnchor - lightlevel) * gl1xSoftwareSectLightMul);
 
 			if (light + rellight < 20)
 			{
-				// Mode 16 cuts off into deep black faster at the low-end
-				int divisor = isGL1xVanilla16 ? 7 : 5;
 				light = 20 + (light + rellight - 20) / divisor;
 			}
 			else
 			{
-				// Soften the raw fake contrast offset by a safe scaling scalar (0.50f)
-				// inside the light level rendering calculations to match fixed-pipeline hardware bounds
-				int scaled_rellight = rellight;
-				if (isGL1xSoftware8 || isGL1xVanilla16)
-				{
-					// ---=== THE DIFFERENTIAL FAKE CONTRAST MULTI-STEP MATRIX ===---
-					// Instead of a rigid true/false guard, evaluate a tailored step schedule 
-					// with an 8-unit stride spanning from -16 to +16 with an extra safety buffer.
-					float                     contrastModifier = 1.00f;
-					if      (rellight >= 16)  contrastModifier = 1.15f; // Brightness boost for bright fake contrast wall
-					else if (rellight >= 8)   contrastModifier = 1.05f; // Slight brightness boost for bright fake contrast wall
-					else if (rellight == 0)   contrastModifier = 1.00f; // Flats or Neutral walls stay clean
-					//else if (rellight >= -8)  contrastModifier = 0.85f; // Brighten up slightly darker fake contrast walls
-					//else if (rellight >= -16) contrastModifier = 0.80f; // Brighten up darker fake contrast walls
-					//else                      contrastModifier = 0.75f; // Brighten up very dark fake contrast walls
+				// ---=== THE DIFFERENTIAL FAKE CONTRAST MULTI-STEP MATRIX ===---
+				//if      (rellight >= 16)  contrastModifier = 1.025f; // Slight brightness boost for very bright fake contrast wall
+				//else if (rellight >= 8)   contrastModifier = 1.05f;  // Higher brightness boost for bright fake contrast wall
+				//else if (rellight == 0)   contrastModifier = 1.000f; // Flats or Neutral walls stay clean
+				//else if (rellight >= -8)  contrastModifier = 0.850f; // Brighten up slightly darker fake contrast walls
+				//else if (rellight >= -16) contrastModifier = 0.800f; // Brighten up darker fake contrast walls
+				//else                      contrastModifier = 0.750f; // Brighten up very dark fake contrast walls			
+				//scaled_rellight = (int)(rellight * contrastModifier);
+				//light += scaled_rellight;
 
-					scaled_rellight = (int)(rellight * contrastModifier);
-				}
-
+				scaled_rellight = (int)(rellight * contrastModifier);
 				light += scaled_rellight;
 
 				// ---=== SOLID MID-TONE FLATS CORRECTION (SMOOTH CUP CURVE) ===---
 				// Gently dim the overbright anomaly on floors and ceilings around the mid-range (112 to 176).
 				// This pulls down exactly the 128 mark by a smooth -10 units without causing sharp staircases.
-				if (isGL1xSoftware8 || isGL1xVanilla16)
+				if (lightlevel >= 112 && lightlevel <= 176)
 				{
-					if (lightlevel >= 112 && lightlevel <= 176)
+					// Smooth parabola that hits 1.0f at 128, and fades out cleanly at 112 and 176
+					float midFactor = 1.0f - (fabsf(lightlevel - 128.0f) * invMul32);
+					if (midFactor > 0.0f)
 					{
-						// Smooth parabola that hits 1.0f at 128, and fades out cleanly at 112 and 176
-						float midFactor = 1.0f - (fabs(lightlevel - 128.0f) / 32.0f);
-						if (midFactor > 0.0f)
-						{
-							light = light - (int)(10 * midFactor);
-						}
+						light = light - (int)(10 * midFactor);
 					}
 				}
 			}
 		}
 		else
 		{
-			// Deep shadow handling: Mode 16 divides by 7 instead of 5, making dark sectors pitch black
-			int divisor = isGL1xVanilla16 ? 7 : 5;
-
-			int scaled_rellight = rellight;
-			if (isGL1xSoftware8 || isGL1xVanilla16)
-			{
-				float                     contrastModifier = 1.00f;
-				if      (rellight >= 16)  contrastModifier = 1.15f; // Brightness boost for bright fake contrast wall
-				else if (rellight >= 8)   contrastModifier = 1.05f; // Slight brightness boost for bright fake contrast wall
-				else if (rellight == 0)   contrastModifier = 1.00f; // Flats or neutral walls stay clean
-				//else if (rellight >= -8)  contrastModifier = 0.85f; // Brighten up slightly darker fake contrast walls
-				//else if (rellight >= -16) contrastModifier = 0.80f; // Brighten up darker fake contrast walls
-				//else                      contrastModifier = 0.75f; // Brighten up very dark fake contrast walls
-
-				scaled_rellight = (int)(rellight * contrastModifier);
-			}
-
+			//if      (rellight >= 16)  contrastModifier = 1.025f; // Slight brightness boost for very bright fake contrast wall
+			//else if (rellight >= 8)   contrastModifier = 1.05f;  // Higher brightness boost for bright fake contrast wall
+			//else if (rellight == 0)   contrastModifier = 1.000f; // Flats or Neutral walls stay clean
+			//else if (rellight >= -8)  contrastModifier = 0.850f; // Brighten up slightly darker fake contrast walls
+			//else if (rellight >= -16) contrastModifier = 0.800f; // Brighten up darker fake contrast walls
+			//else                      contrastModifier = 0.750f; // Brighten up very dark fake contrast walls
+		
+			scaled_rellight = (int)(rellight * contrastModifier);
 			light = (lightlevel + scaled_rellight) / divisor;
 		}
 	}
@@ -576,7 +610,7 @@ void gl_SetColor(int sectorlightlevel, int rellight, bool fullbright, const FCol
 	}
 	else
 	{
-		int hwlightlevel = gl_CalcLightLevel(sectorlightlevel, rellight, weapon, cm.BlendFactor);
+		int hwlightlevel = gl_CalcLightLevelWrapper(sectorlightlevel, rellight, weapon, cm.BlendFactor);
 		PalEntry pe = gl_CalcLightColor(hwlightlevel, cm.LightColor, cm.BlendFactor);
 		gl_RenderState.SetColorAlpha(pe, alpha, cm.Desaturation);
 		gl_RenderState.SetSoftLightLevel(gl_ClampLight(sectorlightlevel + rellight), cm.BlendFactor);
@@ -613,7 +647,7 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 	int lightmode = glset.lightmode;
 
 	// Check if this is our custom fake legacy software mode (supporting both 8 and 16)
-	bool isGL1xSoftwareSectorLightmode = (gl.legacyMode && (lightmode == 8 || lightmode == 16));
+	const bool isGL1xSoftwareSectorLightmode = (gl.legacyMode && (lightmode == 8 || lightmode == 16));
 
 	if (isGL1xSoftwareSectorLightmode) lightmode = 3;
 
@@ -634,26 +668,14 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 		// case 2: black fog
 		if ((lightmode < 8 || blendfactor > 0) && !(level.flags3 & LEVEL3_NOLIGHTFADE))
 		{
-			// Safe baseline multiplier for our custom profiles
-			int scaled_rellight = rellight;
-			if (isGL1xSoftwareSectorLightmode)
-			{
-				scaled_rellight = (int)(rellight * 1.0f); // Pure untouched 1.0f reference contrast
-			}
-
 			// Calculate the true visual lighting environment
-			int visual_lightlevel = lightlevel + scaled_rellight;
+			int visual_lightlevel = lightlevel + rellight;
 
 			if (isGL1xSoftwareSectorLightmode)
 			{
 				// ---=== THE HORIZONTAL NORTH-WALL PIPELINE SHIELD ===---
-				// Negative fake contrast on northern/horizontal walls (scaled_rellight < 0)
-				// pulls visual_lightlevel down. Under exponential tables, this artificial dimming
-				// forces distant horizontal walls to prematurely crush and drown into dark fog.
-				// We inject an active clamp here: if the wall is horizontal, we prevent the index 
-				// from dropping below the sector's baseline lightlevel, fully curing the distant darkening.
 				int lookup_lightlevel = visual_lightlevel;
-				if (scaled_rellight < 0)
+				if (rellight < 0)
 				{
 					lookup_lightlevel = lightlevel; // Protect horizontal indices from diving into thick fog
 				}
@@ -678,6 +700,9 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 				else if (visual_lightlevel >= 136)   modifier = 0.90f;
 				else if (visual_lightlevel >= 128)   modifier = 0.95f;
 				else if (visual_lightlevel >= 112)   modifier = 1.00f;
+
+				// decrease fog for bright fake contrast walls in the big distance
+				if (rellight > 0)                    modifier *= 0.25f;
 
 				density = density * modifier;
 			}
@@ -704,19 +729,13 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 	else if (lightlevel < 248)
 	{
 		// case 5: use light level
-		int scaled_rellight = rellight;
-		if (isGL1xSoftwareSectorLightmode)
-		{
-			scaled_rellight = (int)(rellight * 1.0f);
-		}
-
-		int visual_lightlevel = lightlevel + scaled_rellight;
+		int visual_lightlevel = lightlevel + rellight;
 
 		if (isGL1xSoftwareSectorLightmode)
 		{
 			// Apply the exact same horizontal negative shielding matrix to case 5 custom fogs
 			int lookup_lightlevel = visual_lightlevel;
-			if (scaled_rellight < 0)
+			if (rellight < 0)
 			{
 				lookup_lightlevel = lightlevel;
 			}
@@ -738,6 +757,9 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 			else if (visual_lightlevel >= 136)   modifier = 0.70f;
 			else if (visual_lightlevel >= 128)   modifier = 0.70f;
 			else if (visual_lightlevel >= 112)   modifier = 1.00f;
+
+			// decrease fog for bright fake contrast walls in the big distance
+			if (rellight > 0)                    modifier *= 0.25f;
 
 			density = density * modifier;
 		}
@@ -897,7 +919,7 @@ void gl_SetFog(int lightlevel, int rellight, bool fullbright, const FColormap *c
 
 		if (cmap && (check_lightmode == 2 || (check_lightmode >= 8 && cmap->BlendFactor > 0)) && fogcolor == 0)
 		{
-			float light = gl_CalcLightLevel(lightlevel, rellight, false, cmap->BlendFactor);
+			float light = gl_CalcLightLevelWrapper(lightlevel, rellight, false, cmap->BlendFactor);
 			gl_SetShaderLight(light, lightlevel);
 		}
 		else

@@ -73,6 +73,8 @@
 #include "vm.h"
 
 #include "gl/system/gl_interface.h"
+#include "gl/system/gl_cvars.h"
+
 
 #ifdef _MSC_VER
 // Everything seems to work just fine even with such warnings.
@@ -1394,19 +1396,11 @@ CUSTOM_CVAR(Int, r_fakecontrast, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 //
 //
 //==========================================================================
-// kind of useless but keep it for the history record maybe
-const bool enableGL1xFakeContrastCache = false;
-
-struct FFakeContrastGL1xCacheEntry
-{
-	int lastUpdateTick = -1;
-	int cachedRel = 0;
-};
-static TMap<const side_t*, FFakeContrastGL1xCacheEntry> g_GL1xFakeContrastCache;
 
 int side_t::GetLightLevel(bool foggy, int baselight, bool is3dlight, int *pfakecontrast) const
 {
-	const float gl_legacyvidmode_fakecontrast_scale = 2.0f;
+	const bool optimizedGL1xWay = true;
+	float scaleGL1xfakecontrast = 2.0f;
 
 	if (!is3dlight && (Flags & WALLF_ABSLIGHTING))
 	{
@@ -1427,107 +1421,40 @@ int side_t::GetLightLevel(bool foggy, int baselight, bool is3dlight, int *pfakec
 			// --- [Darkcrafter07]: PATHWAY A - GL1x/GL2x LEGACY FIXED-FUNCTION WAY
 			if (gl.legacyMode)
 			{
-				const int currentMapTimeTick = level.maptime;
-
-				// --- [Autonomous One-Shot Map-Transition Flush Barrier] ---
-				// If level.maptime hits absolute zero (0 or 1) on a new map,
-				// trigger a single-pass hard clear to completely wipe dead pointer links.
-				static int lastCheckedMapTime = -1;
-				if (currentMapTimeTick <= 1 && currentMapTimeTick != lastCheckedMapTime)
+				DVector2 delta = linedef->Delta();
+				if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2))
 				{
-					g_GL1xFakeContrastCache.Clear();
-					lastCheckedMapTime = currentMapTimeTick; // Lock trigger
-				}
+					float dxSq = static_cast<float>(delta.X * delta.X);
+					float dySq = static_cast<float>(delta.Y * delta.Y);
+					float lengthSq = dxSq + dySq;
 
-				if (enableGL1xFakeContrastCache)
-				{
-					FFakeContrastGL1xCacheEntry &entry = g_GL1xFakeContrastCache[this];
-
-					// If cache is hot and valid within the 8-tick safety window, bypass math completely
-					if (entry.lastUpdateTick != -1 && (currentMapTimeTick - entry.lastUpdateTick) < 8)
+					if (lengthSq > 0.0001f)
 					{
-						rel = entry.cachedRel;
+						float interp = divnr<float, 2>(dxSq, lengthSq);	// cos^2 of a wall degree
+						float baseRel = interp * level.WallHorizLight + (1.0f - interp) * level.WallVertLight;
+						if ((interp > 0.178f && interp < 0.822f) && rel >= -4) baseRel *= 0.75f; // brighten dark smooth angles
+						rel = xs_RoundToInt(baseRel);
 					}
-					else
-					{
-						DVector2 delta = linedef->Delta();
-						if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2))
-						{
-							float len = sqrt(delta.X * delta.X + delta.Y * delta.Y);
-							if (len > 0.0001f)
-							{
-								// Calculate normalized directional components of the wall string line
-								float cosAngle = fabs(delta.X / len); // How close the wall is to horizontal axis (East-West)
-								float sinAngle = fabs(delta.Y / len); // How close the wall is to vertical axis (North-South)
+					else rel = 0;
 
-								// Smoothly interpolate between dark horizontal steps and bright vertical steps 
-								// using square of projections (trigonometric identity layout), matching native software behaviors!
-								float interp = (cosAngle * cosAngle);
-
-								// level.WallHorizLight is negative (e.g. -8), WallVertLight is positive (e.g. +8)
-								rel = xs_RoundToInt(interp * level.WallHorizLight + (1.0 - interp) * level.WallVertLight);
-							}
-							else
-							{
-								rel = 0;
-							}
-						}
-						else
-						{
-							// Standard vanilla step-contrast route for orthogonal walls
-							rel = delta.X == 0 ? level.WallVertLight :
-								delta.Y == 0 ? level.WallHorizLight : 0;
-						}
-
-						rel = xs_RoundToInt((float)rel * gl_legacyvidmode_fakecontrast_scale);
-
-						// Store the calculated result into the memory cache vault for the next 8 ticks
-						entry.cachedRel = rel;
-						entry.lastUpdateTick = currentMapTimeTick;
-					}
 				}
 				else
 				{
-					// Standard uncached direct mathematical fallback route
-					DVector2 delta = linedef->Delta();
-					if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2))
-					{
-						float len = sqrt(delta.X * delta.X + delta.Y * delta.Y);
-						if (len > 0.0001f)
-						{
-							float cosAngle = fabs(delta.X / len);
-							float sinAngle = fabs(delta.Y / len);
-							float interp = (cosAngle * cosAngle);
-							rel = xs_RoundToInt(interp * level.WallHorizLight + (1.0 - interp) * level.WallVertLight);
-						}
-						else
-						{
-							rel = 0;
-						}
-					}
-					else
-					{
-						rel = delta.X == 0 ? level.WallVertLight :
-							delta.Y == 0 ? level.WallHorizLight : 0;
-					}
-
-					rel = xs_RoundToInt((float)rel * gl_legacyvidmode_fakecontrast_scale);
+					// Standard vanilla step-contrast route for orthogonal walls
+					rel = delta.X == 0 ? level.WallVertLight : delta.Y == 0 ? level.WallHorizLight : 0;
 				}
+
+				rel = xs_RoundToInt((float)rel * scaleGL1xfakecontrast);
 			}
 			// --- PATHWAY B - MODERN GL3/GL4 WAY ---
-			// Maintains original atan calculations to feed shaders natively.
 			else
 			{
 				DVector2 delta = linedef->Delta();
 				if (((level.flags2 & LEVEL2_SMOOTHLIGHTING) || (Flags & WALLF_SMOOTHLIGHTING) || r_fakecontrast == 2) &&
 					delta.X != 0)
 				{
-					rel = xs_RoundToInt // OMG LEE KILLOUGH LIVES! :/
-					(
-						level.WallHorizLight
-						+ fabs(atan(delta.Y / delta.X) / 1.57079)
-						* (level.WallVertLight - level.WallHorizLight)
-					);
+					float atanFraction = divnr<float, 2>(static_cast<float>(delta.Y), static_cast<float>(delta.X));
+					rel = xs_RoundToInt(level.WallHorizLight + fabsf(atan(atanFraction) * 0.63661977f) * (level.WallVertLight - level.WallHorizLight));
 				}
 				else
 				{

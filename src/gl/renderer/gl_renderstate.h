@@ -148,6 +148,8 @@ public:
 
 		// === [Darkcrafter07] ===
 		g_isCurrentlyGLSpriteDrawing = false; // if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
+		g_isCurrentlyGLModelWorldDrawing = false; // if it's world 3D model rendering now (currently used for GL1/GL2x only but also works for GL3+)
+		g_isCurrentlyGLModelOnscreenHUDDrawing = false; // if it's an onscreen or HUD 3D model rendering now (used for GL1/GL2x only but also works for GL3+)
 		g_isCurrentlyGL1xDynlightPassActive = false; // GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
 		g_isCurrentlyDrawingGL1xTransluscentDynlightWall = false; // track whether a transluscent GL1x/GL2x dynlight lit wall is drawing now
 		g_isCurrentlyDrawingGL1xTransluscentDynlightFlat = false; // track whether a transluscent GL1x/GL2x dynlight lit flat is drawing now
@@ -468,6 +470,8 @@ public:
 
 	// === [Darkcrafter07] ===
 	bool g_isCurrentlyGLSpriteDrawing; // if it's sprite rendering now (currently used for GL1/GL2x only but also works for GL3+)
+	bool g_isCurrentlyGLModelWorldDrawing; // if it's world 3D model rendering now (currently used for GL1/GL2x only but also works for GL3+)
+	bool g_isCurrentlyGLModelOnscreenHUDDrawing; // if it's an onscreen or HUD 3D model rendering now (used for GL1/GL2x only but also works for GL3+)
 	bool g_isCurrentlyGL1xDynlightPassActive; // GL1x/GL2x - track whether walls, flats or sprites are lit by a GL1x/GL2x dynlight
 	bool g_isCurrentlyDrawingGL1xTransluscentDynlightWall; // track whether a transluscent GL1x/GL2x dynlight lit wall is drawing now
 	bool g_isCurrentlyDrawingGL1xTransluscentDynlightFlat; // track whether a transluscent GL1x/GL2x dynlight lit flat is drawing now

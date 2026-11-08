@@ -389,7 +389,7 @@ void GLSceneDrawer::DrawPlayerSprites(sector_t * viewsector, bool hudModelStep)
 			if (level.flags3 & LEVEL3_NOCOLOREDSPRITELIGHTING) cm.ClearColor();
 		}
 
-		lightlevel = gl_CalcLightLevel(lightlevel, getExtraLight(), true, 0);
+		lightlevel = gl_CalcLightLevelWrapper(lightlevel, getExtraLight(), true, 0);
 
 		if (glset.lightmode >= 8 || lightlevel < 92)
 		{

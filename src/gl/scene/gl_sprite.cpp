@@ -564,7 +564,9 @@ void GLSprite::Draw(int pass)
 		}
 		else
 		{
+			gl_RenderState.g_isCurrentlyGLModelWorldDrawing = true;
 			gl_RenderModel(this);
+			gl_RenderState.g_isCurrentlyGLModelWorldDrawing = false;
 		}
 	}
 
