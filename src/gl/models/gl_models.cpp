@@ -92,6 +92,8 @@ void FGLModelRenderer::BeginDrawModel(AActor *actor, FSpriteModelFrame *smf, con
 
 void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
 {
+	gl_RenderState.g_isCurrentlyGLModelWorldDrawing = true;
+
 	// [Darkcrafter07]: GL1x/GL2x Legacy Brightmap Overlay
 	if (gl.legacyMode && gl_RenderState.IsBrightmapEnabled() && !(actor->renderflags & RF_FULLBRIGHT))
 	{
@@ -182,6 +184,8 @@ void FGLModelRenderer::EndDrawModel(AActor *actor, FSpriteModelFrame *smf)
 	// Reset backface culling if it was enabled for translucency
 	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]) && !(smf->flags & MDL_DONTCULLBACKFACES))
 		glDisable(GL_CULL_FACE);
+
+	gl_RenderState.g_isCurrentlyGLModelWorldDrawing = false;
 }
 
 void FGLModelRenderer::BeginDrawHUDModel(AActor *actor, const VSMatrix &objectToWorldMatrix, bool mirrored)
@@ -203,6 +207,8 @@ void FGLModelRenderer::BeginDrawHUDModel(AActor *actor, const VSMatrix &objectTo
 
 void FGLModelRenderer::EndDrawHUDModel(AActor *actor)
 {
+	gl_RenderState.g_isCurrentlyGLModelOnscreenHUDDrawing = true;
+
 	// --- Darkcrafter07: Legacy Brightmap Overlay for HUD/Weapon Models ---
 	// We check if the actor is valid and if we are in legacy mode with brightmaps enabled
 	FSpriteModelFrame *smf;
@@ -276,6 +282,8 @@ void FGLModelRenderer::EndDrawHUDModel(AActor *actor)
 	// Reset backface culling if it was enabled for translucency
 	if (!(actor->RenderStyle == LegacyRenderStyles[STYLE_Normal]) && !(smf->flags & MDL_DONTCULLBACKFACES))
 		glDisable(GL_CULL_FACE);
+
+	gl_RenderState.g_isCurrentlyGLModelOnscreenHUDDrawing = false;
 }
 
 IModelVertexBuffer *FGLModelRenderer::CreateVertexBuffer(bool needindex, bool singleframe)

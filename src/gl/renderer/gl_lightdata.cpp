@@ -42,7 +42,6 @@
 
 // externally settable lighting properties
 static float distfogtable[2][256];	// light to fog conversion table for black fog
-static float distgl1xsoftwarefogtable[2][256]; // light to fog conversion table for black fog for GL1x/GL2 software sector light modes
 
 CVAR(Int, gl_weaponlight, 8, CVAR_ARCHIVE);
 CUSTOM_CVAR(Bool, gl_enhanced_nightvision, false, CVAR_ARCHIVE|CVAR_NOINITCALL)
@@ -69,153 +68,36 @@ extern bool isUsingVolumetric3DModelLegacyDynlight;
 //
 //==========================================================================
 
+static int s_LastComputedGLDistFog = -1;
 CUSTOM_CVAR(Int, gl_distfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
+	if (s_LastComputedGLDistFog == gl_distfog) return; // skip recalculation if value not changed
+	s_LastComputedGLDistFog = gl_distfog;
+
+	const int val = gl_distfog;
+	const int halfVal = val >> 1;
+
 	for (int i = 0; i < 256; i++)
 	{
 		if (i < 164)
 		{
-			distfogtable[0][i] = (gl_distfog >> 1) + (gl_distfog)*(164 - i) / 164;
+			distfogtable[0][i] = halfVal + val * (164 - i) / 164;
 		}
 		else if (i < 230)
 		{
-			distfogtable[0][i] = (gl_distfog >> 1) - (gl_distfog >> 1)*(i - 164) / (230 - 164);
+			distfogtable[0][i] = halfVal - halfVal * (i - 164) / (230 - 164);
 		}
 		else distfogtable[0][i] = 0;
 
 		if (i < 128)
 		{
-			distfogtable[1][i] = 6.f + (gl_distfog >> 1) + (gl_distfog)*(128 - i) / 48;
+			distfogtable[1][i] = 6.f + halfVal + val * (128 - i) / 48;
 		}
 		else if (i < 216)
 		{
-			distfogtable[1][i] = (216.f - i) / ((216.f - 128.f)) * gl_distfog / 10;
+			distfogtable[1][i] = (216.f - i) / (216.f - 128.f) * val / 10;
 		}
 		else distfogtable[1][i] = 0;
-	}
-}
-
-// There's a need to have a separate fogtable for software/vanilla modes
-CUSTOM_CVAR(Int, gl1x_distfog, 70, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-{
-	const bool useHQtablegen = true;
-	const float invMul255 = 1.0f / 255.0f;
-
-	if (useHQtablegen)
-	{
-		for (int i = 0; i < 256; i++)
-		{
-			// Normalize index to a 0.0f - 1.0f scale
-			float f = (float)i * invMul255;
-
-			// --- SOFTWARE SECTOR LIGHT MODE #8 (ORIGINAL EXE) ---
-			// We keep the heavy 1.40f multiplier to lock down rich software shadows in the dark,
-			// but we modify the decay power dynamically.
-			float baseDensity0 = (float)gl1x_distfog * 1.40f;
-
-			// Added an aggressive power-scaling shift (-4.10f * f - 1.65f * (f * f)).
-			// In dark-to-mid zones (f < 0.4), the quadratic component is near zero, keeping the shadows heavy.
-			// In bright sectors (160 to 176, f > 0.6), the (f * f) term kicks in like a booster, 
-			// slamming the fog density down to absolute zero way faster. This fully stops the geometry 
-			// from prematurely drowning in fog at long distances, matching the clear look of the original Dark.
-			distgl1xsoftwarefogtable[0][i] = baseDensity0 * expf(-4.10f * f - 1.65f * (f * f));
-
-			// Hard safety cushion gate right at the edge of fullbright to prevent register overflow
-			if (i >= 235) distgl1xsoftwarefogtable[0][i] = 0.0f;
-
-
-			// --- VANILLA SECTOR LIGHT MODE #16 ---
-			// So far, the formulas may be closer to exe but it looks darker and wrong but let's have it too.
-			// Mapped onto the same high-velocity clearing curve for bright layers
-			float baseDensity1 = 6.0f + (float)gl1x_distfog * 1.65f;
-			distgl1xsoftwarefogtable[1][i] = baseDensity1 * expf(-4.60f * f - 1.95f * (f * f));
-
-			if (i >= 220) distgl1xsoftwarefogtable[1][i] = 0.0f;
-		}
-	}
-	else
-	{
-		// ---=== PIECEWISE APPROXIMATION OF OUR HQ EXP MATRIX ===---
-		int baseVal = gl1x_distfog;
-
-		// PATCH: Restored heavy base multipliers back to match 1.40f and 1.65f HQ anchors.
-		// This brings back pristine, pitch-black software shadow definition in dark areas!
-		int sftDarkAnchor = (int)(baseVal * 1.40f);
-		int vanDarkAnchor = 6 + (int)(baseVal * 1.65f);
-
-		for (int i = 0; i < 256; i++)
-		{
-			// 1. --- SOFTWARE SECTOR LIGHT MODE #8 (HQ-ALIGNED PIECEWISE) ---
-			if (i < 32)
-			{
-				distgl1xsoftwarefogtable[0][i] = sftDarkAnchor - (sftDarkAnchor * 0.15f) * i / 32;
-			}
-			else if (i < 64)
-			{
-				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.85f) - (sftDarkAnchor * 0.23f) * (i - 32) / 32;
-			}
-			else if (i < 96)
-			{
-				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.62f) - (sftDarkAnchor * 0.25f) * (i - 64) / 32;
-			}
-			else if (i < 128)
-			{
-				// Zone 3: Central Mid-Tones. The slope begins to take a steep dive here.
-				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.37f) - (sftDarkAnchor * 0.20f) * (i - 96) / 32;
-			}
-			else if (i < 164)
-			{
-				// Zone 4: Upper Mid-Tones. Accelerated drop-off completely mimics the (f * f) booster!
-				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.17f) - (sftDarkAnchor * 0.11f) * (i - 128) / 36;
-			}
-			else if (i < 196)
-			{
-				// Zone 5: Bright Room Baseline. Dropped sharply near zero to keep distant walls clear.
-				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.06f) - (sftDarkAnchor * 0.04f) * (i - 164) / 32;
-			}
-			else if (i < 235)
-			{
-				distgl1xsoftwarefogtable[0][i] = (int)(sftDarkAnchor * 0.02f) - (sftDarkAnchor * 0.02f) * (i - 196) / (235 - 196);
-			}
-			else
-			{
-				distgl1xsoftwarefogtable[0][i] = 0.0f;
-			}
-
-			// 2. --- VANILLA SECTOR LIGHT MODE #16 (HQ-ALIGNED PIECEWISE) ---
-			if (i < 32)
-			{
-				distgl1xsoftwarefogtable[1][i] = vanDarkAnchor - (vanDarkAnchor * 0.22f) * i / 32;
-			}
-			else if (i < 64)
-			{
-				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.78f) - (vanDarkAnchor * 0.26f) * (i - 32) / 32;
-			}
-			else if (i < 96)
-			{
-				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.52f) - (vanDarkAnchor * 0.24f) * (i - 64) / 32;
-			}
-			else if (i < 128)
-			{
-				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.28f) - (vanDarkAnchor * 0.16f) * (i - 96) / 32;
-			}
-			else if (i < 160)
-			{
-				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.12f) - (vanDarkAnchor * 0.09f) * (i - 128) / 32;
-			}
-			else if (i < 192)
-			{
-				distgl1xsoftwarefogtable[1][i] = (int)(vanDarkAnchor * 0.03f) - (vanDarkAnchor * 0.03f) * (i - 160) / 32;
-			}
-			else if (i < 220)
-			{
-				distgl1xsoftwarefogtable[1][i] = 0.0f;
-			}
-			else
-			{
-				distgl1xsoftwarefogtable[1][i] = 0.0f;
-			}
-		}
 	}
 }
 
@@ -619,7 +501,7 @@ void gl_SetColor(int sectorlightlevel, int rellight, bool fullbright, const FCol
 
 //==========================================================================
 //
-// calculates the current fog density
+// Calculate the current fog density
 //
 //	Rules for fog:
 //
@@ -640,17 +522,25 @@ void gl_SetColor(int sectorlightlevel, int rellight, bool fullbright, const FCol
 //
 //==========================================================================
 
-float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sectorfogdensity, int blendfactor)
+float gl_GetFogDensityWrapper(int lightlevel, int rellight, PalEntry fogcolor, int sectorfogdensity, int blendfactor)
+{
+	const bool isGL1xSoftwareSectorLightmode = gl.legacyMode && (gl_lightmode == 8 || gl_lightmode == 16);
+
+	if (isGL1xSoftwareSectorLightmode)
+	{
+		return gl_GetFogDensityGL1x(lightlevel, rellight, fogcolor, sectorfogdensity, blendfactor);
+	}
+	else
+	{
+		return gl_GetFogDensityStandard(lightlevel, rellight, fogcolor, sectorfogdensity, blendfactor);
+	}
+}
+
+float gl_GetFogDensityStandard(int lightlevel, int rellight, PalEntry fogcolor, int sectorfogdensity, int blendfactor)
 {
 	float density;
 
 	int lightmode = glset.lightmode;
-
-	// Check if this is our custom fake legacy software mode (supporting both 8 and 16)
-	const bool isGL1xSoftwareSectorLightmode = (gl.legacyMode && (lightmode == 8 || lightmode == 16));
-
-	if (isGL1xSoftwareSectorLightmode) lightmode = 3;
-
 	if (lightmode >= 8 && blendfactor > 0) lightmode = 2;	// The blendfactor feature does not work with software-style lighting.
 
 	if (lightmode & 4)
@@ -668,50 +558,7 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 		// case 2: black fog
 		if ((lightmode < 8 || blendfactor > 0) && !(level.flags3 & LEVEL3_NOLIGHTFADE))
 		{
-			// Calculate the true visual lighting environment
-			int visual_lightlevel = lightlevel + rellight;
-
-			if (isGL1xSoftwareSectorLightmode)
-			{
-				// ---=== THE HORIZONTAL NORTH-WALL PIPELINE SHIELD ===---
-				int lookup_lightlevel = visual_lightlevel;
-				if (rellight < 0)
-				{
-					lookup_lightlevel = lightlevel; // Protect horizontal indices from diving into thick fog
-				}
-
-				int clamped_visual_light = clamp<int>(lookup_lightlevel, 0, 255);
-
-				// Explicitly track the active sub-mode index layer (16 -> layer 1, 8 -> layer 0)
-				int retroTableIndex = (glset.lightmode == 16) ? 1 : 0;
-
-				// Feed the protected light directly into our custom exponential table
-				density = distgl1xsoftwarefogtable[retroTableIndex][gl_ClampLight(clamped_visual_light)];
-
-				// The step-wise modifier curve operates on the full visual footprint to keep near contrast intact
-				float                                modifier = 1.0f;
-				if      (visual_lightlevel >= 240)   modifier = 0.30f; 
-				else if (visual_lightlevel >= 224)   modifier = 0.35f;
-				else if (visual_lightlevel >= 208)   modifier = 0.40f;
-				else if (visual_lightlevel >= 192)   modifier = 0.45f;
-				else if (visual_lightlevel >= 176)   modifier = 0.50f;
-				else if (visual_lightlevel >= 160)   modifier = 0.65f;
-				else if (visual_lightlevel >= 144)   modifier = 0.80f;
-				else if (visual_lightlevel >= 136)   modifier = 0.90f;
-				else if (visual_lightlevel >= 128)   modifier = 0.95f;
-				else if (visual_lightlevel >= 112)   modifier = 1.00f;
-
-				// decrease fog for bright fake contrast walls in the big distance
-				if (rellight > 0)                    modifier *= 0.25f;
-
-				density = density * modifier;
-			}
-			else
-			{
-				// Standard hardware baseline calculation path for regular lighting modes (fully isolated)
-				int clamped_visual_light = clamp<int>(lightlevel, 30, 255);
-				density = distfogtable[glset.lightmode != 0][gl_ClampLight(clamped_visual_light)];
-			}
+			density = distfogtable[glset.lightmode != 0][gl_ClampLight(lightlevel)];
 		}
 		else
 		{
@@ -720,58 +567,131 @@ float gl_GetFogDensity(int lightlevel, int rellight, PalEntry fogcolor, int sect
 	}
 	else if (level.outsidefogdensity != 0 && APART(level.info->outsidefog) != 0xff && (fogcolor.d & 0xffffff) == (level.info->outsidefog & 0xffffff))
 	{
+		// case 3. outsidefogdensity has already been set as needed
 		density = level.outsidefogdensity;
 	}
 	else  if (level.fogdensity != 0)
+	{
+		// case 4: level has fog density set
+		density = level.fogdensity;
+	}
+	else if (lightlevel < 248)
+	{
+		// case 5: use light level
+		density = clamp<int>(255 - lightlevel, 30, 255);
+	}
+	else
+	{
+		density = 0.f;
+	}
+	return density;
+}
+
+
+// Precomputed modifier LUTs for software/vanilla fog density (case 2 & case 5)
+// Eliminates 10-branch else-if ladders per wall/flat/sprite draw call.
+struct FSoftwareGL1xFogModifierLUT
+{
+	float case2[256]; float case5[256];
+	FSoftwareGL1xFogModifierLUT()
+	{
+		for (int ll = 0; ll < 256; ++ll)
+		{
+			// Case 2 (black fog / diminished lighting) modifier
+			float               mod2 = 1.0f;
+			if      (ll >= 240) mod2 = 0.30f;
+			else if (ll >= 224) mod2 = 0.35f;
+			else if (ll >= 208) mod2 = 0.40f;
+			else if (ll >= 192) mod2 = 0.45f;
+			else if (ll >= 176) mod2 = 0.50f;
+			else if (ll >= 160) mod2 = 0.65f;
+			else if (ll >= 144) mod2 = 0.80f;
+			else if (ll >= 136) mod2 = 0.90f;
+			else if (ll >= 128) mod2 = 0.95f;
+			case2[ll] = mod2;
+
+			// Case 5 (colored fog based on light level) modifier
+			float               mod5 = 1.0f;
+			if      (ll >= 240) mod5 = 0.30f;
+			else if (ll >= 224) mod5 = 0.35f;
+			else if (ll >= 208) mod5 = 0.40f;
+			else if (ll >= 192) mod5 = 0.45f;
+			else if (ll >= 176) mod5 = 0.50f;
+			else if (ll >= 160) mod5 = 0.65f;
+			else if (ll >= 144) mod5 = 0.80f;
+			else if (ll >= 136) mod5 = 0.70f;
+			else if (ll >= 128) mod5 = 0.70f;
+			case5[ll] = mod5;
+		}
+	}
+};
+static const FSoftwareGL1xFogModifierLUT g_SoftwareFogModLUT;
+
+float gl_GetFogDensityGL1x(int lightlevel, int rellight, PalEntry fogcolor, int sectorfogdensity, int blendfactor)
+{
+	float density;
+
+	int lightmode = 3; // Custom fake legacy software mode (8 or 16) maps to mode 3
+	if (blendfactor > 0) lightmode = 2; // The blendfactor feature does not work with software-style lighting.
+
+	if (sectorfogdensity != 0)
+	{
+		// case 1: Sector has an explicit fog density set.
+		density = sectorfogdensity;
+	}
+	else if ((fogcolor.d & 0xffffff) == 0)
+	{
+		// case 2: black fog
+		if (!(level.flags3 & LEVEL3_NOLIGHTFADE))
+		{
+			// Calculate the true visual lighting environment
+			const int visual_lightlevel = lightlevel + rellight;
+
+			// Feed the light directly into our custom table
+			density = distfogtable[glset.lightmode != 0][gl_ClampLight(lightlevel)];
+
+			// The step-wise modifier curve operates on the full visual footprint to keep near contrast intact
+			float modifier = g_SoftwareFogModLUT.case2[clamp<int>(visual_lightlevel, 0, 255)];
+
+			// decrease fog for bright fake contrast walls in the big distance
+			if (rellight > 0) modifier *= 0.25f;
+
+			density *= modifier;
+		}
+		else
+		{
+			density = 0.f;
+		}
+		density *= 0.32f; // decrease overall dimlight black fog density for GL1x software/vanilla modes
+	}
+	else if (level.outsidefogdensity != 0 && APART(level.info->outsidefog) != 0xff && 
+					(fogcolor.d & 0xffffff) == (level.info->outsidefog & 0xffffff))
+	{
+		density = level.outsidefogdensity;
+	}
+	else if (level.fogdensity != 0)
 	{
 		density = level.fogdensity;
 	}
 	else if (lightlevel < 248)
 	{
 		// case 5: use light level
-		int visual_lightlevel = lightlevel + rellight;
+		const int visual_lightlevel = lightlevel + rellight;
 
-		if (isGL1xSoftwareSectorLightmode)
-		{
-			// Apply the exact same horizontal negative shielding matrix to case 5 custom fogs
-			int lookup_lightlevel = visual_lightlevel;
-			if (rellight < 0)
-			{
-				lookup_lightlevel = lightlevel;
-			}
+		density = distfogtable[glset.lightmode != 0][gl_ClampLight(lightlevel)];
 
-			int clamped_visual_light = clamp<int>(lookup_lightlevel, 0, 255);
-			density = clamp<int>(255 - clamped_visual_light, 30, 255);
+		float modifier = g_SoftwareFogModLUT.case5[clamp<int>(visual_lightlevel, 0, 255)];
 
-			int retroTableIndex = (glset.lightmode == 16) ? 1 : 0;
-			density = distgl1xsoftwarefogtable[retroTableIndex][gl_ClampLight(clamped_visual_light)];
+		// decrease fog for bright fake contrast walls in the big distance
+		if (rellight > 0) modifier *= 0.25f;
 
-			float                                modifier = 1.0f;
-			if      (visual_lightlevel >= 240)   modifier = 0.30f; 
-			else if (visual_lightlevel >= 224)   modifier = 0.35f;
-			else if (visual_lightlevel >= 208)   modifier = 0.40f;
-			else if (visual_lightlevel >= 192)   modifier = 0.45f;
-			else if (visual_lightlevel >= 176)   modifier = 0.50f;
-			else if (visual_lightlevel >= 160)   modifier = 0.65f;
-			else if (visual_lightlevel >= 144)   modifier = 0.80f;
-			else if (visual_lightlevel >= 136)   modifier = 0.70f;
-			else if (visual_lightlevel >= 128)   modifier = 0.70f;
-			else if (visual_lightlevel >= 112)   modifier = 1.00f;
-
-			// decrease fog for bright fake contrast walls in the big distance
-			if (rellight > 0)                    modifier *= 0.25f;
-
-			density = density * modifier;
-		}
-		else
-		{
-			density = clamp<int>(255 - lightlevel, 30, 255);
-		}
+		density *= modifier;
 	}
 	else
 	{
 		density = 0.f;
 	}
+
 	return density;
 }
 
@@ -893,7 +813,7 @@ void gl_SetFog(int lightlevel, int rellight, bool fullbright, const FColormap *c
 	{
 		fogcolor = cmap->FadeColor;
 		// rellight is now the 2nd argument
-		fogdensity = gl_GetFogDensity(lightlevel, rellight, fogcolor, cmap->FogDensity, cmap->BlendFactor);
+		fogdensity = gl_GetFogDensityWrapper(lightlevel, rellight, fogcolor, cmap->FogDensity, cmap->BlendFactor);
 		fogcolor.a = 0;
 	}
 	else
@@ -915,7 +835,7 @@ void gl_SetFog(int lightlevel, int rellight, bool fullbright, const FColormap *c
 	else
 	{
 		int check_lightmode = glset.lightmode;
-		if (gl.legacyMode && (check_lightmode == 8 || check_lightmode == 16)) check_lightmode = 3;
+		//if (gl.legacyMode && (check_lightmode == 8 || check_lightmode == 16)) check_lightmode = 3;
 
 		if (cmap && (check_lightmode == 2 || (check_lightmode >= 8 && cmap->BlendFactor > 0)) && fogcolor == 0)
 		{

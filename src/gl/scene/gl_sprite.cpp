@@ -328,7 +328,7 @@ void GLSprite::Draw(int pass)
 			if (!gl_isBlack(Colormap.FadeColor))
 			{
 				float dist = Dist2(r_viewpoint.Pos.X, r_viewpoint.Pos.Y, x, y);
-				int fogd = gl_GetFogDensity(lightlevel, rel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
+				int fogd = gl_GetFogDensityWrapper(lightlevel, rel, Colormap.FadeColor, Colormap.FogDensity, Colormap.BlendFactor);
 
 				// this value was determined by trial and error and is scale dependent!
 				float factor = 0.05f + exp(-fogd * dist / 62500.f);
@@ -564,9 +564,7 @@ void GLSprite::Draw(int pass)
 		}
 		else
 		{
-			gl_RenderState.g_isCurrentlyGLModelWorldDrawing = true;
 			gl_RenderModel(this);
-			gl_RenderState.g_isCurrentlyGLModelWorldDrawing = false;
 		}
 	}
 

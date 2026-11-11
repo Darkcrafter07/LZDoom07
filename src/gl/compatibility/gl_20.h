@@ -76,17 +76,13 @@ struct FLightColorContext
 	}
 };
 
+void gl_InvalidateFixedFunctionAlphaCache();
+
 // Menu patching for legacy mode capabilities
 void gl_PatchMenu();
 
 // Texture management functions for fixed function pipeline
 void gl_SetTextureMode(int type);
-
-// Setup parameters to project one dynamic light onto a wall plane
-bool gl_SetupLightWall(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive);
-
-// Setup parameters to project one dynamic light onto a flat plane (floor/ceiling)
-bool gl_SetupLightFlat(int group, Plane & p, FDynamicLight * light, FVector3 & nearPt, FVector3 & up, FVector3 & right, float & scale, bool checkside, bool additive);
 
 // Bakes big radius static dynlights into gl_walls_draw.cpp, case "GLPASS_LIGHTEFFECTS_LEGACY" to save on CPU
 //bool gl_GetWallStaticLightmaps(seg_t *seg, float *ztop, float *zbottom, float x1, float y1, 
