@@ -33,6 +33,22 @@
 #include "actorinlines.h"
 #include "i_time.h"
 
+#ifdef _MSC_VER
+// Everything seems to work just fine even with such warnings.
+// Disable warning about conversion from 'double' to 'float', possible loss of data.
+#pragma warning(disable:4244)
+// Disable warning about 'initializing': truncation from 'double' to 'float'
+#pragma warning(disable:4305)
+#endif
+
+//	#if defined(__GNUC__) || defined(__clang__)
+//	// GCC/Clang: Disable warnings about implicit float conversions.
+//	// -Wfloat-conversion handles double to float specifically.
+//	// -Wconversion is a broader check for all type casts.
+//	#pragma GCC diagnostic ignored "-Wfloat-conversion"
+//	#pragma GCC diagnostic ignored "-Wconversion"
+//	#endif
+
 void PolyRenderModel(PolyRenderThread *thread, const Mat4f &worldToClip, uint32_t stencilValue, float x, float y, float z, FSpriteModelFrame *smf, AActor *actor)
 {
 	PolyModelRenderer renderer(thread, worldToClip, stencilValue);
@@ -128,16 +144,21 @@ void PolyModelRenderer::AddLights(AActor *actor)
 			FLightNode * node = subsector->lighthead;
 			while (node) // check all lights touching a subsector
 			{
-				FDynamicLight *light = node->lightsource;
+			FDynamicLight *light = node->lightsource;
+			const bool isCamglowDynlightHere = light->IsDynlightCamglow();
 			if (light->ShouldLightActor(actor))
 				{
 					int group = subsector->sector->PortalGroup;
 					DVector3 pos = light->PosRelative(group);
 					float radius = (float)(light->GetRadius() + actorradius);
-					double dx = pos.X - x;
-					double dy = pos.Y - y;
-					double dz = pos.Z - z;
-					double distSquared = dx * dx + dy * dy + dz * dz;
+
+					//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+					if (isCamglowDynlightHere) radius *= 0.5f;
+
+					float dx = pos.X - x;
+					float dy = pos.Y - y;
+					float dz = pos.Z - z;
+					float distSquared = dx * dx + dy * dy + dz * dz;
 					if (distSquared < radius * radius) // Light and actor touches
 					{
 						if (std::find(addedLights.begin(), addedLights.end(), light) == addedLights.end()) // Check if we already added this light from a different subsector
@@ -157,6 +178,7 @@ void PolyModelRenderer::AddLights(AActor *actor)
 			FDynamicLight *lightsource = addedLights[i];
 
 			bool is_point_light = lightsource->IsAttenuated();
+			const bool isCamglowDynlightHere = lightsource->IsDynlightCamglow();
 
 			uint32_t red = lightsource->GetRed();
 			uint32_t green = lightsource->GetGreen();
@@ -167,6 +189,10 @@ void PolyModelRenderer::AddLights(AActor *actor)
 			light.y = (float)lightsource->Y();
 			light.z = (float)lightsource->Z();
 			light.radius = 256.0f / lightsource->GetRadius();
+
+			//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+			if (isCamglowDynlightHere) light.radius *= 0.5f;
+
 			light.color = (red << 16) | (green << 8) | blue;
 			if (is_point_light)
 				light.radius = -light.radius;

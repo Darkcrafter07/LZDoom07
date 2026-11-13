@@ -63,22 +63,18 @@ EXTERN_CVAR(Int, gl_debug_level)
 EXTERN_CVAR(Bool, gl_debug_breakpoint)
 
 EXTERN_CVAR(Bool, gl_camglowlight)
-
 EXTERN_CVAR(Bool, gl_usegl1mode)
-
 EXTERN_CVAR(Bool, gl_legacy_dynlight_baked_huge)
-
 EXTERN_CVAR(Bool, gl_legacy_dynlight_compress_range)
 EXTERN_CVAR(Float, gl_legacy_dynlight_brightness)
 EXTERN_CVAR(Int, gl_legacy_dynlight_saturation_thresh)
 EXTERN_CVAR(Float, gl_legacy_dynlight_saturation_dark)
 EXTERN_CVAR(Float, gl_legacy_dynlight_saturation_bright)
 EXTERN_CVAR(Float, gl_legacy_dynlight_hue_shift)
-
 EXTERN_CVAR(Bool, gl_cachedynlightmdlocclusion)
-
 EXTERN_CVAR(Bool, gl_legacy_dynlight_overbright)
 EXTERN_CVAR(Float, gl_legacy_dynlight_overbright_flats)
 EXTERN_CVAR(Float, gl_legacy_dynlight_overbright_walls)
+EXTERN_CVAR(Float, gl_dynlight_distance_cull)
 
 #endif // _GL_INTERN_H

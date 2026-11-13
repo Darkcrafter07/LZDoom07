@@ -385,6 +385,7 @@ void RenderPolySprite::SetDynlight(AActor *thing, PolyDrawArgs &args)
 	while (node != nullptr)
 	{
 		FDynamicLight *light = node->lightsource;
+		const bool isCamglowDynlightHere = light->IsDynlightCamglow();
 		if (light->ShouldLightActor(thing))
 		{
 			float lx = (float)(light->X() - thing->X());
@@ -392,6 +393,10 @@ void RenderPolySprite::SetDynlight(AActor *thing, PolyDrawArgs &args)
 			float lz = (float)(light->Z() - thing->Center());
 			float LdotL = lx * lx + ly * ly + lz * lz;
 			float radius = node->lightsource->GetRadius();
+
+			//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+			if (isCamglowDynlightHere) radius *= 0.5f;
+
 			if (radius * radius >= LdotL)
 			{
 				float distance = sqrt(LdotL);

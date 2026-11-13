@@ -3030,8 +3030,13 @@ void GLFlat::DrawSubsectorLights(subsector_t * sub, int pass)
 		}
 
 		radius = light->GetRadius();
-		bool isCamglowDynlightHere = false;
-		if (light->IsDynlightCamglow()) isCamglowDynlightHere = true;
+		const bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+		if (!isCamglowDynlightHere && IsGLDynlightCulledByDistance(light, group, radius))
+		{
+			node = node->nextLight;
+			continue;
+		}
 
 		// Turn OFF big dynlights!
 		// Do NOT process big dynlights as we're going to bake them
@@ -3393,6 +3398,12 @@ void GLWall::RenderLightsCompat(int pass)
 
 		radius = light->GetRadius();
 		const bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+		if (!isCamglowDynlightHere && IsGLDynlightCulledByDistance(light, group, radius))
+		{
+			node = node->nextLight;
+			continue;
+		}
 
 		// Turn OFF big dynlights!
 		// Do NOT process big dynlights as we're going to bake them

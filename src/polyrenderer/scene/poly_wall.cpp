@@ -414,6 +414,11 @@ void RenderPolyWall::SetDynLights(PolyRenderThread *thread, PolyDrawArgs &args)
 	}
 
 	FLightNode *light_list = (LineSeg && LineSeg->sidedef) ? LineSeg->sidedef->lighthead : nullptr;
+	if (light_list == nullptr)
+	{
+		args.SetLights(nullptr, 0);
+		return;
+	}
 
 	auto cameraLight = PolyCameraLight::Instance();
 	if ((cameraLight->FixedLightLevel() >= 0) || (cameraLight->FixedColormap() != nullptr))
@@ -422,112 +427,94 @@ void RenderPolyWall::SetDynLights(PolyRenderThread *thread, PolyDrawArgs &args)
 		return;
 	}
 
-	// -----------------------------------------------------------------
-	// POLYRENDERER VISUAL OCCLUSION SHIELD GATE
-	// -----------------------------------------------------------------
-	// Intercept the linked light nodes chain directly using the global view state
-	// before letting the CPU calculate max lights counters and allocate frame memory.
-	FLightNode *check_node = light_list;
-	while (check_node && r_dynlights_occlude)
+	// Precompute 2D wall line vectors once for both light culling and face normal
+	const float v1x = (float)v1.X;
+	const float v1y = (float)v1.Y;
+	const float dx = (float)(v2.X - v1.X);
+	const float dy = (float)(v2.Y - v1.Y);
+	const float nx = dy;
+	const float ny = -dx;
+	const float lensqr = nx * nx + ny * ny;
+
+	const int wallGroup = (LineSeg && LineSeg->frontsector) ? LineSeg->frontsector->PortalGroup : 0;
+	const bool doOcclude = (r_dynlights_occlude != 0);
+
+	// Single-pass filter: distance cull + wall plane cull + visual occlusion (thread-safe)
+	enum { MAX_POLY_LIGHTS = 64 };
+	FDynamicLight *valid_lights[MAX_POLY_LIGHTS];
+	int valid_count = 0;
+
+	for (FLightNode *node = light_list; node != nullptr && valid_count < MAX_POLY_LIGHTS; node = node->nextLight)
 	{
-		FDynamicLight *light = check_node->lightsource;
+		FDynamicLight *light = node->lightsource;
+		if (light == nullptr || !light->IsActive() || light->target == nullptr) continue;
+
 		float radius = light->GetRadius();
-		bool isBigRadiusDynlight = radius > 468.0f;
+		if (radius <= 0.0f) continue;
 
-		if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight && r_dynlights_occlude) // works bad with big radius dynlights
+		const bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+		//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+		if (isCamglowDynlightHere) radius *= 0.5f;
+
+		// 1. Distance cull gate (runs before expensive checks)
+		if (!isCamglowDynlightHere && IsDynlightCulledByDistance(light, wallGroup, radius)) continue;
+
+		// 2. Fast 2D wall plane distance check without sqrt (culls lights not touching wall)
+		if (lensqr > 0.0001f)
 		{
-			bool isCamglowDynlightHere = light->IsDynlightCamglow();
-
-			if (!isCamglowDynlightHere)
-			{
-				// Standard hardware-alike sector and absolute group position mapping
-				sector_t* checkSector = light->Sector ? light->Sector : light->target->Sector;
-				int currentGroup = checkSector ? checkSector->PortalGroup : 0;
-				DVector3 lightPosAbs = light->PosAbsolute(currentGroup);
-
-				float adjustedRadius = radius * 0.85f; // Shrink radius a tad bit to cull them less
-
-				bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, light->target, adjustedRadius, true);
-				bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, lightPosAbs, checkSector, light->target, adjustedRadius, true);
-				bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, light->target, adjustedRadius, true);
-
-				if (!isDynlightVisibleBehind2Sobstr || !isDynlightVisibleBehind3DFloorSides || isDynlightObstructedBy3DFloorFlats)
-				{
-					if (light->IsActive())
-					{
-						light->Deactivate(); // Hibernate light immediately to bypass poly drawing passes
-					}
-				}
-				else
-				{
-					if (!light->IsActive())
-					{
-						light->Activate(); // Restore the light back into the active pipeline cleanly
-					}
-				}
-			}
+			DVector3 lpos = light->PosRelative(wallGroup);
+			float cross = ((float)lpos.X - v1x) * dy - ((float)lpos.Y - v1y) * dx;
+			if (cross * cross > radius * radius * lensqr) continue;
 		}
-		check_node = check_node->nextLight;
+
+		// 3. Visual occlusion shield gate
+		if (doOcclude && !isCamglowDynlightHere && radius <= 468.0f)
+		{
+			sector_t *checkSector = light->Sector ? light->Sector : light->target->Sector;
+			int currentGroup = checkSector ? checkSector->PortalGroup : wallGroup;
+			DVector3 lightPosAbs = light->PosAbsolute(currentGroup);
+			float adjustedRadius = radius * 0.85f; // Shrink radius a tad bit to cull them less
+
+			bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(r_viewpoint.camera, light->target, adjustedRadius, true);
+			bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(r_viewpoint.Pos, lightPosAbs, checkSector, light->target, adjustedRadius, true);
+			bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(r_viewpoint.camera, light->target, adjustedRadius, true);
+
+			if (!isDynlightVisibleBehind2Sobstr || !isDynlightVisibleBehind3DFloorSides || isDynlightObstructedBy3DFloorFlats) continue;
+		}
+
+		valid_lights[valid_count++] = light;
 	}
 
-	// Calculate max lights that can touch the wall so we can allocate memory for the list
-	int max_lights = 0;
-	FLightNode *cur_node = light_list;
-	while (cur_node)
-	{
-		if (cur_node->lightsource->IsActive())
-			max_lights++;
-		cur_node = cur_node->nextLight;
-	}
-
-	if (max_lights == 0)
+	if (valid_count == 0)
 	{
 		args.SetLights(nullptr, 0);
 		return;
 	}
 
-	int dc_num_lights = 0;
-	PolyLight *dc_lights = thread->FrameMemory->AllocMemory<PolyLight>(max_lights);
+	PolyLight *dc_lights = thread->FrameMemory->AllocMemory<PolyLight>(valid_count);
 
-	// Setup lights
-	cur_node = light_list;
-	while (cur_node)
+	for (int i = 0; i < valid_count; i++)
 	{
-		if (cur_node->lightsource->IsActive())
-		{
-			bool is_point_light = cur_node->lightsource->IsAttenuated();
+		FDynamicLight *src = valid_lights[i];
+		const uint32_t red = src->GetRed();
+		const uint32_t green = src->GetGreen();
+		const uint32_t blue = src->GetBlue();
 
-			// To do: cull lights not touching wall
-
-			uint32_t red = cur_node->lightsource->GetRed();
-			uint32_t green = cur_node->lightsource->GetGreen();
-			uint32_t blue = cur_node->lightsource->GetBlue();
-
-			auto &light = dc_lights[dc_num_lights++];
-			light.x = (float)cur_node->lightsource->X();
-			light.y = (float)cur_node->lightsource->Y();
-			light.z = (float)cur_node->lightsource->Z();
-			light.radius = 256.0f / cur_node->lightsource->GetRadius();
-			light.color = (red << 16) | (green << 8) | blue;
-			if (is_point_light)
-				light.radius = -light.radius;
-		}
-
-		cur_node = cur_node->nextLight;
+		auto &light = dc_lights[i];
+		light.x = (float)src->X();
+		light.y = (float)src->Y();
+		light.z = (float)src->Z();
+		light.radius = 256.0f / src->GetRadius();
+		light.color = (red << 16) | (green << 8) | blue;
+		if (src->IsAttenuated()) light.radius = -light.radius;
 	}
 
-	args.SetLights(dc_lights, dc_num_lights);
+	args.SetLights(dc_lights, valid_count);
 
-	// Face normal:
-	float dx = (float)(v2.X - v1.X);
-	float dy = (float)(v2.Y - v1.Y);
-	float nx = dy;
-	float ny = -dx;
-	float lensqr = nx * nx + ny * ny;
-	float rcplen = 1.0f / sqrt(lensqr);
-	nx *= rcplen;
-	ny *= rcplen;
-	args.SetNormal({ nx, ny, 0.0f });
+	// Reuse precomputed face normal components
+	float rcplen = (lensqr > 0.0f) ? (1.0f / sqrtf(lensqr)) : 0.0f;
+	args.SetNormal({ nx * rcplen, ny * rcplen, 0.0f });
 }
 
 void RenderPolyWall::DrawStripes(PolyRenderThread *thread, PolyDrawArgs &args, TriVertex *vertices)

@@ -24,6 +24,7 @@
 #define __GLC_DYNLIGHT_H
 
 #include "c_cvars.h"
+#include "../gl/system/gl_cvars.h"
 #include "a_dynlight.h"
 #include "gl/utility/gl_geometric.h"
 
@@ -62,5 +63,16 @@ bool gl_GetLight(int group, Plane & p, FDynamicLight * light, bool checkside, FD
 void gl_AddLightToList(int group, FDynamicLight * light, FDynLightData &ldata);
 void gl_UploadLights(FDynLightData &data);
 
+// Save CPU by turning off dynlights if they're further than a threshold
+inline bool IsGLDynlightCulledByDistance(FDynamicLight* light, int group, float radius)
+{
+	if (r_dynlight_distance_cull <= 0.0f) return false;
+	// Add light radius so large lights don't pop out abruptly while their edge is still in range
+	const float maxDist = r_dynlight_distance_cull + radius;
+	const float culldistSq = maxDist * maxDist;
+	const DVector3 lpos = light->PosRelative(group);
+	const float distSq = (lpos - r_viewpoint.Pos).LengthSquared();
+	return distSq > (float)culldistSq;
+}
 
 #endif

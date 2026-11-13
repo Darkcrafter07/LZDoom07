@@ -55,7 +55,7 @@
 CVAR (Bool, gl_lights_checkside, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR (Bool, gl_light_sprites, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR (Bool, gl_light_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
-
+CVAR (Float, gl_dynlight_distance_cull, 6000.0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 //==========================================================================
 //

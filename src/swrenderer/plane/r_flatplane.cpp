@@ -203,8 +203,10 @@ namespace swrenderer
 			drawerargs.SetLight(basecolormap, (float)(GlobVis * fabs(viewport->CenterY - y)), planeshade);
 		}
 
-		if (r_dynlights)
+		if (r_dynlights && light_list)
 		{
+			const auto &vp = viewport->viewpoint;
+
 			int tx = x1;
 			bool mirror = !!(Thread->Portal->MirrorFlags & RF_XFLIP);
 			if (mirror)
@@ -217,112 +219,104 @@ namespace swrenderer
 			drawerargs.dc_viewpos.Z = (float)((viewport->CenterY - y - 0.5) / viewport->InvZtoScale * zspan);
 			drawerargs.dc_viewpos_step.X = (float)(zspan / viewport->CenterX);
 
-			if (mirror)
-				drawerargs.dc_viewpos_step.X = -drawerargs.dc_viewpos_step.X;
+			if (mirror) drawerargs.dc_viewpos_step.X = -drawerargs.dc_viewpos_step.X;
 
 			// Plane normal
 			drawerargs.dc_normal.X = 0.0f;
 			drawerargs.dc_normal.Y = 0.0f;
 			drawerargs.dc_normal.Z = (y >= viewport->CenterY) ? 1.0f : -1.0f;
 
-			// -----------------------------------------------------------------
-			// SOFTWARE REHDERER VISUAL OCCLUSION SHIELD FLAT PLANAR GATE
-			// -----------------------------------------------------------------
-			// Process global continuous occlusion culling on the thread context level
-			// before allowing the CPU loops to build costly multi-pass drawer arguments.
-			VisiblePlaneLight *check_node = light_list;
-			while (check_node && r_dynlights_occlude) // YEAH IT'S A CRAPPY ATTEMPT but just for consistency with GL
+			// Hoist invariant camera & row constants outside the light loop
+			const double camX = vp.Pos.X;
+			const double camY = vp.Pos.Y;
+			const double camZ = vp.Pos.Z;
+			const double viewSin = vp.Sin;
+			const double viewCos = vp.Cos;
+			const double viewTanSin = vp.TanSin;
+			const double viewTanCos = vp.TanCos;
+			const float viewPosY = drawerargs.dc_viewpos.Y;
+			const float viewPosZ = drawerargs.dc_viewpos.Z;
+			const float normZ = drawerargs.dc_normal.Z;
+			const bool doOcclude = (r_dynlights_occlude != 0);
+
+			// Single-pass stack collection: avoids 3x list traversal, thread-unsafe Deactivate(),
+			// and zero-light FrameMemory allocations on every horizontal scanline.
+			enum { MAX_ROW_LIGHTS = 64 };
+			DrawerLight temp_lights[MAX_ROW_LIGHTS];
+			int num_lights = 0;
+
+			const int camPortalGroup = (vp.camera && vp.camera->Sector) ? vp.camera->Sector->PortalGroup : 0;
+
+			for (VisiblePlaneLight *cur_node = light_list; cur_node != nullptr && num_lights < MAX_ROW_LIGHTS; cur_node = cur_node->next)
 			{
-				FDynamicLight *light = check_node->lightsource;
+				FDynamicLight *light = cur_node->lightsource;
+				if (light == nullptr || !light->IsActive() || light->target == nullptr) continue;
+
 				float radius = light->GetRadius();
-				bool isBigRadiusDynlight = radius > 468.0f;
+				if (radius <= 0.0f) continue;
 
-				if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight) // works bad with big radius dynlights
+				const bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+				//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+				if (isCamglowDynlightHere) radius *= 0.5f;
+
+				// 1. Portal-safe distance cull using local viewport position (vp.Pos)
+				const float lightX = light->X() - camX;
+				const float lightY = light->Y() - camY;
+				const float lightZ = light->Z() - camZ;
+
+				if (!isCamglowDynlightHere && r_dynlight_distance_cull > 0.0f)
 				{
-					bool isCamglowDynlightHere = light->IsDynlightCamglow();
-
-					if (!isCamglowDynlightHere)
-					{
-						// Thread-safe parameters context mapping directly from viewport thread tree path
-						sector_t* checkSector = light->Sector ? light->Sector : light->target->Sector;
-						int currentGroup = checkSector ? checkSector->PortalGroup : 0;
-						DVector3 lightPosAbs = light->PosAbsolute(currentGroup);
-
-						float adjustedRadius = radius * 0.85f; // Shrink radius to reduce culling agressiveness
-
-						bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(Thread->Viewport->viewpoint.camera, light->target, adjustedRadius, true);
-						bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(Thread->Viewport->viewpoint.Pos, lightPosAbs, checkSector, light->target, adjustedRadius, true);
-						bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(Thread->Viewport->viewpoint.camera, light->target, adjustedRadius, true);
-
-						if (!isDynlightVisibleBehind2Sobstr || !isDynlightVisibleBehind3DFloorSides || isDynlightObstructedBy3DFloorFlats)
-						{
-							if (light->IsActive())
-							{
-								light->Deactivate(); // Hibernate light immediately to bypass pixels drawing
-							}
-						}
-						else
-						{
-							if (!light->IsActive())
-							{
-								light->Activate(); // Restore the light back into active thread chains safely
-							}
-						}
-					}
-				}
-				check_node = check_node->next;
-			}
-
-			// Calculate max lights that can touch the row so we can allocate memory for the list
-			int max_lights = 0;
-			VisiblePlaneLight *cur_node = light_list;
-			while (cur_node)
-			{
-				if (cur_node->lightsource->IsActive())
-					max_lights++;
-				cur_node = cur_node->next;
-			}
-
-			drawerargs.dc_num_lights = 0;
-			drawerargs.dc_lights = Thread->FrameMemory->AllocMemory<DrawerLight>(max_lights);
-
-			// Setup lights for row
-			cur_node = light_list;
-			while (cur_node)
-			{
-				if (cur_node->lightsource->IsActive())
-				{
-					float lightX = cur_node->lightsource->X() - Thread->Viewport->viewpoint.Pos.X;
-					float lightY = cur_node->lightsource->Y() - Thread->Viewport->viewpoint.Pos.Y;
-					float lightZ = cur_node->lightsource->Z() - Thread->Viewport->viewpoint.Pos.Z;
-
-					float lx = (float)(lightX * Thread->Viewport->viewpoint.Sin - lightY * Thread->Viewport->viewpoint.Cos);
-					float ly = (float)(lightX * Thread->Viewport->viewpoint.TanCos + lightY * Thread->Viewport->viewpoint.TanSin) - drawerargs.dc_viewpos.Y;
-					float lz = (float)lightZ - drawerargs.dc_viewpos.Z;
-
-					// Precalculate the constant part of the dot here so the drawer doesn't have to.
-					bool is_point_light = cur_node->lightsource->IsAttenuated();
-					float lconstant = ly * ly + lz * lz;
-					float nlconstant = is_point_light ? lz * drawerargs.dc_normal.Z : 0.0f;
-
-					// Include light only if it touches this row
-					float radius = cur_node->lightsource->GetRadius();
-					if (radius * radius >= lconstant && nlconstant >= 0.0f)
-					{
-						uint32_t red = cur_node->lightsource->GetRed();
-						uint32_t green = cur_node->lightsource->GetGreen();
-						uint32_t blue = cur_node->lightsource->GetBlue();
-
-						auto &light = drawerargs.dc_lights[drawerargs.dc_num_lights++];
-						light.x = lx;
-						light.y = lconstant;
-						light.z = nlconstant;
-						light.radius = 256.0f / radius;
-						light.color = (red << 16) | (green << 8) | blue;
-					}
+					const float maxDist = (float)(r_dynlight_distance_cull + radius);
+					const float distSq3D = lightX * lightX + lightY * lightY + lightZ * lightZ;
+					if (distSq3D > maxDist * maxDist) continue;
 				}
 
-				cur_node = cur_node->next;
+				// 2. Scanline 2D touch test (runs BEFORE expensive occlusion checks!)
+				const float lx = (float)(lightX * viewSin - lightY * viewCos);
+				const float ly = (float)(lightX * viewTanCos + lightY * viewTanSin) - viewPosY;
+				const float lz = (float)lightZ - viewPosZ;
+
+				const bool is_point_light = light->IsAttenuated();
+				const float lconstant = ly * ly + lz * lz;
+				const float nlconstant = is_point_light ? (lz * normZ) : 0.0f;
+
+				// Skip light immediately if it doesn't reach this scanline
+				if (radius * radius < lconstant || nlconstant < 0.0f) continue;
+
+				// 3. Software renderer visual occlusion shield (skip across different portal groups)
+				sector_t *checkSector = light->Sector ? light->Sector : light->target->Sector;
+				const int currentGroup = checkSector ? checkSector->PortalGroup : 0;
+
+				if (doOcclude && !isCamglowDynlightHere && radius <= 468.0f && currentGroup == camPortalGroup)
+				{
+					DVector3 lightPosAbs = light->PosAbsolute(currentGroup);
+					const float adjustedRadius = radius * 0.85f;
+
+					bool isDynlightVisibleBehind2Sobstr = IsDynlightVisibleBehind2sidedLinedefSectObstrWrapperCached(vp.camera, light->target, adjustedRadius, true);
+					bool isDynlightObstructedBy3DFloorFlats = IsDynlightBehind3DFloorPlaneCachedWrapper(Thread->Viewport->viewpoint.Pos, lightPosAbs, checkSector, light->target, adjustedRadius, true);
+					bool isDynlightVisibleBehind3DFloorSides = IsDynlightVisibleBehind3DFloorSidesCachedWrapper(vp.camera, light->target, adjustedRadius, true);
+
+					if (!isDynlightVisibleBehind2Sobstr || !isDynlightVisibleBehind3DFloorSides || isDynlightObstructedBy3DFloorFlats) continue;
+				}
+
+				const uint32_t red = light->GetRed();
+				const uint32_t green = light->GetGreen();
+				const uint32_t blue = light->GetBlue();
+
+				DrawerLight &dl = temp_lights[num_lights++];
+				dl.x = lx;
+				dl.y = lconstant;
+				dl.z = nlconstant;
+				dl.radius = 256.0f / radius;
+				dl.color = (red << 16) | (green << 8) | blue;
+			}
+
+			drawerargs.dc_num_lights = num_lights;
+			if (num_lights > 0)
+			{
+				drawerargs.dc_lights = Thread->FrameMemory->AllocMemory<DrawerLight>(num_lights);
+				memcpy(drawerargs.dc_lights, temp_lights, num_lights * sizeof(DrawerLight));
 			}
 		}
 		else

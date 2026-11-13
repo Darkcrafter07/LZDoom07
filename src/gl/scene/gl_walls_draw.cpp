@@ -113,12 +113,21 @@ void GLWall::SetupLights()
 	{
 		FDynamicLight * light = node->lightsource;
 		float radius = light->GetRadius();
+		const bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+		//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+		if (isCamglowDynlightHere) radius *= 0.5f;
+
+		if (!isCamglowDynlightHere && IsGLDynlightCulledByDistance(light, group, radius))
+		{
+			node = node->nextLight;
+			continue;
+		}
+
 		bool isBigRadiusDynlight = radius > 468.0f;
 
 		if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight && r_dynlights_occlude) // works bad with big radius dynlights
 		{
-			bool isCamglowDynlightHere = light->IsDynlightCamglow();
-
 			if (!isCamglowDynlightHere)
 			{
 				float radius = light->GetRadius();

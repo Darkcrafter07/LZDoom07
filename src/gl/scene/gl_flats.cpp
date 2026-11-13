@@ -140,12 +140,22 @@ void GLFlat::SetupSubsectorLights(int pass, subsector_t * sub, int *dli)
 	{
 		FDynamicLight * light = node->lightsource;
 		float radius = light->GetRadius();
+
+		const bool isCamglowDynlightHere = light->IsDynlightCamglow();
+
+		//Camglow radius is 2x to reduce BSP traversal early exit surface skip artifacts in GL1x/GL2x
+		if (isCamglowDynlightHere) radius *= 0.5f;
+
+		if (!isCamglowDynlightHere && IsGLDynlightCulledByDistance(light, group, radius))
+		{
+			node = node->nextLight;
+			continue;
+		}
+
 		bool isBigRadiusDynlight = radius > 468.0f;
 
 		if (light != nullptr && light->target != nullptr && !isBigRadiusDynlight && r_dynlights_occlude) // works bad with big radius dynlights
 		{
-			bool isCamglowDynlightHere = light->IsDynlightCamglow();
-
 			if (!isCamglowDynlightHere)
 			{
 				float radius = light->GetRadius();
@@ -631,41 +641,6 @@ void GLFlat::Draw(int pass, bool trans)	// trans only has meaning for GLPASS_LIG
 		glBlendFunc(GL_ONE, GL_ZERO);
 		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		break;
-
-	//case GLPASS_LIGHTEFFECTS_LEGACY:
-	//{
-	//	FMaterial *bm = gltexture ? gltexture->GetBrightmapLegacy() : nullptr;
-	//	if (bm) // Brightmaps
-	//	{
-	//		int totalLight = lightlevel + rel;
-	//		if (totalLight > 255) totalLight = 255;
-	//		if (totalLight < 0) totalLight = 0;
-	//
-	//		float intensityFactor;
-	//		if (totalLight < 96) intensityFactor = 1.0f;
-	//		else
-	//		{
-	//			const float rangeFactorInv = 1.0f / (255.0f - 96.0f);
-	//			float factor = 1.0f - ((float)(totalLight - 96) * rangeFactorInv);
-	//			factor = factor + 0.1f * factor * (1.0f - factor);
-	//			intensityFactor = (factor * 0.99f) + 0.01f;
-	//		}
-	//
-	//		if (intensityFactor > 1.0f) intensityFactor = 1.0f;
-	//		if (intensityFactor < 0.0f) intensityFactor = 0.0f;
-	//
-	//		gl_RenderState.SetColor(intensityFactor, intensityFactor, intensityFactor, 1.0f);
-	//		gl_RenderState.SetMaterial(bm, CLAMP_NONE, 0, -1, false);
-	//		gl_SetPlaneTextureRotation(&plane, bm);
-	//		DrawSubsectors(pass, false, false);
-	//		gl_RenderState.EnableTextureMatrix(false);
-	//
-	//		// Re-sync hardware matrix state safely inside brightmap context
-	//		glMatrixMode(GL_MODELVIEW);
-	//		gl_RenderState.Apply(0);
-	//	}
-	//}
-	//break;
 
 	case GLPASS_LIGHTEFFECTS_LEGACY: // with big dynlights baking
 	{
