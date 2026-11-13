@@ -915,7 +915,6 @@ OptionMenu "VideoOptions" protected
 	Submenu "$DSPLYMNU_GLOPT", 			"OpenGLOptions"
 	Submenu "$DSPLYMNU_SWOPT", 			"SWROptions"
 	Submenu "$GLMNU_DYNLIGHT",			"GLLightOptions"
-	//Submenu "$GLMNU_DYNLGL1X",			"GL1xLightOptions"
 	StaticText " "
 	Slider "$DSPLYMNU_SCREENSIZE",				"screenblocks", 				3.0, 12.0, 1.0, 0
 
@@ -2644,12 +2643,15 @@ OptionMenu "GL1xLightOptions" protected
 {
 	Title "$GL1XLIGHTMNU_TITLE"
 	Option "$GL1XLIGHTMNU_LEGACYDYNLIGHTBAKEHUGE",         gl_legacy_dynlight_baked_huge, "OnOff"
+	StaticText ""
 	Option "$GL1XLIGHTMNU_LEGACYDYNLIGHTCOMPRESSRANGE",    gl_legacy_dynlight_compress_range, "OnOff"
+	StaticText ""
 	Slider "$GL1XLIGHTMNU_LEGACYDYNLIGHTBRIGHTNESS",       gl_legacy_dynlight_brightness, 1.0, 1.75, 0.01
 	Slider "$GL1XLIGHTMNU_LEGACYDYNLIGHTSATURATIONTHRESH", gl_legacy_dynlight_saturation_thresh, 32, 225, 1.0
 	Slider "$GL1XLIGHTMNU_LEGACYDYNLIGHTSATURATIONDARK",   gl_legacy_dynlight_saturation_dark, 0.0, 1.25, 0.01
 	Slider "$GL1XLIGHTMNU_LEGACYDYNLIGHTSATURATIONBRIGHT", gl_legacy_dynlight_saturation_bright, 0.0, 1.25, 0.01
 	Slider "$GL1XLIGHTMNU_LEGACYDYNLIGHTHUESHIFT",         gl_legacy_dynlight_hue_shift, 0.0, 35.0, 0.01
+	StaticText ""
 	Option "$GL1XLIGHTMNU_LEGACYDYNLIGHTOVERBRIGHT",       gl_legacy_dynlight_overbright, "OnOff"
 	Slider "$GL1XLIGHTMNU_LEGACYDYNLIGHTOVERBRIGHTFLATS",  gl_legacy_dynlight_overbright_flats, 0.0, 0.5, 0.01
 	Slider "$GL1XLIGHTMNU_LEGACYDYNLIGHTOVERBRIGHTWALLS",  gl_legacy_dynlight_overbright_walls, 0.0, 0.5, 0.01

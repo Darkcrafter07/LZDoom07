@@ -2760,7 +2760,7 @@ DSPLYMNU_FOV		= "Field of view";
 // OpenGL Options
 GLMNU_TITLE			= "OpenGL Options";
 GLMNU_DYNLIGHT		= "Dynamic Light Options";
-GLMNU_DYNLGL1X		= "GL1-2x Dynlight Options";
+GLMNU_DYNLGL1X		= "GL1x/GL2x Dynlight Options";
 GLMNU_TEXOPT		= "Texture Options";
 GLMNU_PREFS			= "Preferences";
 HUDMNU_FLASH		= "Screen Blend Options";
@@ -2796,7 +2796,8 @@ GLLIGHTMNU_LIGHTSHADOWMAP 	= "Light shadowmaps";
 GLLIGHTMNU_LIGHTSHADOWMAPQUALITY 	= "Shadowmap quality";
 GLLIGHTMNU_LIGHTSHADOWMAPFILTER 	= "Shadowmap filter";
 
-// GL1-2x Dynamic Light Options
+// GL1x/GL2x Dynamic Light Options
+GL1XLIGHTMNU_TITLE 	= "GL1x/GL2x DYNAMIC LIGHTS";
 GL1XLIGHTMNU_LEGACYDYNLIGHTBAKEHUGE = "Bake huge GL1 lights (FAST)";
 GL1XLIGHTMNU_LEGACYDYNLIGHTCOMPRESSRANGE 	= "GL1 compress light range";
 GL1XLIGHTMNU_LEGACYDYNLIGHTBRIGHTNESS     = "GL1 light brightness";
