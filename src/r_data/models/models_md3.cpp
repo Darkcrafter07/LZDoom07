@@ -40,8 +40,6 @@
 
 #include "gl/dynlights/gl_dynlightcache.h"
 
-extern void* g_CurrentRendering3dmdlActorPtr;         // no need to add "AActor *actor" in RenderFrame
-
 
 #define MAX_QPATH 64
 
@@ -257,137 +255,6 @@ void FMD3Model::LoadGeometry()
 //
 //===========================================================================
 
-//void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
-//{
-//	if (!GetVertexBuffer(renderer))
-//	{
-//		LoadGeometry();
-//
-//		unsigned int vbufsize = 0;
-//		unsigned int ibufsize = 0;
-//
-//		this->trueVisualRadii.Resize(Frames.Size());
-//		for (unsigned f = 0; f < Frames.Size(); f++) this->trueVisualRadii[f] = 0.0f;
-//
-//		for (unsigned i = 0; i < Surfaces.Size(); i++)
-//		{
-//			MD3Surface * surf = &Surfaces[i];
-//			vbufsize += Frames.Size() * surf->numVertices;
-//			ibufsize += 3 * surf->numTriangles;
-//		}
-//
-//		auto vbuf = renderer->CreateVertexBuffer(true, Frames.Size() == 1);
-//		SetVertexBuffer(renderer, vbuf);
-//
-//		FModelVertex *vertptr = vbuf->LockVertexBuffer(vbufsize);
-//		unsigned int *indxptr = vbuf->LockIndexBuffer(ibufsize);
-//
-//		assert(vertptr != nullptr && indxptr != nullptr);
-//
-//		unsigned int vindex = 0, iindex = 0;
-//
-//		// [Darkcrafter07]: Prepare individual frame bounds tracking vectors
-//		this->trueVisualHeights.Resize(Frames.Size());
-//		TArray<float> minBoundsPerFrame;
-//		TArray<float> maxBoundsPerFrame;
-//		minBoundsPerFrame.Resize(Frames.Size());
-//		maxBoundsPerFrame.Resize(Frames.Size());
-//
-//		for (unsigned f = 0; f < Frames.Size(); f++)
-//		{
-//			minBoundsPerFrame[f] = 1000000.0f;  // Positive infinity seed
-//			maxBoundsPerFrame[f] = -1000000.0f; // Negative infinity seed
-//			this->trueVisualHeights[f] = 0.0f;
-//		}
-//
-//		for (unsigned i = 0; i < Surfaces.Size(); i++)
-//		{
-//			MD3Surface * surf = &Surfaces[i];
-//
-//			surf->vindex = vindex;
-//			surf->iindex = iindex;
-//			for (unsigned j = 0; j < Frames.Size() * surf->numVertices; j++)
-//			{
-//				MD3Vertex* vert = &surf->Vertices[j];
-//
-//				FModelVertex *bvert = &vertptr[vindex++];
-//
-//				int tc = j % surf->numVertices;
-//				bvert->Set(vert->x, vert->z, vert->y, surf->Texcoords[tc].s, surf->Texcoords[tc].t);
-//				bvert->SetNormal(vert->nx, vert->nz, vert->ny);
-//
-//				// [Darkcrafter07]: VERTEX-PERFECT HEIGHT SCANNER FOR EACH ANIMATION FRAME!
-//				// Determine which specific frame index this vertex belongs to based on step sequences
-//				if (surf->numVertices > 0)
-//				{
-//					unsigned int targetFrameIndex = j / surf->numVertices;
-//					if (targetFrameIndex < Frames.Size())
-//					{
-//						if (bvert->y < minBoundsPerFrame[targetFrameIndex]) minBoundsPerFrame[targetFrameIndex] = bvert->y;
-//						if (bvert->y > maxBoundsPerFrame[targetFrameIndex]) maxBoundsPerFrame[targetFrameIndex] = bvert->y;
-//
-//						// TRUE RADIUS VERTEX SCANNER FOR MD3!
-//						// Calculate pure horizontal 2D vertex distance distance from the mesh pivot center
-//						float horizDist = sqrtf((bvert->x * bvert->x) + (bvert->z * bvert->z));
-//						if (horizDist > this->trueVisualRadii[targetFrameIndex]) this->trueVisualRadii[targetFrameIndex] = horizDist;
-//					}
-//				}
-//			}
-//
-//			for (unsigned k = 0; k < surf->numTriangles; k++)
-//			{
-//				for (int l = 0; l < 3; l++)
-//				{
-//					indxptr[iindex++] = surf->Tris[k].VertIndex[l];
-//				}
-//			}
-//
-//			// for the mesh collision to work you must comment out the line like that!
-//			//surf->UnloadGeometry();
-//			surf->UnloadGeometry();
-//		}
-//
-//		// [Darkcrafter07]: Lock down the exact visual height delta payload per animation frame step!
-//		for (unsigned f = 0; f < Frames.Size(); f++)
-//		{
-//			float heightDelta = maxBoundsPerFrame[f] - minBoundsPerFrame[f];
-//			if (heightDelta < 0.0f) heightDelta = 0.0f;
-//			this->trueVisualHeights[f] = heightDelta;
-//		}
-//
-//		// [Darkcrafter07]: Old-school 90s Engine Trick: 
-//		// Mirror and cache all raw unscaled local vertex positions into our CPU shadow pool!
-//		// This completely eliminates the NULL VMO pointer read crashes during real-time loops.
-//		this->rawPositionsPool.Resize(vbufsize);
-//		for (unsigned int v = 0; v < vindex; v++)
-//		{
-//			this->rawPositionsPool[v].X = vertptr[v].x;
-//			this->rawPositionsPool[v].Y = vertptr[v].y;
-//			this->rawPositionsPool[v].Z = vertptr[v].z;
-//		}
-//
-//		vbuf->UnlockVertexBuffer();
-//		vbuf->UnlockIndexBuffer();
-//	}
-//}
-
-
-
-
-extern int modellightindex;
-extern int g_legacyModelSectorLight;
-extern bool g_legacyLightActive;
-extern TArray<FLegacyDynlight3DmdlCache> g_legacyModelLights;
-bool isUsingVolumetric3DModelLegacyDynlight = false;  // for gl_20.cpp ApplyFixedFunction
-bool g_isCurrent3dMdlWeldedSolid = false;             // store current model computed topology weight
-
-struct FTriangleSortMeta
-{
-	FMD3Model::MD3Triangle originalTriangle;
-	float avgZ;
-	float ccwAngle;
-};
-
 void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 {
 	if (!GetVertexBuffer(renderer))
@@ -457,12 +324,11 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 			// Pass 1: Compute true 3D Cross Product face normals for EVERY single frame individually
 			for (unsigned int f = 0; f < Frames.Size(); f++)
 			{
-				// --- FIX: FIXED TYPO AND SCOPE DEFINITION FOR FRAME VERTEX OFFSET ---
 				int frameVertexOffset = f * surf->numVertices;
 
 				for (unsigned int k = 0; k < surf->numTriangles; k++)
 				{
-					// --- FIX: RESTORED EXACT ARRAY INDEXATION SQUARE BRACKETS ---
+					// --- ARRAY INDEXATION [0], [1], [2] ---
 					unsigned int i0 = surf->Tris[k].VertIndex[0];
 					unsigned int i1 = surf->Tris[k].VertIndex[1];
 					unsigned int i2 = surf->Tris[k].VertIndex[2];
@@ -500,9 +366,7 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 				bvert->Set(vert->x, vert->z, vert->y, surf->Texcoords[tc].s, surf->Texcoords[tc].t);
 
 				// Get accumulated smoothed-put true 3D-normal for the current vertex frame entry
-				float finalNx = accumNx[j];
-				float finalNy = accumNy[j];
-				float finalNz = accumNz[j];
+				float finalNx = accumNx[j]; float finalNy = accumNy[j]; float finalNz = accumNz[j];
 
 				float normLen = sqrtf((finalNx * finalNx) + (finalNy * finalNy) + (finalNz * finalNz));
 				if (normLen > 0.001f) { finalNx /= normLen; finalNy /= normLen; finalNz /= normLen; }
@@ -525,8 +389,7 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 				if (lightLevel > 1.0f) lightLevel = 1.0f;
 				if (lightLevel < 0.05f) lightLevel = 0.05f;
 
-				// Bake the compiled SimSun sunlit scale factor right inside the VBO normal coordinates vector,
-				// accounting for Quake/Doom axes flips
+				// Bake compiled SimSun sunlit scale factor inside VBO normal coordinates vector, consider Quake/Doom axes flip
 				bvert->SetNormal(finalNx * lightLevel, finalNz * lightLevel, finalNy * lightLevel);
 
 				if (surf->numVertices > 0)
@@ -555,12 +418,12 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 			this->trueVisualHeights[f] = heightDelta;
 		}
 
-		this->rawPositionsPool.Resize(vbufsize);
+		rawPositionsPool.Resize(vbufsize);
 		for (unsigned int v = 0; v < vindex; v++)
 		{
-			this->rawPositionsPool[v].X = vertptr[v].x;
-			this->rawPositionsPool[v].Y = vertptr[v].y;
-			this->rawPositionsPool[v].Z = vertptr[v].z;
+			rawPositionsPool[v].X = vertptr[v].x;
+			rawPositionsPool[v].Y = vertptr[v].y;
+			rawPositionsPool[v].Z = vertptr[v].z;
 		}
 
 		vbuf->UnlockVertexBuffer();
@@ -653,9 +516,6 @@ int FMD3Model::FindFrame(const char * name)
 
 
 
-
-
-
 // ====================================================================================
 // --- [Darkcrafter07]: GOURAUD SHADING & VERTEX LIGHTING MANIFESTO ---
 //
@@ -677,12 +537,18 @@ int FMD3Model::FindFrame(const char * name)
 // the GPU instantly fired up its internal Gouraud Shading processors.
 // ====================================================================================
 
+extern int g_legacyModelSectorLight;
+extern bool g_legacyLightActive;
+extern TArray<FLegacyDynlight3DmdlCache> g_legacyModelLights;
+bool isUsingVolumetric3DModelLegacyDynlight = false;  // for gl_20.cpp ApplyFixedFunction
+bool g_isCurrent3dMdlWeldedSolid = false;             // store current model computed topology weight
+
 void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * skin, int frameno, int frameno2, double inter, int translation, const PClass *ti)
 {
 	const FSpriteModelFrame* safeFramePtr = nullptr;
 
-	// FIX: Safe default values to strictly prevent Run-Time Check Failure #3
-	float xscaleMdldef = 1.0f, yscaleMdldef = 1.0f, xyscaleMdldef = 1.0f, zscaleMdldef = 1.0f;
+	float xscaleMdldef = 1.0f, yscaleMdldef = 1.0f;
+	float xyscaleMdldef = 1.0f, zscaleMdldef = 1.0f;
 	float xyscaleMap = 1.0f, zscaleMap = 1.0f;
 	float finalScaleX = 1.0f, finalScaleZ = 1.0f;
 	float map2mdldefRatioXY = 1.0f;
@@ -691,49 +557,13 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 	float mdldef2mapRatioXYinv = 1.0f;
 	float scaleZcombo = 1.0f, scaleZcomboInvCompens = 1.0f;
 
-	bool isClassTypeValid = (ti != nullptr && (uintptr_t)ti > 0x10000);
+	bool isClassTypeValid = ti != nullptr;
 
-	// ==============================================================================
-	// Validate the raw void* actor memory state alignment before reading dynamic arrays.
-	// Strictly blocks Access Violations on actor->sprite and actor->frame fields.
-	// ==============================================================================
-	bool isActorValidPtr = false;
-
-	if (actor != nullptr && (uintptr_t)actor > 0x10000)
-	{
-		void*** actorVtable = (void***)actor;
-
-		// Secure validation pass: ensure the class virtual table and active sector reference are completely mapped
-		if (actorVtable != nullptr && (uintptr_t)actorVtable > 0x10000 && (uintptr_t)*actorVtable > 0x10000)
-		{
-			// Absolute verification: a living in-game actor MUST point to a valid mapped sector layout
-			if (actor->Sector != nullptr && (uintptr_t)actor->Sector > 0x10000 && (uintptr_t)actor->Sector->subsectors > 0x10000)
-			{
-				// Ensure internal data ranges match realistic Doom boundary allocations
-				if (actor->sprite >= 0 && actor->frame >= 0 && actor->frame < 256)
-				{
-					isActorValidPtr = true; // Actor memory page is confirmed 100% stable and alive
-				}
-			}
-		}
-	}
-
-	// Stateless direct invocation loop without any level.maptime restrictions
-	if (isClassTypeValid && isActorValidPtr)
+	if (isClassTypeValid && actor != nullptr)
 	{
 		safeFramePtr = FindModelFrame(ti, actor->sprite, actor->frame, false);
 	}
 
-	// Safe Global Cache fallback with strict pointer boundary validations
-	if (safeFramePtr == nullptr)
-	{
-		if (curSpriteMDLFrame != nullptr && (uintptr_t)curSpriteMDLFrame > 0x10000)
-		{
-			safeFramePtr = curSpriteMDLFrame;
-		}
-	}
-
-	// DOUBLE-LOCK GATEWAY: Evaluate across all load and menu toggle sequences
 	if (safeFramePtr != nullptr)
 	{
 		xscaleMdldef = (float)safeFramePtr->xscale;
@@ -741,7 +571,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 		zscaleMdldef = (float)safeFramePtr->zscale;
 
 		// Secure scale assignments: use fallback safe unit matrix if actor memory is dead
-		if (isActorValidPtr)
+		if (actor != nullptr)
 		{
 			xyscaleMap = (float)actor->Scale.X; // actually both X and Y axes wtf!
 			zscaleMap = (float)actor->Scale.Y;  // actually Z (vertical) axis only!
@@ -786,6 +616,72 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 			return;
 		}
 
+		// In gl_sprite.cpp (GLSprite::Process), when running on GL1x/GL2x hardware
+		// where "gl.flags & RFL_NO_CLIP_PLANES" is active, lightlist is set to NULL,
+		// so 3D models won't receive special light color coming from 3D floors.
+		// Sprites draw nicely because SplitSprite iterates through XFloor.lightlist,
+		// slices the sprite rectangle horizontally into segments, and assigns each
+		// segment its lightlevel and Colormap via CopyLight(lightlist[i].extra_colormap).
+		// Manually resolve XFloor.lightlist once per actor before the surface loop.
+		float tintR = 1.0f, tintG = 1.0f, tintB = 1.0f;
+		float secR = 1.0f, secG = 1.0f, secB = 1.0f, secA = 1.0f;
+		int sectorLightLevel = g_legacyModelSectorLight;
+
+		if (actor != nullptr && actor->Sector != nullptr)
+		{
+			FColormap cm = actor->Sector->Colormap;
+			bool found3DFloor = false;
+
+			// Check 3D-floors (mirroring GLSprite::Process)
+			if (actor->Sector->e != nullptr)
+			{
+				TArray<lightlist_t> &lightlist = actor->Sector->e->XFloor.lightlist;
+				const double checkZ = actor->Z() + (actor->Height * 0.5);
+
+				for (unsigned int i = 0; i < lightlist.Size(); i++)
+				{
+					float lightbottom = (i < lightlist.Size() - 1)
+						? (float)lightlist[i + 1].plane.ZatPoint(actor)
+						: (float)actor->Sector->floorplane.ZatPoint(actor);
+
+					if (lightbottom < checkZ)
+					{
+						cm.CopyLight(lightlist[i].extra_colormap);
+						if (lightlist[i].p_lightlevel != nullptr)
+						{
+							sectorLightLevel = gl_ClampLight(*lightlist[i].p_lightlevel);
+						}
+						found3DFloor = true;
+						break;
+					}
+				}
+			}
+
+			PalEntry lightCol = cm.LightColor;
+			PalEntry spriteCol = actor->Sector->SpecialColors[sector_t::sprites];
+
+			const float invMul65025 = 1.0f / (255.0f * 255.0f);
+
+			// 1. Pure light tint of sector and 3D floor (for PATHWAY A ambient modulation)
+			tintR = (lightCol.r * spriteCol.r) * invMul65025;
+			tintG = (lightCol.g * spriteCol.g) * invMul65025;
+			tintB = (lightCol.b * spriteCol.b) * invMul65025;
+
+			// 2. Final color with engine light curve & flat dynlights (for PATHWAY B & PATHWAY A base):
+			// If actor is under a 3D-floor, use its resolved lightlevel; otherwise keep native mColor
+			float baseLumaR = found3DFloor ? (sectorLightLevel * invMul255) : gl_RenderState.mColor.vec[0];
+			float baseLumaG = found3DFloor ? (sectorLightLevel * invMul255) : gl_RenderState.mColor.vec[1];
+			float baseLumaB = found3DFloor ? (sectorLightLevel * invMul255) : gl_RenderState.mColor.vec[2];
+
+			secR = clamp(baseLumaR + gl_RenderState.mDynColor.vec[0], 0.0f, 1.0f) *
+				(lightCol.r * invMul255) * (gl_RenderState.mObjectColor.r * invMul255);
+			secG = clamp(baseLumaG + gl_RenderState.mDynColor.vec[1], 0.0f, 1.0f) *
+				(lightCol.g * invMul255) * (gl_RenderState.mObjectColor.g * invMul255);
+			secB = clamp(baseLumaB + gl_RenderState.mDynColor.vec[2], 0.0f, 1.0f) *
+				(lightCol.b * invMul255) * (gl_RenderState.mObjectColor.b * invMul255);
+			secA = clamp(gl_RenderState.mColor.vec[3], 0.0f, 1.0f) * (gl_RenderState.mObjectColor.a * invMul255);
+		}
+
 		glEnable(GL_TEXTURE_2D); glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
 		for (unsigned m = 0; m < Surfaces.Size(); m++)
@@ -815,16 +711,14 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 
 			bool isModeldefUseVolLegacyDynlightFlagSet = ((curSpriteMDLFrame->flags & MDL_USEGL1VOLUMEDYNLIGHT) != 0);
 
+			// When "g_legacyLightActive" is present it turns OFF Gourad for models that are NOT lit by dynlights at all.
+			// So that it jumps to PATHWAY B if no dynlights are nearby. May save some performance but not as consistent.
+			bool useLegacyVolumetricLighting = (gl_lights && g_legacyLightActive &&
+				surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet);
+
 			// ==============================================================================
 			// PATHWAY A: VOLUMETRIC DYNLIGHT WITH GOURAD SHADING
 			// ==============================================================================
-			// Do volumetric lighting if lights are active and triangles exist
-			//bool useLegacyVolumetricLighting = (gl_lights && g_legacyLightActive && g_isCurrent3dMdlWeldedSolid && 
-			//	                    surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet && 
-			//															g_legacyModelLights.Size() > 0);
-			bool useLegacyVolumetricLighting = (gl_lights && g_legacyLightActive &&
-				surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet &&
-				g_legacyModelLights.Size() > 0);
 			if (useLegacyVolumetricLighting)
 			{
 				isUsingVolumetric3DModelLegacyDynlight = true;
@@ -833,7 +727,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 
 				// Dimensions setup
 				finalScaleX = xscaleMdldef * xyscaleMap;
-				//finalScaleZ = zscaleMdldef * yscaleMapedit; // insufficient for high objects
+				//finalScaleZ = zscaleMdldef * yscaleMapedit; // insufficient for tall objects
 				scaleZcombo = zscaleMdldef * zscaleMap;
 				// the higher the object, lesser the val is, so that it protects from overexpansion on smaller objects
 				scaleZcomboInvCompens = (1.0f - (1.0f / scaleZcombo + 0.001f) * 35.5f); // 50 was too much for small objects
@@ -882,9 +776,9 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 					}
 
 					// --- RAM INVERSE NORMAL REALIGNER ---
-					// We load raw unpacked float 3D normals straight from 'surf->Vertices'
-					// We transform them using inverse matrix cells to align with world transformations
-					// By unbinding the buffer array, we pipe data straight from system RAM safely
+					// Load raw unpacked float 3D normals straight from 'surf->Vertices'.
+					// Transform them using inverse matrix cells to align with world transformations.
+					// Pipe data straight from system RAM safely by unbinding the buffer array.
 					TArray<float> generatedNormals;
 					generatedNormals.Resize(surf->numVertices * 3);
 
@@ -914,27 +808,15 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 						generatedNormals[v * 3 + 2] = alignedNz;
 					}
 
-					float baseAmbR = actor->Sector->lightlevel * invMul127;
-					float baseAmbG = actor->Sector->lightlevel * invMul127;
-					float baseAmbB = actor->Sector->lightlevel * invMul127;
-
 					for (unsigned int l = 0; l < g_legacyModelLights.Size(); ++l)
 					{
 						FLegacyDynlight3DmdlCache &light = g_legacyModelLights[l];
-						baseAmbR += light.r * legacyVolumDynlightIntensity * 0.01f;
-						baseAmbG += light.g * legacyVolumDynlightIntensity * 0.01f;
-						baseAmbB += light.b * legacyVolumDynlightIntensity * 0.01f;
+						secR += light.r * legacyVolumDynlightIntensity * 0.01f;
+						secG += light.g * legacyVolumDynlightIntensity * 0.01f;
+						secB += light.b * legacyVolumDynlightIntensity * 0.01f;
 					}
-					if (baseAmbR > 1.0f) baseAmbR = 1.0f;
-					if (baseAmbG > 1.0f) baseAmbG = 1.0f;
-					if (baseAmbB > 1.0f) baseAmbB = 1.0f;
 
-					// --- ARRAY INDEXATION SQUARE BRACKETS [4], [0], [1], [2], [3] ---
-					float ambColor[4];
-					ambColor[0] = baseAmbR;
-					ambColor[1] = baseAmbG;
-					ambColor[2] = baseAmbB;
-					ambColor[3] = 1.0f;
+					float ambColor[4] = { secR, secG, secB, 1.0f };
 					glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambColor);
 
 					DVector3 modelPos = actor->Pos();
@@ -967,7 +849,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 						closestVertexWorld[1] = (float)modelPos.Y;
 						closestVertexWorld[2] = (float)midZ;
 
-						float minVertexDistSquared = 99999999.0f;
+						float minVertexDistSquared = FLT_MAX;
 						int totalVerts = surf->numVertices;
 
 						if (totalVerts > 0)
@@ -1021,7 +903,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 						// We mirror diffuseColor parameters straight into GL_AMBIENT
 						// When the projectile flies to the back-face, hardware diffuse equations drop to 0,
 						// but the ambient channel picks up the exact same value seamlessly.
-						// This retains tight linear attenuation properties from all 360 degrees perfectly!
+						// This retains tight linear attenuation properties from all 360 degrees perfectly.
 						glLightfv(lightSlot, GL_POSITION, lightPos);
 						glLightfv(lightSlot, GL_DIFFUSE, diffuseColor);
 						glLightfv(lightSlot, GL_SPECULAR, diffuseColor);
@@ -1051,6 +933,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 				}
 
 				// Dispatch the geometry using 1 single factory VBO Draw Call
+				glColor4f(1.0f, 1.0f, 1.0f, secA); // prevents GL_COLOR_MATERIAL to shading twice and darkening it
 				renderer->DrawElements(surf->numTriangles * 3, surf->iindex * sizeof(unsigned int));
 
 				// --- STEP 4: RECOVERY CLEANUP RESTORE GATE ---
@@ -1084,8 +967,8 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 				// PATHWAY B: FLAT LIGHT NO-SLICE CONVEYOR ROUTE FOR FLAT/DECORATIVE MODELS
 				// ==============================================================================
 				isUsingVolumetric3DModelLegacyDynlight = false;
-				// PATHWAY B CRASH FIX: If a model was previously rendered using Pathway A, 
-				// GL_ELEMENT_ARRAY_BUFFER remains 0. Force-restore it now.
+				glColor4f(secR, secG, secB, secA); // to fix dark models and receieve 3D-floor special light color
+
 				if (currentVBuf != nullptr) currentVBuf->BindVBO();
 				renderer->DrawElements(surf->numTriangles * 3, surf->iindex * sizeof(unsigned int));
 			}
@@ -1131,3 +1014,5 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 		renderer->SetInterpolation(0.f);
 	}
 }
+
+
