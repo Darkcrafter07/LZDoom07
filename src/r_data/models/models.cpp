@@ -609,6 +609,15 @@ static void ParseModelDefLump(int Lump)
 			smf.modelIDs[0] = smf.modelIDs[1] = smf.modelIDs[2] = smf.modelIDs[3] = -1;
 			smf.xscale=smf.yscale=smf.zscale=1.f;
 
+			// [Darkcrafter07]: Default GL1x sunlight values
+			smf.sunShadowIntensity = 1.0f;
+			smf.sunLightIntensity = 0.25f;
+			smf.sunHighlightMax = 1.45f;
+			smf.wSunX = 0.7f;
+			smf.wSunY = 0.7f;
+			smf.wSunZ = 0.5f;
+			smf.useSunAlphaTest = false;
+
 			smf.type = PClass::FindClass(sc.String);
 			if (!smf.type || smf.type->Defaults == nullptr)
 			{
@@ -761,6 +770,30 @@ static void ParseModelDefLump(int Lump)
 				else if (sc.Compare("usegl1volumedynlight"))
 				{
 				smf.flags |= MDL_USEGL1VOLUMEDYNLIGHT;
+				}
+				else if (sc.Compare("usegl1sunlight"))
+				{
+				smf.flags |= MDL_USEGL1SUNLIGHT;
+					sc.MustGetFloat();
+					smf.sunShadowIntensity = sc.Float;
+
+					sc.MustGetFloat();
+					smf.sunLightIntensity = sc.Float;
+
+					sc.MustGetFloat();
+					smf.sunHighlightMax = sc.Float;
+
+					sc.MustGetFloat();
+					smf.wSunX = sc.Float;
+
+					sc.MustGetFloat();
+					smf.wSunY = sc.Float;
+
+					sc.MustGetFloat();
+					smf.wSunZ = sc.Float;
+
+					sc.MustGetNumber();
+					smf.useSunAlphaTest = (sc.Number != 0);
 				}
 				else if (sc.Compare("skin"))
 				{

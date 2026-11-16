@@ -40,7 +40,6 @@
 
 #include "gl/dynlights/gl_dynlightcache.h"
 
-
 #define MAX_QPATH 64
 
 #ifdef _MSC_VER
@@ -255,6 +254,14 @@ void FMD3Model::LoadGeometry()
 //
 //===========================================================================
 
+struct FMD3BakedNormalAccum
+{
+	float nx = 0.0f;
+	float ny = 0.0f;
+	float nz = 0.0f;
+};
+static TArray<FMD3BakedNormalAccum> g_md3TempNormalAccumPool;
+
 void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 {
 	if (!GetVertexBuffer(renderer))
@@ -292,17 +299,13 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 
 		for (unsigned f = 0; f < Frames.Size(); f++)
 		{
-			minBoundsPerFrame[f] = 1000000.0f;
-			maxBoundsPerFrame[f] = -1000000.0f;
+			minBoundsPerFrame[f] = FLT_MAX;
+			maxBoundsPerFrame[f] = -FLT_MAX;
 			this->trueVisualHeights[f] = 0.0f;
 		}
 
-		// ==============================================================================
 		// [Darkcrafter07]: DIFFERENTIAL LINE FLEXURE CURVATURE SHIELD!
 		// ISOLATED PASS: We scan all surfaces up to infinity BEFORE Graf's factory packaging loops.
-		// Measures the deflection delta of normal line vectors between adjacent vertices in RAM.
-		// Completely immunizes the pipeline from any "surf - is undefined" compiler errors!
-		// ==============================================================================
 		bool modelContainsSharp3DCurvatureBends = false;
 
 		for (unsigned i = 0; i < Surfaces.Size(); i++)
@@ -311,52 +314,146 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 			surf->vindex = vindex;
 			surf->iindex = iindex;
 
+			// ==============================================================================
+			// [Darkcrafter07]: DIFFERENTIAL LINE FLEXURE CURVATURE SHIELD (O(N) FAST PASS)
+			// Tracks running normal flow across triangles; detects impossible ~180-degree
+			// inward flips (like inverted caps) and snaps them back outward.
+			// ==============================================================================
 			unsigned int totalNormalEntries = Frames.Size() * surf->numVertices;
-			TArray<float> accumNx; accumNx.Resize(totalNormalEntries);
-			TArray<float> accumNy; accumNy.Resize(totalNormalEntries);
-			TArray<float> accumNz; accumNz.Resize(totalNormalEntries);
+			g_md3TempNormalAccumPool.Resize(totalNormalEntries);
 
 			for (unsigned int v = 0; v < totalNormalEntries; v++)
 			{
-				accumNx[v] = 0.0f; accumNy[v] = 0.0f; accumNz[v] = 0.0f;
+				g_md3TempNormalAccumPool[v].nx = 0.0f;
+				g_md3TempNormalAccumPool[v].ny = 0.0f;
+				g_md3TempNormalAccumPool[v].nz = 0.0f;
 			}
 
-			// Pass 1: Compute true 3D Cross Product face normals for EVERY single frame individually
+			// Pass 1: Compute true 3D Cross Product face normals with Curvature Flex flip guard
 			for (unsigned int f = 0; f < Frames.Size(); f++)
 			{
 				int frameVertexOffset = f * surf->numVertices;
 
+				// Compute frame geometric center to anchor initial reference normal outward
+				float centX = 0.0f, centY = 0.0f, centZ = 0.0f;
+				if (surf->numVertices > 0)
+				{
+					for (unsigned int v = 0; v < surf->numVertices; ++v)
+					{
+						const MD3Vertex* vp = &surf->Vertices[frameVertexOffset + v];
+						centX += vp->x;
+						centY += vp->z;
+						centZ += vp->y;
+					}
+					float invV = 1.0f / (float)surf->numVertices;
+					centX *= invV; centY *= invV; centZ *= invV;
+				}
+
+				float refNx = 0.0f, refNy = 0.0f, refNz = 1.0f;
+				bool hasRefNormal = false;
+
 				for (unsigned int k = 0; k < surf->numTriangles; k++)
 				{
-					// --- ARRAY INDEXATION [0], [1], [2] ---
 					unsigned int i0 = surf->Tris[k].VertIndex[0];
 					unsigned int i1 = surf->Tris[k].VertIndex[1];
 					unsigned int i2 = surf->Tris[k].VertIndex[2];
 
 					if (i0 < surf->numVertices && i1 < surf->numVertices && i2 < surf->numVertices)
 					{
-						// Fetch real dynamic vertex arrays mapping active animation frames natively
 						MD3Vertex* vert0 = &surf->Vertices[frameVertexOffset + i0];
 						MD3Vertex* vert1 = &surf->Vertices[frameVertexOffset + i1];
 						MD3Vertex* vert2 = &surf->Vertices[frameVertexOffset + i2];
 
+						// Convert MD3 axes (x, y=depth, z=up) to Doom world axes (X, Y=depth, Z=up)
 						float edge1X = vert1->x - vert0->x; float edge1Y = vert1->z - vert0->z; float edge1Z = vert1->y - vert0->y;
 						float edge2X = vert2->x - vert0->x; float edge2Y = vert2->z - vert0->z; float edge2Z = vert2->y - vert0->y;
+						float edge12X = vert2->x - vert1->x; float edge12Y = vert2->z - vert1->z; float edge12Z = vert2->y - vert1->y;
 
 						// Faithful SimSun cross-product face normal formula (Edge1 x Edge2)
 						float fnx = (edge1Y * edge2Z) - (edge1Z * edge2Y);
 						float fny = (edge1Z * edge2X) - (edge1X * edge2Z);
 						float fnz = (edge1X * edge2Y) - (edge1Y * edge2X);
 
-						// Accumulate smooth vector weights into vertex specific frame slots
-						accumNx[frameVertexOffset + i0] += fnx; accumNy[frameVertexOffset + i0] += fny; accumNz[frameVertexOffset + i0] += fnz;
-						accumNx[frameVertexOffset + i1] += fnx; accumNy[frameVertexOffset + i1] += fny; accumNz[frameVertexOffset + i1] += fnz;
-						accumNx[frameVertexOffset + i2] += fnx; accumNy[frameVertexOffset + i2] += fny; accumNz[frameVertexOffset + i2] += fnz;
+						float faceLen = sqrtf(fnx * fnx + fny * fny + fnz * fnz);
+						if (faceLen > 0.00001f)
+						{
+							fnx /= faceLen; fny /= faceLen; fnz /= faceLen;
+
+							// Triangle center relative to surface centroid
+							float triMidX = ((vert0->x + vert1->x + vert2->x) * 0.333333f) - centX;
+							float triMidY = ((vert0->z + vert1->z + vert2->z) * 0.333333f) - centY;
+							float triMidZ = ((vert0->y + vert1->y + vert2->y) * 0.333333f) - centZ;
+
+							// 1. Anchor first valid triangle outward from centroid (for closed/convex parts)
+							// For flat horizontal caps, prefer upward (+Z)
+							if (!hasRefNormal)
+							{
+								float outDot = triMidX * fnx + triMidY * fny + triMidZ * fnz;
+								if (fabsf(fnz) > 0.85f && fnz < 0.0f)
+								{
+									fnx = -fnx; fny = -fny; fnz = -fnz;
+								}
+								else if (outDot < -0.1f && fabsf(fnz) <= 0.85f)
+								{
+									fnx = -fnx; fny = -fny; fnz = -fnz;
+								}
+								refNx = fnx; refNy = fny; refNz = fnz;
+								hasRefNormal = true;
+							}
+							else
+							{
+								// 2. Curvature Flex check: detect sudden ~180-degree inversion against running flow
+								float flowDot = fnx * refNx + fny * refNy + fnz * refNz;
+
+								// Also check if a near-horizontal top cap suddenly points downward
+								bool isInvertedCap = (fabsf(fnz) > 0.80f && fnz < 0.0f && triMidZ > 0.0f);
+
+								if (flowDot < -0.65f || isInvertedCap)
+								{
+									fnx = -fnx; fny = -fny; fnz = -fnz;
+								}
+
+								// Smoothly update running reference flow (EMA filter)
+								refNx = refNx * 0.85f + fnx * 0.15f;
+								refNy = refNy * 0.85f + fny * 0.15f;
+								refNz = refNz * 0.85f + fnz * 0.15f;
+								float rLen = sqrtf(refNx * refNx + refNy * refNy + refNz * refNz);
+								if (rLen > 0.001f) { refNx /= rLen; refNy /= rLen; refNz /= rLen; }
+							}
+
+							// Compute edge lengths for vertex corner angle weighting (Nelson Max, 1999)
+							float l01 = sqrtf(edge1X * edge1X + edge1Y * edge1Y + edge1Z * edge1Z);
+							float l02 = sqrtf(edge2X * edge2X + edge2Y * edge2Y + edge2Z * edge2Z);
+							float l12 = sqrtf(edge12X * edge12X + edge12Y * edge12Y + edge12Z * edge12Z);
+
+							float w0 = 1.0f, w1 = 1.0f, w2 = 1.0f;
+							if (l01 > 0.0001f && l02 > 0.0001f && l12 > 0.0001f)
+							{
+								float cos0 = clamp((edge1X * edge2X + edge1Y * edge2Y + edge1Z * edge2Z) / (l01 * l02), -1.0f, 1.0f);
+								float cos1 = clamp((-edge1X * edge12X - edge1Y * edge12Y - edge1Z * edge12Z) / (l01 * l12), -1.0f, 1.0f);
+								float cos2 = clamp((-edge2X * -edge12X - edge2Y * -edge12Y - edge2Z * -edge12Z) / (l02 * l12), -1.0f, 1.0f);
+
+								w0 = acosf(cos0); w1 = acosf(cos1); w2 = acosf(cos2);
+							}
+
+							g_md3TempNormalAccumPool[frameVertexOffset + i0].nx += fnx * w0;
+							g_md3TempNormalAccumPool[frameVertexOffset + i0].ny += fny * w0;
+							g_md3TempNormalAccumPool[frameVertexOffset + i0].nz += fnz * w0;
+
+							g_md3TempNormalAccumPool[frameVertexOffset + i1].nx += fnx * w1;
+							g_md3TempNormalAccumPool[frameVertexOffset + i1].ny += fny * w1;
+							g_md3TempNormalAccumPool[frameVertexOffset + i1].nz += fnz * w1;
+
+							g_md3TempNormalAccumPool[frameVertexOffset + i2].nx += fnx * w2;
+							g_md3TempNormalAccumPool[frameVertexOffset + i2].ny += fny * w2;
+							g_md3TempNormalAccumPool[frameVertexOffset + i2].nz += fnz * w2;
+						}
 					}
 				}
 			}
 
 			// Pass 2: Normalize and pre-bake faithful 3D SimSun Sunlit weights into the vertex VBO arrays
+			// AND overwrite surf->Vertices[j] normals in Doom-space (X, Y=depth, Z=up) for instant RAM lookup in RenderFrame
 			for (unsigned j = 0; j < Frames.Size() * surf->numVertices; j++)
 			{
 				MD3Vertex* vert = &surf->Vertices[j];
@@ -365,12 +462,18 @@ void FMD3Model::BuildVertexBuffer(FModelRenderer *renderer)
 
 				bvert->Set(vert->x, vert->z, vert->y, surf->Texcoords[tc].s, surf->Texcoords[tc].t);
 
-				// Get accumulated smoothed-put true 3D-normal for the current vertex frame entry
-				float finalNx = accumNx[j]; float finalNy = accumNy[j]; float finalNz = accumNz[j];
+				// Get accumulated smoothed-out true 3D-normal for the current vertex frame entry
+				float finalNx = g_md3TempNormalAccumPool[j].nx;
+				float finalNy = g_md3TempNormalAccumPool[j].ny;
+				float finalNz = g_md3TempNormalAccumPool[j].nz;
 
 				float normLen = sqrtf((finalNx * finalNx) + (finalNy * finalNy) + (finalNz * finalNz));
 				if (normLen > 0.001f) { finalNx /= normLen; finalNy /= normLen; finalNz /= normLen; }
 				else { finalNx = 0.0f; finalNy = 0.0f; finalNz = 1.0f; }
+
+				// [Darkcrafter07]: Store normalized Doom-space normals directly back into RAM vertex array
+				// so RenderFrame can read them directly with zero per-frame triangle math
+				vert->nx = finalNx; vert->ny = finalNy; vert->nz = finalNz;
 
 				float sunDirX = 1.0f; float sunDirY = -1.0f; float sunDirZ = -1.0f;
 				float sunLen = sqrtf(sunDirX * sunDirX + sunDirY * sunDirY + sunDirZ * sunDirZ);
@@ -517,7 +620,7 @@ int FMD3Model::FindFrame(const char * name)
 
 
 // ====================================================================================
-// --- [Darkcrafter07]: GOURAUD SHADING & VERTEX LIGHTING MANIFESTO ---
+// --- [Darkcrafter07]: GOURAUD SHADING, 3D-FLOOR & SUNLIGHT LIGHTING MANIFESTO ---
 //
 // HISTORICAL FIX LOG: Why native hardware 3D volumetric light shaded absolutely FLAT?
 // 1. THE ROOT OF THE PROBLEM: In LZDoom 07's legacy compatibility pipeline (GL1x/GL2x),
@@ -529,12 +632,60 @@ int FMD3Model::FindFrame(const char * name)
 //    curvature normals baked inside 'bvert->SetNormal(finalNx, finalNz, finalNy)'
 //    during the load-time BuildVertexBuffer() pass. The driver fell back to a default vector 
 //    of (0,0,1) pointing straight up, wiping out all 3D depth and making the dynamic spots flat.
+// 3. 3D-FLOOR COLOR RESOLVER: When 'RFL_NO_CLIP_PLANES' is active in GL1x/GL2x, the engine
+//    sets lightlist to NULL for 3D models. We manually scan 'XFloor.lightlist' and cache
+//    the resolved LightColor & lightlevel per actor per tic.
 //
 // Know how:
-// By overriding the pipeline locks directly inside the mesh dispatch loop and force-activating 
-// 'glEnableClientState(GL_NORMAL_ARRAY);', we ripped off the blindfold and forced the GPU
-// to see the pre-calculated geometric vertex curvature deltas. Combined with smooth shading,
-// the GPU instantly fired up its internal Gouraud Shading processors.
+// - PATHWAY A: Overrides pipeline locks and binds RAM-realigned normals via 'GL_NORMAL_ARRAY'
+//   with Quake 2 style Diffuse-to-Ambient mirroring for 360-degree volumetric dynlights.
+// - PATHWAY B: Flat sector & 3D-floor colored base pass for non-dynlit models.
+// - PATHWAY C (2nd-Pass Sunlight Overlay): Runs over both Pathway A and B when 'USEGL1SUNLIGHT'
+//   is set in MODELDEF. Uses angle-weighted geometric normals (Darkcrafter07) baked into
+//   RAM during BuildVertexBuffer() and projects world-locked directional sunlight via
+//   2x multiplicative blending (GL_DST_COLOR, GL_SRC_COLOR) with GL_COMBINE RGB_REPLACE
+//   (ignoring base texture RGB while preserving texture Alpha for masked cutouts).
+//
+// MODELDEF DIRECTIVE SYNTAX & PARAMETER ORDER:
+//   USEGL1SUNLIGHT <sunShadowIntensity> <sunLightIntensity> <sunHighlightMax> <wSunX> <wSunY> <wSunZ> <useAlphaTest>
+//
+//   1. sunShadowIntensity (float) : Overall shadow contrast multiplier (e.g. 1.0 = normal, 5.5 = deep)
+//   2. sunLightIntensity  (float) : Minimum brightness floor in deep shadow (e.g. 0.25)
+//   3. sunHighlightMax    (float) : Maximum brightness peak on sunlit faces (>1.0 overexposures, e.g. 1.45)
+//   4. wSunX              (float) : World Sun X direction (+East / -West, e.g. 0.55)
+//   5. wSunY              (float) : World Sun Y direction (+North / -South, e.g. -0.45)
+//   6. wSunZ              (float) : World Sun Z elevation (+Up / -Down, e.g. 0.70)
+//   7. useAlphaTest       (int)   : 0 = solid/translucent pass (no alpha test), 1 = binary alpha-test cutout (fences/foliage)
+//
+// MODELDEF EXAMPLES:
+//
+//   // Example 1: Solid opaque prop (Cistern / Rock / Architecture) without alpha-test
+//   Model Cistern_big_tank
+//   {
+//      Path "Models\Props"
+//      SKIN 0 "Cistern_SHAWN2.png"
+//      MODEL 0 "Cistern_big_tank_SHAWN2.md3"
+//      USETRUEVISLIGHTBOUNDS
+//      USEGL1VOLUMEDYNLIGHT
+//      USEGL1SUNLIGHT 1.0 0.25 1.45 0.55 -0.45 0.70 0
+//      Scale 1.0 1.0 1.0
+//      FrameIndex CIST A 0 0
+//   }
+//
+//   // Example 2: Masked foliage / fence with alpha-test enabled (last param = 1)
+//   Model Tree_Pipal_Big1
+//   {
+//      Path "Models\Trees\Tree_oak"
+//      SKIN 0 "0_Pipal_branches_leaves_fine.png"
+//      MODEL 0 "Tree_oak_branches_leaves_fine.md3"
+//      USEACTORROLL
+//      USEACTORPITCH
+//      USETRUEVISLIGHTBOUNDS
+//      USEGL1VOLUMEDYNLIGHT
+//      USEGL1SUNLIGHT 1.2 0.35 1.35 0.55 -0.45 0.70 1
+//      Scale 8.0 8.0 8.0
+//      FrameIndex TR01 A 0 0
+//   }
 // ====================================================================================
 
 extern int g_legacyModelSectorLight;
@@ -556,6 +707,8 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 	float map2mdldefRatioXYinv = 1.0f;
 	float mdldef2mapRatioXYinv = 1.0f;
 	float scaleZcombo = 1.0f, scaleZcomboInvCompens = 1.0f;
+
+	const float invMul255 = 1.0f / 255.0f;
 
 	bool isClassTypeValid = ti != nullptr;
 
@@ -586,36 +739,34 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 	map2mdldefRatioXYinv = 1.0f / (map2mdldefRatioXY + 0.0001f);
 	mdldef2mapRatioXYinv = 1.0f / (mdldef2mapRatioXY + 0.0001f);
 
+	float yawDeg = actor->Angles.Yaw.Degrees;
+	float pitchDeg = 0.0f; float rollDeg = 0.0f;
+	if (safeFramePtr != nullptr)
+	{
+		yawDeg += safeFramePtr->angleoffset;
+
+		if (safeFramePtr->flags & MDL_USEACTORPITCH)
+		{
+			pitchDeg = actor->Angles.Pitch.Degrees + safeFramePtr->pitchoffset;
+		}
+		if (safeFramePtr->flags & MDL_USEACTORROLL)
+		{
+			rollDeg = actor->Angles.Roll.Degrees + safeFramePtr->rolloffset;
+		}
+	}
+	const float deg2rad = 3.141592653589 / 180.0f;
+	float radYaw = -yawDeg * deg2rad;
+	float radPitch = -pitchDeg * deg2rad;
+	float radRoll = -rollDeg * deg2rad;
+	float radYawInv = 1.0f / radYaw;
+	float radPitchInv = 1.0f / radPitch;
+	float radRollInv = 1.0f / radRoll;
+
 	// ==============================================================================
 	// GL1x/GL2x legacy mode
 	// ==============================================================================
 	if (gl.legacyMode)
 	{
-		if ((unsigned)frameno >= Frames.Size() || (unsigned)frameno2 >= Frames.Size()) return;
-		renderer->SetInterpolation(inter);
-
-		const float invMul127 = 1.0f / 127.0f;
-		const float invMul255 = 1.0f / 255.0f;
-		float baseColor = (float)g_legacyModelSectorLight * invMul255;
-
-		if (!gl_lights) // Dynligths are off, clear array cache and shutdown surfaces
-		// needs to be done, otherwise actors won't kill volumetric dynlight when turned off in menu
-		{ g_legacyLightActive = false; g_legacyModelLights.Clear(); }
-
-		if (!actor)
-		{
-			glColor4f(baseColor, baseColor, baseColor, 1.0f);
-			for (unsigned m = 0; m < Surfaces.Size(); m++)
-			{
-				MD3Surface * surf = &Surfaces[m];
-				renderer->SetMaterial(skin, false, translation);
-				GetVertexBuffer(renderer)->SetupFrame(renderer, surf->vindex + frameno * surf->numVertices, surf->vindex + frameno2 * surf->numVertices, surf->numVertices);
-				renderer->DrawElements(surf->numTriangles * 3, surf->iindex * sizeof(unsigned int));
-			}
-			renderer->SetInterpolation(0.f);
-			return;
-		}
-
 		// In gl_sprite.cpp (GLSprite::Process), when running on GL1x/GL2x hardware
 		// where "gl.flags & RFL_NO_CLIP_PLANES" is active, lightlist is set to NULL,
 		// so 3D models won't receive special light color coming from 3D floors.
@@ -636,7 +787,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 			if (actor->Sector->e != nullptr)
 			{
 				TArray<lightlist_t> &lightlist = actor->Sector->e->XFloor.lightlist;
-				const double checkZ = actor->Z() + (actor->Height * 0.5);
+				const float checkZ = actor->Z() + (actor->Height * 0.5);
 
 				for (unsigned int i = 0; i < lightlist.Size(); i++)
 				{
@@ -682,6 +833,103 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 			secA = clamp(gl_RenderState.mColor.vec[3], 0.0f, 1.0f) * (gl_RenderState.mObjectColor.a * invMul255);
 		}
 
+		// ==============================================================================
+		//            OPTIONAL GOURAD SUNLIGHT PRE-PROCESSING - START
+		// ==============================================================================
+		bool useGouraudSunPass2 = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags & MDL_USEGL1SUNLIGHT) != 0);
+
+		const float sunShadowIntensity = useGouraudSunPass2 ? curSpriteMDLFrame->sunShadowIntensity : 1.0f;
+		const float sunLightIntensity = useGouraudSunPass2 ? curSpriteMDLFrame->sunLightIntensity : 0.25f;
+		const float sunHighlightMax = useGouraudSunPass2 ? curSpriteMDLFrame->sunHighlightMax : 1.45f;
+
+		TArray<unsigned char> sunPassColors;
+		TArray<unsigned int> sunPassOffsets;
+		sunPassOffsets.Resize(Surfaces.Size());
+
+		if (useGouraudSunPass2 && actor != nullptr && Surfaces.Size() > 0)
+		{
+			// 1. World sun vector from MODELDEF (X = East, Y = North, Z = Top)
+			float wSunX = curSpriteMDLFrame->wSunX;
+			float wSunY = curSpriteMDLFrame->wSunY;
+			float wSunZ = curSpriteMDLFrame->wSunZ;
+			float wLen = sqrtf(wSunX * wSunX + wSunY * wSunY + wSunZ * wSunZ);
+			if (wLen > 0.0001f) { wSunX /= wLen; wSunY /= wLen; wSunZ /= wLen; }
+
+			// 2. Compensate actor world rotation (Yaw + angleoffset)
+			float yawRad = -actor->Angles.Yaw.Radians();
+			if (safeFramePtr != nullptr) yawRad -= (safeFramePtr->angleoffset * (3.14159265358979 / 180.0f));
+
+			float cosY = (float)cos(yawRad);
+			float sinY = (float)sin(yawRad);
+
+			float locSunX = wSunX * cosY - wSunY * sinY;
+			float locSunY = wSunX * sinY + wSunY * cosY;
+			float locSunZ = wSunZ;
+
+			unsigned int totalVerts = 0;
+			for (unsigned int mIdx = 0; mIdx < Surfaces.Size(); ++mIdx)
+			{
+				totalVerts += Surfaces[mIdx].numVertices;
+			}
+			sunPassColors.Resize(totalVerts * 4);
+
+			unsigned int writeIdx = 0;
+
+			for (unsigned int mIdx = 0; mIdx < Surfaces.Size(); ++mIdx)
+			{
+				sunPassOffsets[mIdx] = writeIdx;
+				MD3Surface* surf = &Surfaces[mIdx];
+
+				if (surf->numVertices > 0 && surf->Vertices.Size() > 0)
+				{
+					const MD3Vertex* verts = &surf->Vertices[frameno * surf->numVertices];
+
+					for (int v = 0; v < surf->numVertices; ++v)
+					{
+						// Read normals baked in BuildVertexBuffer
+						float ndotl = verts[v].nx * locSunX + verts[v].ny * locSunY + verts[v].nz * locSunZ;
+						float factor01 = clamp((ndotl + 1.0f) * 0.5f, 0.0f, 1.0f);
+
+						float rawSun = sunLightIntensity + factor01 * (sunHighlightMax - sunLightIntensity);
+						float sunFactor = 1.0f + (rawSun - 1.0f) * sunShadowIntensity;
+
+						unsigned char cVal = (unsigned char)clamp(128.0f * sunFactor, 32.0f, 245.0f);
+
+						sunPassColors[writeIdx + 0] = cVal;
+						sunPassColors[writeIdx + 1] = cVal;
+						sunPassColors[writeIdx + 2] = cVal;
+						sunPassColors[writeIdx + 3] = 255;
+						writeIdx += 4;
+					}
+				}
+			}
+		}
+		// ==============================================================================
+		//            OPTIONAL GOURAD SUNLIGHT PRE-PROCESSING - FINISH
+		// ==============================================================================
+
+		if ((unsigned)frameno >= Frames.Size() || (unsigned)frameno2 >= Frames.Size()) return;
+		renderer->SetInterpolation(inter);
+		float baseColor = (float)g_legacyModelSectorLight * invMul255;
+
+		if (!gl_lights) // Dynligths are off, clear array cache and shutdown surfaces
+		// needs to be done, otherwise actors won't kill volumetric dynlight when turned off in menu
+		{ g_legacyLightActive = false; g_legacyModelLights.Clear(); }
+
+		if (!actor)
+		{
+			glColor4f(baseColor, baseColor, baseColor, 1.0f);
+			for (unsigned m = 0; m < Surfaces.Size(); m++)
+			{
+				MD3Surface * surf = &Surfaces[m];
+				renderer->SetMaterial(skin, false, translation);
+				GetVertexBuffer(renderer)->SetupFrame(renderer, surf->vindex + frameno * surf->numVertices, surf->vindex + frameno2 * surf->numVertices, surf->numVertices);
+				renderer->DrawElements(surf->numTriangles * 3, surf->iindex * sizeof(unsigned int));
+			}
+			renderer->SetInterpolation(0.f);
+			return;
+		}
+
 		glEnable(GL_TEXTURE_2D); glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 
 		for (unsigned m = 0; m < Surfaces.Size(); m++)
@@ -717,7 +965,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 				surf->numTriangles > 0 && isModeldefUseVolLegacyDynlightFlagSet);
 
 			// ==============================================================================
-			// PATHWAY A: VOLUMETRIC DYNLIGHT WITH GOURAD SHADING
+			// PATHWAY A: VOLUMETRIC GOURAD 3D MODEL DYNLIGHT
 			// ==============================================================================
 			if (useLegacyVolumetricLighting)
 			{
@@ -964,14 +1212,91 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 			else
 			{
 				// ==============================================================================
-				// PATHWAY B: FLAT LIGHT NO-SLICE CONVEYOR ROUTE FOR FLAT/DECORATIVE MODELS
+				// PATHWAY B: FLAT 3D MODEL DYNLIGHT
 				// ==============================================================================
 				isUsingVolumetric3DModelLegacyDynlight = false;
 				glColor4f(secR, secG, secB, secA); // to fix dark models and receieve 3D-floor special light color
-
+				// CRASH FIX: If a model was previously rendered using Pathway A, 
+				// GL_ELEMENT_ARRAY_BUFFER remains 0. Force-restore it now.
 				if (currentVBuf != nullptr) currentVBuf->BindVBO();
 				renderer->DrawElements(surf->numTriangles * 3, surf->iindex * sizeof(unsigned int));
 			}
+
+			// =================================================================================
+			// PATHWAY C: GOURAUD SUNLIGHT OVERLAY (100% PURE VERTEX COLOR + TEXTURE ALPHA)
+			// =================================================================================
+			if (useGouraudSunPass2 && sunPassColors.Size() > 0 && surf->Vertices.Size() > 0)
+			{
+				bool wasFogEnabled = glIsEnabled(GL_FOG) != 0;
+				if (wasFogEnabled) glDisable(GL_FOG);
+
+				glEnable(GL_TEXTURE_2D);
+
+				// Use GL_COMBINE for OpenGL 1.3+
+				// RGB is taken STRICTLY from the vertex sun (GL_PRIMARY_COLOR), texture color ignored
+				// Alpha is taken STRICTLY from the texture (GL_TEXTURE) to cut holes in fences and leaves
+				if (!(gl.gl1path && gl.gl1_v1dot1))
+				{
+					glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+					glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_REPLACE);
+					glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_PRIMARY_COLOR);
+					glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
+
+					glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
+					glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_TEXTURE);
+					glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
+				}
+				else
+				{
+					// OpenGL 1.1 fallback: turn off the texture for the opaque solid models,
+					// and if texture is with alpha (bMasked) - keep slightly compensated GL_MODULATE
+					if (surfaceSkin != nullptr && !surfaceSkin->bMasked)
+					{
+						glDisable(GL_TEXTURE_2D);
+					}
+					else
+					{
+						glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+					}
+				}
+
+				bool applyAlphaTest = (curSpriteMDLFrame != nullptr && curSpriteMDLFrame->useSunAlphaTest);
+				if (applyAlphaTest)
+				{
+					glEnable(GL_ALPHA_TEST);
+					glAlphaFunc(GL_GREATER, gl_mask_threshold);
+				}
+
+				glShadeModel(GL_SMOOTH);
+				glEnable(GL_POLYGON_OFFSET_FILL);
+				glPolygonOffset(-0.5f, -0.5f);
+
+				// 2x multiplicative blend: 128 = no changes, >128 = sunshine, <128 = soft shadow
+				glBlendFunc(GL_DST_COLOR, GL_SRC_COLOR);
+
+				if (currentVBuf != nullptr) currentVBuf->BindVBO();
+				glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+				glEnableClientState(GL_COLOR_ARRAY);
+				glColorPointer(4, GL_UNSIGNED_BYTE, 0, &sunPassColors[sunPassOffsets[m]]);
+
+				renderer->DrawElements(surf->numTriangles * 3, surf->iindex * sizeof(unsigned int));
+
+				// State restoration
+				glDisableClientState(GL_COLOR_ARRAY);
+				glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+				if (applyAlphaTest)
+				{
+					glDisable(GL_ALPHA_TEST);
+				}
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				glDisable(GL_POLYGON_OFFSET_FILL);
+				glEnable(GL_TEXTURE_2D);
+
+				if (wasFogEnabled) glEnable(GL_FOG);
+			}
+
+
 		}
 	}
 	else

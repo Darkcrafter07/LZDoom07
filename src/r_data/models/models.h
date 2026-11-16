@@ -492,6 +492,7 @@ enum
 	MDL_MESHCOLLISION               = 2048,  // [Darkcrafter07] enable 3D mesh collision
 	MDL_USETRUEVISLIGHTBOUNDS       = 8192,  // [Darkcrafter07] extracts true radius, height mul by modeldef and then editor thing scale
 	MDL_USEGL1VOLUMEDYNLIGHT        = 16384, // [Darkcrafter07] enable volumetric dynamic light on 3D models in GL1x/GL2x legacy mode
+	MDL_USEGL1SUNLIGHT              = 32768, // [Darkcrafter07] enable per-model Gouraud sunlight pass in GL1x/GL2x legacy mode
 };
 
 struct FSpriteModelFrame
@@ -518,6 +519,10 @@ struct FSpriteModelFrame
 	// added pithoffset, rolloffset.
 	float pitchoffset, rolloffset; // I don't want to bother with type transformations, so I made this variables float.
 	bool isVoxel;
+
+	// [Darkcrafter07]: Per-model GL1x/GL2x Gouraud sunlight parameters from MODELDEF
+	float sunShadowIntensity; float sunLightIntensity; float sunHighlightMax;
+	float wSunX; float wSunY; float wSunZ; bool useSunAlphaTest;
 };
 
 FSpriteModelFrame * FindModelFrame(const PClass * ti, int sprite, int frame, bool dropped);
