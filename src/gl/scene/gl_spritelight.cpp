@@ -196,7 +196,7 @@ void gl_SetDynSpriteLight(AActor *thing, particle_t *particle)
 bool g_legacyLightActive;
 
 // Global pool trackers visible across gl_models.cpp and gl_spritelight.cpp
-int g_legacyModelSectorLight; // Caches the actor's real-time sector lightlevel
+int g_legacyModelSectorLight = 128; // Caches the actor's real-time sector lightlevel
 TArray<FLegacyDynlight3DmdlCache> g_legacyModelLights; // Holds ALL active lights affecting current model
 
 template<typename Callback>
@@ -534,26 +534,46 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 	if (gl.lightmethod == LM_LEGACY)
 	{
 		static AActor* lastProcessedActor = nullptr;
-
+	
 		if (self != lastProcessedActor)
 		{
 			g_legacyModelLights.Clear();
 			g_legacyLightActive = false;
 			lastProcessedActor = self;
 		}
-
-		g_legacyModelSectorLight = 128;
+	
 		float outR = 0.0f; float outG = 0.0f; float outB = 0.0f;
-
+	
 		if (self && self->subsector)
 		{
-			if (self->Sector != nullptr)
+			int foundLight = self->Sector->lightlevel;
+
+			if (self->Sector != nullptr && self->Sector->e != nullptr)
 			{
-				g_legacyModelSectorLight = self->Sector->lightlevel;
+				TArray<lightlist_t> &lightlist = self->Sector->e->XFloor.lightlist;
+				const float checkZ = self->Z() + (self->Height * 0.5f);
+
+				for (unsigned int i = 0; i < lightlist.Size(); i++)
+				{
+					float lightbottom = (i < lightlist.Size() - 1)
+						? lightlist[i + 1].plane.ZatPoint(self)
+						: self->Sector->floorplane.ZatPoint(self);
+
+					if (lightbottom < checkZ)
+					{
+						if (lightlist[i].p_lightlevel != nullptr)
+						{
+							foundLight = gl_ClampLight(*lightlist[i].p_lightlevel);
+						}
+						break;
+					}
+				}
 			}
 
-			// 5X HYPER-SCALE GEOMETRIC MULTIPLIER UNLOCKER!
-			// Since the small tank is 5x smaller visually, its surface area drops by 25x!
+			g_legacyModelSectorLight = foundLight;
+
+			// 5X HYPER-SCALE GEOMETRIC MULTIPLIER UNLOCKER
+			// Since the small tank is 5x smaller visually, its surface area drops by 25x
 			// We raise the baseline reference normalization threshold to 512.0 units 
 			// and enforce a massive 4096.0 minimum world search horizon for BSPWalkCircle!
 			float maxObjectDimForSearch = (trueVisualRadius > trueVisualHeight) ? trueVisualRadius : trueVisualHeight;
@@ -718,7 +738,7 @@ int gl_Set3DmdlDynLightTrueVisBounds(AActor *self, int dynlightindex) // old nam
 		// Flush flat lighting fallback outputs to baseline engine buffers
 		// Must be 0,0,0 for Gourad light not to get mixed with flat light
 		gl_RenderState.SetDynLight(0.0f, 0.0f, 0.0f);
-		gl_RenderState.ResetColor();
+		//gl_RenderState.ResetColor();
 
 		if (g_legacyLightActive && g_legacyModelLights.Size() > 0)
 		{
@@ -896,7 +916,7 @@ int gl_Set3DmdlDynLightSimpleVisBounds(AActor *self, int dynlightindex)
 int gl_SetDynModelLight(AActor *self, int dynlightindex) // main wrapper function to call
 {
 	FSpriteModelFrame *smf = FindModelFrame(self->GetClass(), self->sprite, self->frame, false);
-	bool usetruevislightbounds = (smf != nullptr && (smf->flags & MDL_USETRUEVISLIGHTBOUNDS) != 0);
+	bool usetruevislightbounds = (smf != nullptr && (smf->flags2 & MDL2_USETRUEVISLIGHTBOUNDS) != 0);
 
 	if (usetruevislightbounds)
 	{

@@ -641,38 +641,43 @@ int FMD3Model::FindFrame(const char * name)
 //   with Quake 2 style Diffuse-to-Ambient mirroring for 360-degree volumetric dynlights.
 // - PATHWAY B: Flat sector & 3D-floor colored base pass for non-dynlit models.
 // - PATHWAY C (2nd-Pass Sunlight Overlay): Runs over both Pathway A and B when 'USEGL1SUNLIGHT'
-//   is set in MODELDEF. Uses angle-weighted geometric normals (Darkcrafter07) baked into
-//   RAM during BuildVertexBuffer() and projects world-locked directional sunlight via
-//   2x multiplicative blending (GL_DST_COLOR, GL_SRC_COLOR) with GL_COMBINE RGB_REPLACE
-//   (ignoring base texture RGB while preserving texture Alpha for masked cutouts).
+//   (MDL2_USEGL1SUNLIGHT in smf.flags2) is set in MODELDEF. Uses angle-weighted geometric
+//   normals (Darkcrafter07) baked into RAM during BuildVertexBuffer() and projects world-locked
+//   directional sunlight via 2x multiplicative blending (GL_DST_COLOR, GL_SRC_COLOR) with
+//   GL_COMBINE RGB_REPLACE (ignoring base texture RGB while preserving texture Alpha).
 //
-// MODELDEF DIRECTIVE SYNTAX & PARAMETER ORDER:
-//   USEGL1SUNLIGHT <sunShadowIntensity> <sunLightIntensity> <sunHighlightMax> <wSunX> <wSunY> <wSunZ> <useAlphaTest>
+// MODULAR MODELDEF DIRECTIVES (Stored in smf.flags2 / MDL2_*):
+//   * Note: Place all directives BEFORE the first FrameIndex / Frame line
 //
-//   1. sunShadowIntensity (float) : Overall shadow contrast multiplier (e.g. 1.0 = normal, 5.5 = deep)
-//   2. sunLightIntensity  (float) : Minimum brightness floor in deep shadow (e.g. 0.25)
-//   3. sunHighlightMax    (float) : Maximum brightness peak on sunlit faces (>1.0 overexposures, e.g. 1.45)
-//   4. wSunX              (float) : World Sun X direction (+East / -West, e.g. 0.55)
-//   5. wSunY              (float) : World Sun Y direction (+North / -South, e.g. -0.45)
-//   6. wSunZ              (float) : World Sun Z elevation (+Up / -Down, e.g. 0.70)
-//   7. useAlphaTest       (int)   : 0 = solid/translucent pass (no alpha test), 1 = binary alpha-test cutout (fences/foliage)
+//   1. USEGL1SUNLIGHT                         : Enables the 2nd-pass Gouraud sunlight overlay (defaults apply).
+//   2. GL1SUNALPHATEST                        : Enables binary hardware alpha-test cutout (for fences & foliage).
+//   3. GL1SUNINTENSITY <shdInt> <lgtInt> <hi> : Sets shadow contrast (1.0), shadow floor (0.25), and peak highlight (1.45).
+//   4. GL1SUNDIRECTION <wSunX> <wSunY> <wSunZ>: Sets world-space Sun vector (+East/-West, +North/-South, +Up/-Down).
+//   5. GL1SUNCOLORLIGHT <r> <g> <b>           : Sets sunlight tint RGB in 0.0..1.0 range (default: 1.0 1.0 1.0).
+//   6. GL1SUNCOLORSHADOW <r> <g> <b>          : Sets shadow tint RGB in 0.0..1.0 range (default: 1.0 1.0 1.0).
 //
 // MODELDEF EXAMPLES:
 //
-//   // Example 1: Solid opaque prop (Cistern / Rock / Architecture) without alpha-test
-//   Model Cistern_big_tank
+//   // Example 1: Solid opaque prop with custom sun direction (uses default intensity & colors)
+//   Model Pillars1
 //   {
-//      Path "Models\Props"
-//      SKIN 0 "Cistern_SHAWN2.png"
-//      MODEL 0 "Cistern_big_tank_SHAWN2.md3"
-//      USETRUEVISLIGHTBOUNDS
-//      USEGL1VOLUMEDYNLIGHT
-//      USEGL1SUNLIGHT 1.0 0.25 1.45 0.55 -0.45 0.70 0
-//      Scale 1.0 1.0 1.0
-//      FrameIndex CIST A 0 0
+//      Path "Models\Decorations"
+//      SKIN 0 "GSTONE1_TXT.png"
+//      SKIN 1 "GSTVINE2_TXT.png"
+//      SKIN 2 "FLOOR7_2_TXT.png"
+//      MODEL 0 "Pillars1_GSTONE1.md3"
+//      MODEL 1 "Pillars1_GSTVINE2.md3"
+//      MODEL 2 "Pillars1_FLOOR7_2.md3"
+//      USEACTORROLL
+//      USEACTORPITCH
+//      USEGL1SUNLIGHT
+//      GL1SUNDIRECTION 0.7 0.7 0.5
+//      Scale 8.0 8.0 8.0
+//      zoffset 512
+//      FrameIndex SP1R A 0 0
 //   }
 //
-//   // Example 2: Masked foliage / fence with alpha-test enabled (last param = 1)
+//   // Example 2: Masked foliage / tree with alpha-test, warm sunlight & cool sky shadows
 //   Model Tree_Pipal_Big1
 //   {
 //      Path "Models\Trees\Tree_oak"
@@ -682,7 +687,12 @@ int FMD3Model::FindFrame(const char * name)
 //      USEACTORPITCH
 //      USETRUEVISLIGHTBOUNDS
 //      USEGL1VOLUMEDYNLIGHT
-//      USEGL1SUNLIGHT 1.2 0.35 1.35 0.55 -0.45 0.70 1
+//      USEGL1SUNLIGHT
+//      GL1SUNALPHATEST
+//      GL1SUNINTENSITY 1.2 0.35 1.35
+//      GL1SUNDIRECTION 0.55 -0.45 0.70
+//      GL1SUNCOLORLIGHT 1.0 0.95 0.85
+//      GL1SUNCOLORSHADOW 0.70 0.78 1.0
 //      Scale 8.0 8.0 8.0
 //      FrameIndex TR01 A 0 0
 //   }
@@ -836,7 +846,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 		// ==============================================================================
 		//            OPTIONAL GOURAD SUNLIGHT PRE-PROCESSING - START
 		// ==============================================================================
-		bool useGouraudSunPass2 = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags & MDL_USEGL1SUNLIGHT) != 0);
+		bool useGouraudSunPass2 = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags2 & MDL2_USEGL1SUNLIGHT) != 0);
 
 		const float sunShadowIntensity = useGouraudSunPass2 ? curSpriteMDLFrame->sunShadowIntensity : 1.0f;
 		const float sunLightIntensity = useGouraudSunPass2 ? curSpriteMDLFrame->sunLightIntensity : 0.25f;
@@ -884,6 +894,26 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 				{
 					const MD3Vertex* verts = &surf->Vertices[frameno * surf->numVertices];
 
+					bool useGouraudSunPass2 = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags2 & MDL2_USEGL1SUNLIGHT) != 0);
+					bool hasCustomIntensity = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags2 & MDL2_GL1SUNINTENSITY) != 0);
+					bool hasCustomDir       = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags2 & MDL2_GL1SUNDIRECTION) != 0);
+					bool hasCustomLightCol  = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags2 & MDL2_GL1SUNCOLORLIGHT) != 0);
+					bool hasCustomShadowCol = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags2 & MDL2_GL1SUNCOLORSHADOW) != 0);
+
+					// Default values
+					const float sunShadowIntensity = hasCustomIntensity ? curSpriteMDLFrame->sunShadowIntensity : 1.0f;
+					const float sunLightIntensity = hasCustomIntensity ? curSpriteMDLFrame->sunLightIntensity : 0.25f;
+					const float sunHighlightMax = hasCustomIntensity ? curSpriteMDLFrame->sunHighlightMax : 1.45f;
+					float wSunX = hasCustomDir ? curSpriteMDLFrame->wSunX : 0.55f;
+					float wSunY = hasCustomDir ? curSpriteMDLFrame->wSunY : -0.45f;
+					float wSunZ = hasCustomDir ? curSpriteMDLFrame->wSunZ : 0.70f;
+					const float sunR = hasCustomLightCol ? curSpriteMDLFrame->sunColorR : 1.0f;
+					const float sunG = hasCustomLightCol ? curSpriteMDLFrame->sunColorG : 1.0f;
+					const float sunB = hasCustomLightCol ? curSpriteMDLFrame->sunColorB : 1.0f;
+					const float shdR = hasCustomShadowCol ? curSpriteMDLFrame->shadowColorR : 1.0f;
+					const float shdG = hasCustomShadowCol ? curSpriteMDLFrame->shadowColorG : 1.0f;
+					const float shdB = hasCustomShadowCol ? curSpriteMDLFrame->shadowColorB : 1.0f;
+
 					for (int v = 0; v < surf->numVertices; ++v)
 					{
 						// Read normals baked in BuildVertexBuffer
@@ -893,11 +923,16 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 						float rawSun = sunLightIntensity + factor01 * (sunHighlightMax - sunLightIntensity);
 						float sunFactor = 1.0f + (rawSun - 1.0f) * sunShadowIntensity;
 
-						unsigned char cVal = (unsigned char)clamp(128.0f * sunFactor, 32.0f, 245.0f);
+						// Blend tint between shadow color and sunlight color (0.0 .. 1.0)
+						float tintR = shdR + factor01 * (sunR - shdR);
+						float tintG = shdG + factor01 * (sunG - shdG);
+						float tintB = shdB + factor01 * (sunB - shdB);
 
-						sunPassColors[writeIdx + 0] = cVal;
-						sunPassColors[writeIdx + 1] = cVal;
-						sunPassColors[writeIdx + 2] = cVal;
+						float baseLuma = 128.0f * sunFactor;
+
+						sunPassColors[writeIdx + 0] = (unsigned char)clamp(baseLuma * tintR, 16.0f, 250.0f);
+						sunPassColors[writeIdx + 1] = (unsigned char)clamp(baseLuma * tintG, 16.0f, 250.0f);
+						sunPassColors[writeIdx + 2] = (unsigned char)clamp(baseLuma * tintB, 16.0f, 250.0f);
 						sunPassColors[writeIdx + 3] = 255;
 						writeIdx += 4;
 					}
@@ -957,7 +992,7 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 			// Repeat local check on empty memory of surface dynlights
 			if (g_legacyModelLights.Size() == 0) g_legacyLightActive = false;
 
-			bool isModeldefUseVolLegacyDynlightFlagSet = ((curSpriteMDLFrame->flags & MDL_USEGL1VOLUMEDYNLIGHT) != 0);
+			bool isModeldefUseVolLegacyDynlightFlagSet = ((curSpriteMDLFrame->flags2 & MDL2_USEGL1VOLUMEDYNLIGHT) != 0);
 
 			// When "g_legacyLightActive" is present it turns OFF Gourad for models that are NOT lit by dynlights at all.
 			// So that it jumps to PATHWAY B if no dynlights are nearby. May save some performance but not as consistent.
@@ -1260,11 +1295,11 @@ void FMD3Model::RenderFrame(AActor *actor, FModelRenderer *renderer, FTexture * 
 					}
 				}
 
-				bool applyAlphaTest = (curSpriteMDLFrame != nullptr && curSpriteMDLFrame->useSunAlphaTest);
+				bool applyAlphaTest = (curSpriteMDLFrame != nullptr && (curSpriteMDLFrame->flags2 & MDL2_GL1SUNALPHATEST) != 0);
 				if (applyAlphaTest)
 				{
 					glEnable(GL_ALPHA_TEST);
-					glAlphaFunc(GL_GREATER, gl_mask_threshold);
+					glAlphaFunc(GL_GREATER, MAX(0.5f, (float)gl_mask_threshold));
 				}
 
 				glShadeModel(GL_SMOOTH);

@@ -613,10 +613,10 @@ static void ParseModelDefLump(int Lump)
 			smf.sunShadowIntensity = 1.0f;
 			smf.sunLightIntensity = 0.25f;
 			smf.sunHighlightMax = 1.45f;
-			smf.wSunX = 0.7f;
-			smf.wSunY = 0.7f;
-			smf.wSunZ = 0.5f;
+			smf.wSunX = 0.7f; smf.wSunY = 0.7f; smf.wSunZ = 0.5f;
 			smf.useSunAlphaTest = false;
+			smf.sunColorR = 1.0f; smf.sunColorG = 1.0f; smf.sunColorB = 1.0f;
+			smf.shadowColorR = 1.0f; smf.shadowColorG = 1.0f; smf.shadowColorB = 1.0f;
 
 			smf.type = PClass::FindClass(sc.String);
 			if (!smf.type || smf.type->Defaults == nullptr)
@@ -765,35 +765,47 @@ static void ParseModelDefLump(int Lump)
 				}
 				else if (sc.Compare("usetruevislightbounds"))
 				{
-				smf.flags |= MDL_USETRUEVISLIGHTBOUNDS;
+					smf.flags2 |= MDL2_USETRUEVISLIGHTBOUNDS;
 				}
 				else if (sc.Compare("usegl1volumedynlight"))
 				{
-				smf.flags |= MDL_USEGL1VOLUMEDYNLIGHT;
+					smf.flags2 |= MDL2_USEGL1VOLUMEDYNLIGHT;
 				}
 				else if (sc.Compare("usegl1sunlight"))
 				{
-				smf.flags |= MDL_USEGL1SUNLIGHT;
-					sc.MustGetFloat();
-					smf.sunShadowIntensity = sc.Float;
-
-					sc.MustGetFloat();
-					smf.sunLightIntensity = sc.Float;
-
-					sc.MustGetFloat();
-					smf.sunHighlightMax = sc.Float;
-
-					sc.MustGetFloat();
-					smf.wSunX = sc.Float;
-
-					sc.MustGetFloat();
-					smf.wSunY = sc.Float;
-
-					sc.MustGetFloat();
-					smf.wSunZ = sc.Float;
-
-					sc.MustGetNumber();
-					smf.useSunAlphaTest = (sc.Number != 0);
+					smf.flags2 |= MDL2_USEGL1SUNLIGHT;
+				}
+				else if (sc.Compare("gl1sunalphatest"))
+				{
+					smf.flags2 |= MDL2_GL1SUNALPHATEST;
+				}
+				else if (sc.Compare("gl1sunintensity"))
+				{
+					smf.flags2 |= MDL2_GL1SUNINTENSITY;
+					sc.MustGetFloat(); smf.sunShadowIntensity = sc.Float;
+					sc.MustGetFloat(); smf.sunLightIntensity = sc.Float;
+					sc.MustGetFloat(); smf.sunHighlightMax = sc.Float;
+				}
+				else if (sc.Compare("gl1sundirection"))
+				{
+					smf.flags2 |= MDL2_GL1SUNDIRECTION;
+					sc.MustGetFloat(); smf.wSunX = sc.Float;
+					sc.MustGetFloat(); smf.wSunY = sc.Float;
+					sc.MustGetFloat(); smf.wSunZ = sc.Float;
+				}
+				else if (sc.Compare("gl1suncolorlight"))
+				{
+					smf.flags2 |= MDL2_GL1SUNCOLORLIGHT;
+					sc.MustGetFloat(); smf.sunColorR = sc.Float;
+					sc.MustGetFloat(); smf.sunColorG = sc.Float;
+					sc.MustGetFloat(); smf.sunColorB = sc.Float;
+				}
+				else if (sc.Compare("gl1suncolorshadow"))
+				{
+					smf.flags2 |= MDL2_GL1SUNCOLORSHADOW;
+					sc.MustGetFloat(); smf.shadowColorR = sc.Float;
+					sc.MustGetFloat(); smf.shadowColorG = sc.Float;
+					sc.MustGetFloat(); smf.shadowColorB = sc.Float;
 				}
 				else if (sc.Compare("skin"))
 				{
@@ -854,7 +866,7 @@ static void ParseModelDefLump(int Lump)
 				}
 				else if (sc.Compare("meshcollide")) // enable 3D models mesh collision
 				{
-					smf.flags |= MDL_MESHCOLLISION;
+					smf.flags |= MDL2_MESHCOLLISION;
 				}
 				else if (sc.Compare("surfaceskin"))
 				{

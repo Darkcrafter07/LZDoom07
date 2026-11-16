@@ -489,10 +489,20 @@ enum
 	MDL_DONTCULLBACKFACES			= 256,
 	MDL_USEROTATIONCENTER			= 512,
 	MDL_NOPERPIXELLIGHTING			= 1024,  // forces a model to not use per-pixel lighting. useful for voxel-converted-to-model objects.
-	MDL_MESHCOLLISION               = 2048,  // [Darkcrafter07] enable 3D mesh collision
-	MDL_USETRUEVISLIGHTBOUNDS       = 8192,  // [Darkcrafter07] extracts true radius, height mul by modeldef and then editor thing scale
-	MDL_USEGL1VOLUMEDYNLIGHT        = 16384, // [Darkcrafter07] enable volumetric dynamic light on 3D models in GL1x/GL2x legacy mode
-	MDL_USEGL1SUNLIGHT              = 32768, // [Darkcrafter07] enable per-model Gouraud sunlight pass in GL1x/GL2x legacy mode
+};
+
+enum
+{
+	// [Darkcrafter07]: Extended MODELDEF flags (isolated from vanilla 'flags')
+	MDL2_MESHCOLLISION				= 1,   // enable 3D mesh collision
+	MDL2_USETRUEVISLIGHTBOUNDS		= 2,   // extract true radius, height mul by modeldef and editor thing scale
+	MDL2_USEGL1VOLUMEDYNLIGHT		= 4,   // enable volumetric dynamic light on 3D models in GL1x/GL2x legacy mode
+	MDL2_USEGL1SUNLIGHT				= 8,   // enable per-model Gouraud sunlight pass in GL1x/GL2x legacy mode
+	MDL2_GL1SUNALPHATEST			= 16,  // enable alpha-test cutout during GL1x/GL2x sunlight pass
+	MDL2_GL1SUNINTENSITY			= 32,  // sunShadowIntensity, sunLightIntensity, sunHighlightMax
+	MDL2_GL1SUNDIRECTION			= 64,  // wSunX, wSunY, wSunZ
+	MDL2_GL1SUNCOLORLIGHT			= 128, // sunColorR, sunColorG, sunColorB
+	MDL2_GL1SUNCOLORSHADOW			= 256, // shadowColorR, shadowColorG, shadowColorB
 };
 
 struct FSpriteModelFrame
@@ -510,6 +520,7 @@ struct FSpriteModelFrame
 	float rotationCenterX, rotationCenterY, rotationCenterZ;
 	float rotationSpeed;
 	unsigned int flags;
+	unsigned int flags2;
 	const PClass * type;
 	short sprite;
 	short frame;
@@ -522,7 +533,9 @@ struct FSpriteModelFrame
 
 	// [Darkcrafter07]: Per-model GL1x/GL2x Gouraud sunlight parameters from MODELDEF
 	float sunShadowIntensity; float sunLightIntensity; float sunHighlightMax;
-	float wSunX; float wSunY; float wSunZ; bool useSunAlphaTest;
+	float wSunX; float wSunY; float wSunZ; 	bool useSunAlphaTest;
+	float sunColorR, sunColorG, sunColorB;
+	float shadowColorR, shadowColorG, shadowColorB;
 };
 
 FSpriteModelFrame * FindModelFrame(const PClass * ti, int sprite, int frame, bool dropped);

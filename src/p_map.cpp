@@ -338,7 +338,7 @@ bool P_CheckMeshCollision(AActor *mover, AActor *meshActor, const DVector2 &pos,
 	outResult.ceilingz = FLT_MAX;
 
 	FSpriteModelFrame *smf = FindModelFrame(meshActor->GetClass(), meshActor->sprite, meshActor->frame, false);
-	if (!smf || !(smf->flags & MDL_MESHCOLLISION)) return false;
+	if (!smf || !(smf->flags2 & MDL2_MESHCOLLISION)) return false;
 
 	float fx = smf->xscale * (float)meshActor->Scale.X;
 	float fy = smf->yscale * (float)meshActor->Scale.Y;
@@ -736,7 +736,7 @@ bool	P_TeleportMove(AActor* thing, const DVector3 &pos, bool telefrag, bool modi
 
 		// [Darkcrafter07] Mesh Collision check via MODELDEF
 		FSpriteModelFrame *smf = FindModelFrame(th->GetClass(), th->sprite, th->frame, false);
-		if (smf && (smf->flags & MDL_MESHCOLLISION))
+		if (smf && (smf->flags2 & MDL2_MESHCOLLISION))
 		{
 			FMeshCollisionResult meshData;
 			// Pass the destination coordinates (pos.X, pos.Y)
@@ -1707,7 +1707,7 @@ bool PIT_CheckThing(FMultiBlockThingsIterator &it, FMultiBlockThingsIterator::Ch
 	bool unblocking = false;
 
 	// [Darkcrafter07] Mesh Collision Logic
-	if (smf && (smf->flags & MDL_MESHCOLLISION))
+	if (smf && (smf->flags2 & MDL2_MESHCOLLISION))
 	{
 		FMeshCollisionResult mres;
 		// Init struct so no garbage
