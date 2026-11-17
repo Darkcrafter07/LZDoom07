@@ -866,7 +866,7 @@ static void ParseModelDefLump(int Lump)
 				}
 				else if (sc.Compare("meshcollide")) // enable 3D models mesh collision
 				{
-					smf.flags |= MDL2_MESHCOLLISION;
+					smf.flags2 |= MDL2_MESHCOLLISION;
 				}
 				else if (sc.Compare("surfaceskin"))
 				{
